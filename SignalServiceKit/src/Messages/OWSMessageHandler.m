@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSMessageHandler.h"
@@ -99,12 +99,18 @@ NSString *envelopeAddress(SSKProtoEnvelope *envelope)
     } else if (callMessage.answer) {
         messageType = @"Answer";
         callId = callMessage.answer.id;
+    } else if (callMessage.legacyHangup) {
+        messageType = @"legacyHangup";
+        callId = callMessage.legacyHangup.id;
     } else if (callMessage.hangup) {
         messageType = @"Hangup";
         callId = callMessage.hangup.id;
     } else if (callMessage.iceUpdate.count > 0) {
         messageType = [NSString stringWithFormat:@"Ice Updates (%lu)", (unsigned long)callMessage.iceUpdate.count];
         callId = callMessage.iceUpdate.firstObject.id;
+    } else if (callMessage.opaque) {
+        messageType = @"Opaque";
+        callId = 0;
     } else {
         OWSFailDebug(@"failure: unexpected call message type: %@", callMessage);
         messageType = @"Unknown";

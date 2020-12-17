@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSAttachmentStream.h"
@@ -11,6 +11,7 @@
 #import <AVFoundation/AVFoundation.h>
 #import <SignalCoreKit/Threading.h>
 #import <SignalServiceKit/SignalServiceKit-Swift.h>
+#import <YYImage/YYImage.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -45,6 +46,7 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
 
 @property (atomic, nullable) NSNumber *isValidImageCached;
 @property (atomic, nullable) NSNumber *isValidVideoCached;
+@property (atomic, nullable) NSNumber *isAnimatedCached;
 
 @end
 
@@ -105,7 +107,8 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
         return self;
     }
 
-    _contentType = pointer.contentType;
+    OWSAssertDebug([NSObject isNullableObject:self.contentType equalTo:pointer.contentType]);
+
     // TSAttachmentStream doesn't have any "incoming vs. outgoing"
     // state, but this constructor is used only for new incoming
     // attachments which don't need to be uploaded.
@@ -149,15 +152,19 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
                         blurHash:(nullable NSString *)blurHash
                        byteCount:(unsigned int)byteCount
                          caption:(nullable NSString *)caption
+                          cdnKey:(NSString *)cdnKey
+                       cdnNumber:(unsigned int)cdnNumber
                      contentType:(NSString *)contentType
                    encryptionKey:(nullable NSData *)encryptionKey
                         serverId:(unsigned long long)serverId
                   sourceFilename:(nullable NSString *)sourceFilename
+                 uploadTimestamp:(unsigned long long)uploadTimestamp
       cachedAudioDurationSeconds:(nullable NSNumber *)cachedAudioDurationSeconds
                cachedImageHeight:(nullable NSNumber *)cachedImageHeight
                 cachedImageWidth:(nullable NSNumber *)cachedImageWidth
                creationTimestamp:(NSDate *)creationTimestamp
                           digest:(nullable NSData *)digest
+                isAnimatedCached:(nullable NSNumber *)isAnimatedCached
                       isUploaded:(BOOL)isUploaded
               isValidImageCached:(nullable NSNumber *)isValidImageCached
               isValidVideoCached:(nullable NSNumber *)isValidVideoCached
@@ -170,10 +177,13 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
                           blurHash:blurHash
                          byteCount:byteCount
                            caption:caption
+                            cdnKey:cdnKey
+                         cdnNumber:cdnNumber
                        contentType:contentType
                      encryptionKey:encryptionKey
                           serverId:serverId
-                    sourceFilename:sourceFilename];
+                    sourceFilename:sourceFilename
+                   uploadTimestamp:uploadTimestamp];
 
     if (!self) {
         return self;
@@ -184,6 +194,7 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
     _cachedImageWidth = cachedImageWidth;
     _creationTimestamp = creationTimestamp;
     _digest = digest;
+    _isAnimatedCached = isAnimatedCached;
     _isUploaded = isUploaded;
     _isValidImageCached = isValidImageCached;
     _isValidVideoCached = isValidVideoCached;
@@ -420,10 +431,9 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
 
 - (void)removeFile
 {
-    NSError *error;
-
     NSString *thumbnailsDirPath = self.thumbnailsDirPath;
     if ([[NSFileManager defaultManager] fileExistsAtPath:thumbnailsDirPath]) {
+        NSError *error;
         BOOL success = [[NSFileManager defaultManager] removeItemAtPath:thumbnailsDirPath error:&error];
         if (error || !success) {
             OWSLogError(@"remove thumbnails dir failed with: %@", error);
@@ -432,10 +442,8 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
 
     NSString *_Nullable legacyThumbnailPath = self.legacyThumbnailPath;
     if (legacyThumbnailPath) {
-        BOOL success = [[NSFileManager defaultManager] removeItemAtPath:legacyThumbnailPath error:&error];
-
-        if (error || !success) {
-            OWSLogError(@"remove legacy thumbnail failed with: %@", error);
+        if (![OWSFileSystem deleteFileIfExists:legacyThumbnailPath]) {
+            OWSLogError(@"remove legacy thumbnail failed.");
         }
     }
 
@@ -444,12 +452,9 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
         OWSFailDebug(@"Missing path for attachment.");
         return;
     }
-    BOOL success = [[NSFileManager defaultManager] removeItemAtPath:filePath error:&error];
-    if (error || !success) {
-        OWSLogError(@"remove file failed with: %@", error);
+    if (![OWSFileSystem deleteFileIfExists:filePath]) {
+        OWSLogError(@"remove file failed");
     }
-
-
 
     // Remove the attachment specific directory and any associated files stored for this attachment.
     NSString *_Nullable attachmentFolder = self.uniqueIdAttachmentFolder;
@@ -502,7 +507,7 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
             OWSLogVerbose(@"Updating isValidImageCached.");
             self.isValidImageCached = @([NSData ows_isValidImageAtPath:self.originalFilePath
                                                               mimeType:self.contentType]);
-            if (!self.isValidImageCached) {
+            if (!self.isValidImageCached.boolValue) {
                 OWSLogWarn(@"Invalid image.");
             }
             didUpdateCache = YES;
@@ -551,6 +556,57 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
     return result;
 }
 
+- (BOOL)isAnimated
+{
+    BOOL result;
+    BOOL didUpdateCache = NO;
+    @synchronized(self) {
+        if (!self.isAnimatedCached) {
+            OWSLogVerbose(@"Updating isAnimatedCached.");
+            self.isAnimatedCached = @([self hasAnimatedImageContent]);
+            didUpdateCache = YES;
+        }
+        result = self.isAnimatedCached.boolValue;
+    }
+
+    if (didUpdateCache && self.canAsyncUpdate) {
+        [self applyChangeAsyncToLatestCopyWithChangeBlock:^(
+            TSAttachmentStream *latestInstance) { latestInstance.isAnimatedCached = @(result); }];
+    }
+
+    return result;
+}
+
+- (BOOL)shouldBeRenderedByYY
+{
+    if ([self.contentType isEqualToString:OWSMimeTypeImageWebp] ||
+        [self.contentType isEqualToString:OWSMimeTypeImageGif]) {
+        return YES;
+    }
+    return self.isAnimated;
+}
+
+- (BOOL)hasAnimatedImageContent
+{
+    if ([self.contentType isEqualToString:OWSMimeTypeImageGif]) {
+        return YES;
+    }
+    if (![self.contentType isEqualToString:OWSMimeTypeImageWebp]
+        && ![self.contentType isEqualToString:OWSMimeTypeImagePng]) {
+        return NO;
+    }
+    NSString *_Nullable filePath = self.originalFilePath;
+    if (filePath == nil) {
+        OWSFailDebug(@"Missing filePath.");
+        return NO;
+    }
+    ImageMetadata *imageMetadata = [NSData imageMetadataWithPath:filePath mimeType:self.contentType];
+    if (!imageMetadata.isValid) {
+        return NO;
+    }
+    return imageMetadata.isAnimated;
+}
+
 #pragma mark -
 
 - (nullable UIImage *)originalImage
@@ -565,7 +621,9 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
         if (![self isValidImage]) {
             return nil;
         }
-        UIImage *_Nullable image = [[UIImage alloc] initWithContentsOfFile:self.originalFilePath];
+
+        Class imageClass = self.isWebpImage ? [YYImage class] : [UIImage class];
+        UIImage *_Nullable image = [[imageClass alloc] initWithContentsOfFile:self.originalFilePath];
         if (image == nil) {
             OWSFailDebug(
                 @"Couldn't load original image: %d.", [OWSFileSystem fileOrFolderExistsAtPath:self.originalFilePath]);
@@ -713,7 +771,7 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
     OWSAssertDebug(changeBlock);
 
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-        [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+        DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
             // We load a new instance before using anyUpdateWithTransaction()
             // since it isn't thread-safe to mutate the current instance async.
             TSAttachmentStream *_Nullable latestInstance =
@@ -731,7 +789,7 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
                                                                block:^(TSAttachmentStream *attachmentStream) {
                                                                    changeBlock(attachmentStream);
                                                                }];
-        }];
+        });
 
         if (completion != nil) {
             completion();
@@ -1072,17 +1130,24 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
 - (void)updateAsUploadedWithEncryptionKey:(NSData *)encryptionKey
                                    digest:(NSData *)digest
                                  serverId:(UInt64)serverId
+                                   cdnKey:(NSString *)cdnKey
+                                cdnNumber:(UInt32)cdnNumber
+                          uploadTimestamp:(unsigned long long)uploadTimestamp
                               transaction:(SDSAnyWriteTransaction *)transaction
 {
     OWSAssertDebug(encryptionKey.length > 0);
     OWSAssertDebug(digest.length > 0);
-    OWSAssertDebug(serverId > 0);
+    OWSAssertDebug(serverId > 0 || cdnKey.length > 0);
+    OWSAssertDebug(uploadTimestamp > 0);
 
     [self anyUpdateAttachmentStreamWithTransaction:transaction
                                              block:^(TSAttachmentStream *attachment) {
                                                  [attachment setEncryptionKey:encryptionKey];
                                                  [attachment setDigest:digest];
                                                  [attachment setServerId:serverId];
+                                                 [attachment setCdnKey:cdnKey];
+                                                 [attachment setCdnNumber:cdnNumber];
+                                                 [attachment setUploadTimestamp:uploadTimestamp];
                                                  [attachment setIsUploaded:YES];
                                              }];
 }
@@ -1138,9 +1203,16 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
 
 - (nullable SSKProtoAttachmentPointer *)buildProto
 {
-    OWSAssertDebug(self.serverId > 0);
+    BOOL isValidV1orV2 = self.serverId > 0;
+    BOOL isValidV3 = (self.cdnKey.length > 0 && self.cdnNumber > 0);
+    OWSAssertDebug(isValidV1orV2 || isValidV3);
 
-    SSKProtoAttachmentPointerBuilder *builder = [SSKProtoAttachmentPointer builderWithId:self.serverId];
+    SSKProtoAttachmentPointerBuilder *builder = [SSKProtoAttachmentPointer builder];
+    builder.cdnID = self.serverId;
+    if (self.cdnKey.length > 0) {
+        builder.cdnKey = self.cdnKey;
+    }
+    builder.cdnNumber = self.cdnNumber;
 
     OWSAssertDebug(self.contentType.length > 0);
     builder.contentType = self.contentType;
@@ -1156,9 +1228,20 @@ typedef void (^OWSLoadedThumbnailSuccess)(OWSLoadedThumbnail *loadedThumbnail);
     builder.size = self.byteCount;
     builder.key = self.encryptionKey;
     builder.digest = self.digest;
-    builder.flags = self.isVoiceMessage ? SSKProtoAttachmentPointerFlagsVoiceMessage : 0;
+
+    if (self.isVoiceMessage) {
+        builder.flags = SSKProtoAttachmentPointerFlagsVoiceMessage;
+    } else if (self.isBorderless) {
+        builder.flags = SSKProtoAttachmentPointerFlagsBorderless;
+    } else {
+        builder.flags = 0;
+    }
+
     if (self.blurHash.length > 0) {
         builder.blurHash = self.blurHash;
+    }
+    if (self.uploadTimestamp > 0) {
+        builder.uploadTimestamp = self.uploadTimestamp;
     }
 
     if (self.shouldHaveImageSize) {

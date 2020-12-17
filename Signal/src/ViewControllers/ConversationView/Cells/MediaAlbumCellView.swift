@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -7,6 +7,7 @@ import Foundation
 @objc(OWSMediaAlbumCellView)
 public class MediaAlbumCellView: UIStackView {
     private let items: [ConversationMediaAlbumItem]
+    private let isBorderless: Bool
 
     @objc
     public let itemViews: [ConversationMediaView]
@@ -26,19 +27,24 @@ public class MediaAlbumCellView: UIStackView {
     public required init(mediaCache: NSCache<NSString, AnyObject>,
                          items: [ConversationMediaAlbumItem],
                          isOutgoing: Bool,
-                         maxMessageWidth: CGFloat) {
+                         maxMessageWidth: CGFloat,
+                         isBorderless: Bool) {
         self.items = items
         self.itemViews = MediaAlbumCellView.itemsToDisplay(forItems: items).map {
             ConversationMediaView(mediaCache: mediaCache,
                                   attachment: $0.attachment,
                                   isOutgoing: isOutgoing,
-                                  maxMessageWidth: maxMessageWidth)
+                                  maxMessageWidth: maxMessageWidth,
+                                  isBorderless: isBorderless)
         }
+        self.isBorderless = isBorderless
 
         super.init(frame: .zero)
 
         // UIStackView's backgroundColor property has no effect.
-        addBackgroundView(withBackgroundColor: Theme.backgroundColor)
+        if !isBorderless {
+            addBackgroundView(withBackgroundColor: Theme.backgroundColor)
+        }
 
         createContents(maxMessageWidth: maxMessageWidth)
     }
@@ -138,7 +144,7 @@ public class MediaAlbumCellView: UIStackView {
                 tintView.autoPinEdgesToSuperviewEdges()
 
                 let moreCount = max(1, items.count - MediaAlbumCellView.kMaxItems)
-                let moreCountText = OWSFormat.formatInt(Int32(moreCount))
+                let moreCountText = OWSFormat.formatInt(moreCount)
                 let moreText = String(format: NSLocalizedString("MEDIA_GALLERY_MORE_ITEMS_FORMAT",
                                                                 comment: "Format for the 'more items' indicator for media galleries. Embeds {{the number of additional items}}."), moreCountText)
                 let moreLabel = UILabel()
@@ -183,7 +189,7 @@ public class MediaAlbumCellView: UIStackView {
     private func autoSet(viewSize: CGFloat,
                          ofViews views: [ConversationMediaView]) {
         for itemView in views {
-            itemView.autoSetDimensions(to: CGSize(width: viewSize, height: viewSize))
+            itemView.autoSetDimensions(to: CGSize(square: viewSize))
         }
     }
 
@@ -269,7 +275,7 @@ public class MediaAlbumCellView: UIStackView {
         var bestDistance: CGFloat = 0
         for itemView in itemViews {
             let itemCenter = convert(itemView.center, from: itemView.superview)
-            let distance = CGPointDistance(location, itemCenter)
+            let distance = location.distance(itemCenter)
             if bestMediaView != nil && distance > bestDistance {
                 continue
             }

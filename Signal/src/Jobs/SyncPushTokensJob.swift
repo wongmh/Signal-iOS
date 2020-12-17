@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import PromiseKit
@@ -8,7 +8,8 @@ import SignalServiceKit
 @objc(OWSSyncPushTokensJob)
 class SyncPushTokensJob: NSObject {
 
-    @objc public static let PushTokensDidChange = Notification.Name("PushTokensDidChange")
+    @objc
+    public static let PushTokensDidChange = Notification.Name("PushTokensDidChange")
 
     // MARK: Dependencies
     let accountManager: AccountManager
@@ -25,7 +26,7 @@ class SyncPushTokensJob: NSObject {
         self.preferences = preferences
     }
 
-    class func run(accountManager: AccountManager, preferences: OWSPreferences) -> Promise<Void> {
+    private class func run(accountManager: AccountManager, preferences: OWSPreferences) -> Promise<Void> {
         let job = self.init(accountManager: accountManager, preferences: preferences)
         return job.run()
     }
@@ -33,7 +34,7 @@ class SyncPushTokensJob: NSObject {
     func run() -> Promise<Void> {
         Logger.info("Starting.")
 
-        let runPromise = firstly {
+        return firstly {
             return self.pushRegistrationManager.requestPushTokens()
         }.then { (pushToken: String, voipToken: String) -> Promise<Void> in
             Logger.info("finished: requesting push tokens")
@@ -47,7 +48,7 @@ class SyncPushTokensJob: NSObject {
                 shouldUploadTokens = true
             }
 
-            if AppVersion.sharedInstance().lastAppVersion != AppVersion.sharedInstance().currentAppVersion {
+            if AppVersion.shared().lastAppVersion != AppVersion.shared().currentAppVersion {
                 Logger.info("Uploading due to fresh install or app upgrade.")
                 shouldUploadTokens = true
             }
@@ -60,24 +61,25 @@ class SyncPushTokensJob: NSObject {
             Logger.warn("uploading tokens to account servers. pushToken: \(redact(pushToken)), voipToken: \(redact(voipToken))")
             return firstly {
                 self.accountManager.updatePushTokens(pushToken: pushToken, voipToken: voipToken)
-            }.done { _ in
+            }.done(on: .global()) { _ in
                 self.recordPushTokensLocally(pushToken: pushToken, voipToken: voipToken)
             }
         }.done {
             Logger.info("completed successfully.")
         }
-
-        runPromise.retainUntilComplete()
-
-        return runPromise
     }
 
     // MARK: - objc wrappers, since objc can't use swift parameterized types
 
     @objc
-    class func run(accountManager: AccountManager, preferences: OWSPreferences) -> AnyPromise {
-        let promise: Promise<Void> = self.run(accountManager: accountManager, preferences: preferences)
-        return AnyPromise(promise)
+    class func run(accountManager: AccountManager, preferences: OWSPreferences) {
+        firstly {
+            self.run(accountManager: accountManager, preferences: preferences)
+        }.done {
+            Logger.info("completed successfully.")
+        }.catch { error in
+            Logger.error("Error: \(error).")
+        }
     }
 
     @objc
@@ -89,23 +91,24 @@ class SyncPushTokensJob: NSObject {
     // MARK: 
 
     private func recordPushTokensLocally(pushToken: String, voipToken: String) {
+        assert(!Thread.isMainThread)
         Logger.warn("Recording push tokens locally. pushToken: \(redact(pushToken)), voipToken: \(redact(voipToken))")
 
         var didTokensChange = false
 
-        if (pushToken != self.preferences.getPushToken()) {
+        if pushToken != self.preferences.getPushToken() {
             Logger.info("Recording new plain push token")
             self.preferences.setPushToken(pushToken)
             didTokensChange = true
         }
 
-        if (voipToken != self.preferences.getVoipToken()) {
+        if voipToken != self.preferences.getVoipToken() {
             Logger.info("Recording new voip token")
             self.preferences.setVoipToken(voipToken)
             didTokensChange = true
         }
 
-        if (didTokensChange) {
+        if didTokensChange {
             NotificationCenter.default.postNotificationNameAsync(SyncPushTokensJob.PushTokensDidChange, object: nil)
         }
     }

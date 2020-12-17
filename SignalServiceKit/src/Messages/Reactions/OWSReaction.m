@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSReaction.h"
@@ -9,6 +9,7 @@
 
 @property (nonatomic, readonly, nullable) NSString *reactorE164;
 @property (nonatomic, readonly, nullable) NSString *reactorUUID;
+@property (nonatomic) BOOL read;
 
 @end
 
@@ -28,7 +29,7 @@
     return self;
 }
 
-- (instancetype)initWithCoder:(NSCoder *)coder
+- (nullable instancetype)initWithCoder:(NSCoder *)coder
 {
     return [super initWithCoder:coder];
 }
@@ -44,6 +45,7 @@
                            emoji:(NSString *)emoji
                      reactorE164:(nullable NSString *)reactorE164
                      reactorUUID:(nullable NSString *)reactorUUID
+                            read:(BOOL)read
              receivedAtTimestamp:(uint64_t)receivedAtTimestamp
                  sentAtTimestamp:(uint64_t)sentAtTimestamp
                  uniqueMessageId:(NSString *)uniqueMessageId
@@ -58,6 +60,7 @@
     _emoji = emoji;
     _reactorE164 = reactorE164;
     _reactorUUID = reactorUUID;
+    _read = read;
     _receivedAtTimestamp = receivedAtTimestamp;
     _sentAtTimestamp = sentAtTimestamp;
     _uniqueMessageId = uniqueMessageId;
@@ -74,6 +77,18 @@
 - (SignalServiceAddress *)reactor
 {
     return [[SignalServiceAddress alloc] initWithUuidString:self.reactorUUID phoneNumber:self.reactorE164];
+}
+
+- (void)markAsReadWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [self anyUpdateWithTransaction:transaction
+                             block:^(OWSReaction *reaction) {
+                                 reaction.read = YES;
+                             }];
+
+    [transaction addAsyncCompletion:^{
+        [SSKEnvironment.shared.notificationsManager cancelNotificationsForReactionId:self.uniqueId];
+    }];
 }
 
 @end

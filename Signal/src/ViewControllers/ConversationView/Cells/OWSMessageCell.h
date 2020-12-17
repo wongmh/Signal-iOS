@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "ConversationViewCell.h"
@@ -11,7 +11,7 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface OWSMessageCell : ConversationViewCell
+@interface OWSMessageCell : ConversationViewCell <SelectableConversationCell>
 
 @property (nonatomic, readonly) OWSMessageBubbleView *messageBubbleView;
 @property (nonatomic, readonly) OWSMessageStickerView *messageStickerView;
@@ -20,10 +20,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, readonly) UITapGestureRecognizer *messageViewTapGestureRecognizer;
 @property (nonatomic, readonly) UITapGestureRecognizer *contentViewTapGestureRecognizer;
-@property (nonatomic, readonly) UIPanGestureRecognizer *panGestureRecognizer;
-@property (nonatomic, readonly) UILongPressGestureRecognizer *longPressGestureRecognizer;
 
-+ (NSString *)cellReuseIdentifier;
+- (instancetype)init;
+- (nullable instancetype)initWithCoder:(NSCoder *)coder;
+- (instancetype)initWithFrame:(CGRect)frame NS_DESIGNATED_INITIALIZER;
 
 @end
 

@@ -36,6 +36,7 @@ message Envelope {
   optional string serverGuid      = 9;
   // We may eventually want to make this required.
   optional uint64 serverTimestamp = 10;
+  // @trustedMapping
   optional string sourceUuid      = 11;
 }
 
@@ -62,32 +63,38 @@ message Content {
 
 message CallMessage {
   message Offer {
+    enum Type {
+      OFFER_AUDIO_CALL = 0;
+      OFFER_VIDEO_CALL = 1;
+      // next index 3, skip 2 – it was the unused "NEED_PERMISSION" type
+    }
+
     // @required
-    optional uint64 id          = 1;
-    // Signal-iOS renamed the description field to avoid
-    // conflicts with [NSObject description].
-    // @required
-    optional string sessionDescription = 2;
+    optional uint64 id     = 1;
+    // Legacy/deprecated; replaced by 'opaque'
+    optional string sdp    = 2;
+    optional Type   type   = 3;
+    optional bytes  opaque = 4;
   }
 
   message Answer {
     // @required
-    optional uint64 id          = 1;
-    // Signal-iOS renamed the description field to avoid
-    // conflicts with [NSObject description].
-    // @required
-    optional string sessionDescription = 2;
+    optional uint64 id     = 1;
+    // Legacy/deprecated; replaced by 'opaque'
+    optional string sdp    = 2;
+    optional bytes  opaque = 3;
   }
 
   message IceUpdate {
     // @required
-    optional uint64 id            = 1;
-    // @required
-    optional string sdpMid        = 2;
-    // @required
-    optional uint32 sdpMLineIndex = 3;
-    // @required
-    optional string sdp           = 4;
+    optional uint64 id     = 1;
+    // Legacy/deprecated; remove when old clients are gone.
+    optional string mid    = 2;
+    // Legacy/deprecated; remove when old clients are gone.
+    optional uint32 line   = 3;
+    // Legacy/deprecated; replaced by 'opaque'
+    optional string sdp    = 4;
+    optional bytes  opaque = 5;
   }
 
   message Busy {
@@ -96,18 +103,36 @@ message CallMessage {
   }
 
   message Hangup {
+    enum Type {
+      HANGUP_NORMAL          = 0;
+      HANGUP_ACCEPTED        = 1;
+      HANGUP_DECLINED        = 2;
+      HANGUP_BUSY            = 3;
+      HANGUP_NEED_PERMISSION = 4;
+    }
+
     // @required
-    optional uint64 id = 1;
+    optional uint64 id       = 1;
+    optional Type   type     = 2;
+    optional uint32 deviceId = 3;
   }
 
-  optional Offer     offer     = 1;
-  optional Answer    answer    = 2;
-  repeated IceUpdate iceUpdate = 3;
-  optional Hangup    hangup    = 4;
-  optional Busy      busy      = 5;
+  message Opaque {
+    optional bytes data = 1;
+  }
+
+  optional Offer     offer               = 1;
+  optional Answer    answer              = 2;
+  repeated IceUpdate iceUpdate           = 3;
+  optional Hangup    legacyHangup        = 4;
+  optional Busy      busy                = 5;
   // Signal-iOS sends profile key with call messages
-  // for earlier discovery
-  optional bytes     profileKey = 6;
+  // for earlier discovery.
+  optional bytes     profileKey          = 6;
+  optional Hangup    hangup              = 7;
+  optional bool      supportsMultiRing   = 8;
+  optional uint32    destinationDeviceId = 9;
+  optional Opaque    opaque              = 10;
 }
 
 message DataMessage {
@@ -135,6 +160,7 @@ message DataMessage {
     optional string            authorUuid  = 5;
     optional string            text        = 3;
     repeated QuotedAttachment  attachments = 4;
+    repeated BodyRange         bodyRanges  = 6;
   }
 
   message Contact {
@@ -206,20 +232,23 @@ message DataMessage {
 
   message Preview {
     // @required
-    optional string            url   = 1;
-    optional string            title = 2;
-    optional AttachmentPointer image = 3;
+    optional string            url                = 1;
+    optional string            title              = 2;
+    optional AttachmentPointer image              = 3;
+    optional string            previewDescription = 4;
+    optional uint64            date               = 5;
   }
 
   message Sticker {
     // @required
-    optional bytes packId = 1;
+    optional bytes             packId    = 1;
     // @required
-    optional bytes packKey = 2;
+    optional bytes             packKey   = 2;
     // @required
-    optional uint32 stickerId = 3;
+    optional uint32            stickerId = 3;
     // @required
-    optional AttachmentPointer data = 4;
+    optional AttachmentPointer data      = 4;
+    optional string            emoji     = 5;
   }
 
   message Reaction {
@@ -233,15 +262,39 @@ message DataMessage {
     optional uint64 timestamp  = 5;
   }
 
+  message Delete {
+    // @required
+    optional uint64 targetSentTimestamp = 1;
+  }
+
+  message BodyRange {
+    optional uint32 start  = 1;
+    optional uint32 length = 2;
+
+    // oneof commented out because swift generated
+    // enum with associated values can't be converted
+    // to objc representation
+    //
+    // oneof associatedValue {
+      optional string mentionUuid = 3;
+    // }
+  }
+
+  message GroupCallUpdate {
+    optional string eraId = 1;
+  }
+
   enum ProtocolVersion {
     option allow_alias = true;
 
-    INITIAL         = 0;
-    MESSAGE_TIMERS  = 1;
-    VIEW_ONCE       = 2;
-    VIEW_ONCE_VIDEO = 3;
-    REACTIONS       = 4; 
-    CURRENT         = 4;
+    INITIAL                  = 0;
+    MESSAGE_TIMERS           = 1;
+    VIEW_ONCE                = 2;
+    VIEW_ONCE_VIDEO          = 3;
+    REACTIONS                = 4;
+    CDN_SELECTOR_ATTACHMENTS = 5;
+    MENTIONS                 = 6;
+    CURRENT                  = 6;
   }
 
   optional string            body                    =  1;
@@ -259,6 +312,10 @@ message DataMessage {
   optional uint32            requiredProtocolVersion = 12;
   optional bool              isViewOnce              = 14;
   optional Reaction          reaction                = 16;
+  optional Delete            delete                  = 17;
+  repeated BodyRange         bodyRanges              = 18;
+  optional GroupCallUpdate   groupCallUpdate         = 19;
+  // Field 20 is reserved.
 }
 
 message NullMessage {
@@ -346,8 +403,9 @@ message SyncMessage {
     optional bool   readReceipts                   = 1;
     optional bool   unidentifiedDeliveryIndicators = 2;
     optional bool   typingIndicators               = 3;
-    optional bool   linkPreviews                   = 4;
+    // 4 is reserved
     optional uint32 provisioningVersion            = 5;
+    optional bool   linkPreviews                   = 6;
   }
 
   message StickerPackOperation {
@@ -383,44 +441,69 @@ message SyncMessage {
     optional bytes storageService = 1;
   }
 
-  optional Sent                 sent                 =  1;
-  optional Contacts             contacts             =  2;
-  optional Groups               groups               =  3;
-  optional Request              request              =  4;
-  repeated Read                 read                 =  5;
-  optional Blocked              blocked              =  6;
-  optional Verified             verified             =  7;
-  optional Configuration        configuration        =  9;
-  optional bytes                padding              =  8;
-  repeated StickerPackOperation stickerPackOperation = 10;
-  optional ViewOnceOpen         viewOnceOpen         = 11;
-  optional FetchLatest          fetchLatest          = 12;
-  optional Keys                 keys                 = 13;
+  message MessageRequestResponse {
+    enum Type {
+      UNKNOWN          = 0;
+      ACCEPT           = 1;
+      DELETE           = 2;
+      BLOCK            = 3;
+      BLOCK_AND_DELETE = 4;
+    }
+
+    optional string threadE164 = 1;
+    optional string threadUuid = 2;
+    optional bytes  groupId    = 3;
+    optional Type   type       = 4;
+  }
+
+  optional Sent                   sent                   =  1;
+  optional Contacts               contacts               =  2;
+  optional Groups                 groups                 =  3;
+  optional Request                request                =  4;
+  repeated Read                   read                   =  5;
+  optional Blocked                blocked                =  6;
+  optional Verified               verified               =  7;
+  optional Configuration          configuration          =  9;
+  optional bytes                  padding                =  8;
+  repeated StickerPackOperation   stickerPackOperation   = 10;
+  optional ViewOnceOpen           viewOnceOpen           = 11;
+  optional FetchLatest            fetchLatest            = 12;
+  optional Keys                   keys                   = 13;
+  optional MessageRequestResponse messageRequestResponse = 14;
 }
 
 message AttachmentPointer {
   enum Flags {
     VOICE_MESSAGE = 1;
+    BORDERLESS    = 2;
   }
 
-  // @required
-  optional fixed64 id          = 1;
-  optional string  contentType = 2;
-  optional bytes   key         = 3;
-  optional uint32  size        = 4;
-  optional bytes   thumbnail   = 5;
-  optional bytes   digest      = 6;
-  optional string  fileName    = 7;
-  optional uint32  flags       = 8;
-  optional uint32  width       = 9;
-  optional uint32  height      = 10;
-  optional string  caption     = 11;
-  optional string  blurHash    = 12;
+  // oneof commented out because swift generated
+  // enum with associated values can't be converted
+  // to objc representation
+  //
+  // oneof attachment_identifier {
+  optional fixed64 cdnId           = 1;
+  optional string  cdnKey          = 15;
+  // }
+  optional string  contentType     =  2;
+  optional bytes   key             =  3;
+  optional uint32  size            =  4;
+  optional bytes   thumbnail       =  5;
+  optional bytes   digest          =  6;
+  optional string  fileName        =  7;
+  optional uint32  flags           =  8;
+  optional uint32  width           =  9;
+  optional uint32  height          = 10;
+  optional string  caption         = 11;
+  optional string  blurHash        = 12;
+  optional uint64  uploadTimestamp = 13;
+  optional uint32  cdnNumber       = 14;
 }
 
 message GroupContext {
   message Member {
-    optional string uuid = 1;
+    // skip 1, formerly uuid
     optional string e164 = 2;
   }
 
@@ -435,9 +518,6 @@ message GroupContext {
   optional bytes             id          = 1;
   optional Type              type        = 2;
   optional string            name        = 3;
-  // A list of known phone numbers in the group, only maintained 
-  // to support legacy apps that don't know about UUIDs. We may want 
-  // to eventually stop populating this.
   repeated string            membersE164 = 4;
   optional AttachmentPointer avatar      = 5;
   repeated Member            members     = 6;
@@ -455,8 +535,9 @@ message ContactDetails {
     optional uint32 length      = 2;
   }
 
-  optional string   number      = 1;
-  optional string   uuid        = 9;
+  optional string   contactE164 = 1;
+  // @trustedMapping
+  optional string   contactUuid = 9;
   optional string   name        = 2;
   optional Avatar   avatar      = 3;
   optional string   color       = 4;
@@ -475,16 +556,13 @@ message GroupDetails {
   }
 
   message Member {
-    optional string uuid = 1;
+    // skip 1, formerly uuid
     optional string e164 = 2;
   }
 
   // @required
   optional bytes  id          = 1;
   optional string name        = 2;
-  // A list of known phone numbers in the group, only maintained 
-  // to support legacy apps that don't know about UUIDs. We may want 
-  // to eventually stop populating this.
   repeated string membersE164 = 3;
   optional Avatar avatar      = 4;
   optional bool   active      = 5 [default = true];
@@ -499,8 +577,9 @@ message GroupDetails {
 message Pack {
   message Sticker {
     // @required
-    optional uint32 id    = 1;
-    optional string emoji = 2;
+    optional uint32 id          = 1;
+    optional string emoji       = 2;
+    optional string contentType = 3;
   }
 
   optional string  title    = 1;

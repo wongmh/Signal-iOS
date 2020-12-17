@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -63,7 +63,7 @@ class ContactShareFieldBase<ContactFieldType: OWSContactField>: NSObject, Contac
     }
 
     func applyToContact(contact: ContactShareViewModel) {
-        preconditionFailure("This method must be overridden")
+        notImplemented()
     }
 }
 
@@ -229,14 +229,6 @@ class ContactShareFieldView: UIStackView {
 @objc
 public class ContactShareApprovalViewController: OWSViewController, EditContactShareNameViewControllerDelegate, ContactShareFieldViewDelegate {
 
-    // MARK: - Dependencies
-
-    private var contactsManager: OWSContactsManager {
-        return Environment.shared.contactsManager
-    }
-
-    // MARK: -
-
     @objc
     public weak var delegate: ContactShareApprovalViewControllerDelegate?
 
@@ -275,16 +267,11 @@ public class ContactShareApprovalViewController: OWSViewController, EditContactS
 
     // MARK: Initializers
 
-    @available(*, unavailable, message:"use other constructor instead.")
-    required public init?(coder aDecoder: NSCoder) {
-        notImplemented()
-    }
-
     @objc
     required public init(contactShare: ContactShareViewModel) {
         self.contactShare = contactShare
 
-        super.init(nibName: nil, bundle: nil)
+        super.init()
 
         buildFields()
     }
@@ -468,7 +455,7 @@ public class ContactShareApprovalViewController: OWSViewController, EditContactS
         let nameLabel = UILabel()
         self.nameLabel = nameLabel
         nameLabel.text = contactShare.name.displayName
-        nameLabel.font = UIFont.ows_dynamicTypeBody.ows_semibold()
+        nameLabel.font = UIFont.ows_dynamicTypeBody.ows_semibold
         nameLabel.textColor = Theme.primaryTextColor
         nameLabel.lineBreakMode = .byTruncatingTail
         stackView.addArrangedSubview(nameLabel)
@@ -476,7 +463,7 @@ public class ContactShareApprovalViewController: OWSViewController, EditContactS
         let editNameLabel = UILabel()
         editNameLabel.text = NSLocalizedString("CONTACT_EDIT_NAME_BUTTON", comment: "Label for the 'edit name' button in the contact share approval view.")
         editNameLabel.font = UIFont.ows_dynamicTypeBody
-        editNameLabel.textColor = UIColor.ows_signalBlue
+        editNameLabel.textColor = Theme.accentBlueColor
         stackView.addArrangedSubview(editNameLabel)
         editNameLabel.setContentHuggingHigh()
         editNameLabel.setCompressionResistanceHigh()

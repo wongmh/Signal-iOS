@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "UIView+OWS.h"
@@ -99,28 +99,6 @@ CGFloat ScaleFromIPhone5(CGFloat iPhone5Value)
     return result;
 }
 
-- (NSArray<NSLayoutConstraint *> *)ows_autoPinToSuperviewEdges
-{
-    NSArray<NSLayoutConstraint *> *result = @[
-        [self autoPinEdgeToSuperviewEdge:ALEdgeLeft],
-        [self autoPinEdgeToSuperviewEdge:ALEdgeRight],
-        [self autoPinEdgeToSuperviewEdge:ALEdgeTop],
-        [self autoPinEdgeToSuperviewEdge:ALEdgeBottom],
-    ];
-    return result;
-}
-
-- (NSArray<NSLayoutConstraint *> *)ows_autoPinToSuperviewMargins
-{
-    NSArray<NSLayoutConstraint *> *result = @[
-        [self autoPinTopToSuperviewMargin],
-        [self autoPinLeadingToSuperviewMargin],
-        [self autoPinTrailingToSuperviewMargin],
-        [self autoPinBottomToSuperviewMargin],
-    ];
-    return result;
-}
-
 - (NSLayoutConstraint *)autoHCenterInSuperview
 {
     return [self autoAlignAxis:ALAxisVertical toSameAxisOfView:self.superview];
@@ -131,7 +109,17 @@ CGFloat ScaleFromIPhone5(CGFloat iPhone5Value)
     return [self autoAlignAxis:ALAxisHorizontal toSameAxisOfView:self.superview];
 }
 
-- (void)autoPinWidthToWidthOfView:(UIView *)view
+- (void)autoPinEdgesToEdgesOfView:(UIView *)view
+{
+    OWSAssertDebug(view);
+
+    [self autoPinEdge:ALEdgeLeft toEdge:ALEdgeLeft ofView:view];
+    [self autoPinEdge:ALEdgeRight toEdge:ALEdgeRight ofView:view];
+    [self autoPinEdge:ALEdgeTop toEdge:ALEdgeTop ofView:view];
+    [self autoPinEdge:ALEdgeBottom toEdge:ALEdgeBottom ofView:view];
+}
+
+- (void)autoPinHorizontalEdgesToEdgesOfView:(UIView *)view
 {
     OWSAssertDebug(view);
 
@@ -139,7 +127,7 @@ CGFloat ScaleFromIPhone5(CGFloat iPhone5Value)
     [self autoPinEdge:ALEdgeRight toEdge:ALEdgeRight ofView:view];
 }
 
-- (void)autoPinHeightToHeightOfView:(UIView *)view
+- (void)autoPinVerticalEdgesToEdgesOfView:(UIView *)view
 {
     OWSAssertDebug(view);
 
@@ -577,6 +565,20 @@ CGFloat ScaleFromIPhone5(CGFloat iPhone5Value)
 #pragma mark -
 
 @implementation UIStackView (OWS)
+
+- (void)addHairlineWithColor:(UIColor *)color
+{
+    [self insertHairlineWithColor:color atIndex:self.arrangedSubviews.count];
+}
+
+- (void)insertHairlineWithColor:(UIColor *)color atIndex:(NSInteger)index
+{
+    UIView *hairlineView = [[UIView alloc] init];
+    hairlineView.backgroundColor = color;
+    [hairlineView autoSetDimension:ALDimensionHeight toSize:1];
+
+    [self insertArrangedSubview:hairlineView atIndex:index];
+}
 
 - (UIView *)addBackgroundViewWithBackgroundColor:(UIColor *)backgroundColor
 {

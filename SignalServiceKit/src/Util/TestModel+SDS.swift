@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -173,25 +173,67 @@ extension TestModel: SDSModel {
     }
 }
 
+// MARK: - DeepCopyable
+
+extension TestModel: DeepCopyable {
+
+    public func deepCopy() throws -> AnyObject {
+        // Any subclass can be cast to it's superclass,
+        // so the order of this switch statement matters.
+        // We need to do a "depth first" search by type.
+        guard let id = self.grdbId?.int64Value else {
+            throw OWSAssertionError("Model missing grdbId.")
+        }
+
+        do {
+            let modelToCopy = self
+            assert(type(of: modelToCopy) == TestModel.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let dateValue: Date? = modelToCopy.dateValue
+            let doubleValue: Double = modelToCopy.doubleValue
+            let floatValue: Float = modelToCopy.floatValue
+            let int64Value: Int64 = modelToCopy.int64Value
+            let nsIntegerValue: Int = modelToCopy.nsIntegerValue
+            let nsNumberValueUsingInt64: NSNumber? = modelToCopy.nsNumberValueUsingInt64
+            let nsNumberValueUsingUInt64: NSNumber? = modelToCopy.nsNumberValueUsingUInt64
+            let nsuIntegerValue: UInt = modelToCopy.nsuIntegerValue
+            let uint64Value: UInt64 = modelToCopy.uint64Value
+
+            return TestModel(grdbId: id,
+                             uniqueId: uniqueId,
+                             dateValue: dateValue,
+                             doubleValue: doubleValue,
+                             floatValue: floatValue,
+                             int64Value: int64Value,
+                             nsIntegerValue: nsIntegerValue,
+                             nsNumberValueUsingInt64: nsNumberValueUsingInt64,
+                             nsNumberValueUsingUInt64: nsNumberValueUsingUInt64,
+                             nsuIntegerValue: nsuIntegerValue,
+                             uint64Value: uint64Value)
+        }
+
+    }
+}
+
 // MARK: - Table Metadata
 
 extension TestModelSerializer {
 
     // This defines all of the columns used in the table
     // where this model (and any subclasses) are persisted.
-    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey, columnIndex: 0)
-    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64, columnIndex: 1)
-    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true, columnIndex: 2)
+    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey)
+    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64)
+    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true)
     // Properties
-    static let dateValueColumn = SDSColumnMetadata(columnName: "dateValue", columnType: .double, isOptional: true, columnIndex: 3)
-    static let doubleValueColumn = SDSColumnMetadata(columnName: "doubleValue", columnType: .double, columnIndex: 4)
-    static let floatValueColumn = SDSColumnMetadata(columnName: "floatValue", columnType: .double, columnIndex: 5)
-    static let int64ValueColumn = SDSColumnMetadata(columnName: "int64Value", columnType: .int64, columnIndex: 6)
-    static let nsIntegerValueColumn = SDSColumnMetadata(columnName: "nsIntegerValue", columnType: .int64, columnIndex: 7)
-    static let nsNumberValueUsingInt64Column = SDSColumnMetadata(columnName: "nsNumberValueUsingInt64", columnType: .int64, isOptional: true, columnIndex: 8)
-    static let nsNumberValueUsingUInt64Column = SDSColumnMetadata(columnName: "nsNumberValueUsingUInt64", columnType: .int64, isOptional: true, columnIndex: 9)
-    static let nsuIntegerValueColumn = SDSColumnMetadata(columnName: "nsuIntegerValue", columnType: .int64, columnIndex: 10)
-    static let uint64ValueColumn = SDSColumnMetadata(columnName: "uint64Value", columnType: .int64, columnIndex: 11)
+    static let dateValueColumn = SDSColumnMetadata(columnName: "dateValue", columnType: .double, isOptional: true)
+    static let doubleValueColumn = SDSColumnMetadata(columnName: "doubleValue", columnType: .double)
+    static let floatValueColumn = SDSColumnMetadata(columnName: "floatValue", columnType: .double)
+    static let int64ValueColumn = SDSColumnMetadata(columnName: "int64Value", columnType: .int64)
+    static let nsIntegerValueColumn = SDSColumnMetadata(columnName: "nsIntegerValue", columnType: .int64)
+    static let nsNumberValueUsingInt64Column = SDSColumnMetadata(columnName: "nsNumberValueUsingInt64", columnType: .int64, isOptional: true)
+    static let nsNumberValueUsingUInt64Column = SDSColumnMetadata(columnName: "nsNumberValueUsingUInt64", columnType: .int64, isOptional: true)
+    static let nsuIntegerValueColumn = SDSColumnMetadata(columnName: "nsuIntegerValue", columnType: .int64)
+    static let uint64ValueColumn = SDSColumnMetadata(columnName: "uint64Value", columnType: .int64)
 
     // TODO: We should decide on a naming convention for
     //       tables that store models.
@@ -319,9 +361,11 @@ public extension TestModel {
 
 @objc
 public class TestModelCursor: NSObject {
+    private let transaction: GRDBReadTransaction
     private let cursor: RecordCursor<TestModelRecord>?
 
-    init(cursor: RecordCursor<TestModelRecord>?) {
+    init(transaction: GRDBReadTransaction, cursor: RecordCursor<TestModelRecord>?) {
+        self.transaction = transaction
         self.cursor = cursor
     }
 
@@ -363,10 +407,10 @@ public extension TestModel {
         let database = transaction.database
         do {
             let cursor = try TestModelRecord.fetchCursor(database)
-            return TestModelCursor(cursor: cursor)
+            return TestModelCursor(transaction: transaction, cursor: cursor)
         } catch {
             owsFailDebug("Read failed: \(error)")
-            return TestModelCursor(cursor: nil)
+            return TestModelCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -572,11 +616,11 @@ public extension TestModel {
         do {
             let sqlRequest = SQLRequest<Void>(sql: sql, arguments: arguments, cached: true)
             let cursor = try TestModelRecord.fetchCursor(transaction.database, sqlRequest)
-            return TestModelCursor(cursor: cursor)
+            return TestModelCursor(transaction: transaction, cursor: cursor)
         } catch {
             Logger.error("sql: \(sql)")
             owsFailDebug("Read failed: \(error)")
-            return TestModelCursor(cursor: nil)
+            return TestModelCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -632,3 +676,20 @@ class TestModelSerializer: SDSSerializer {
         return TestModelRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, dateValue: dateValue, doubleValue: doubleValue, floatValue: floatValue, int64Value: int64Value, nsIntegerValue: nsIntegerValue, nsNumberValueUsingInt64: nsNumberValueUsingInt64, nsNumberValueUsingUInt64: nsNumberValueUsingUInt64, nsuIntegerValue: nsuIntegerValue, uint64Value: uint64Value)
     }
 }
+
+// MARK: - Deep Copy
+
+#if TESTABLE_BUILD
+@objc
+public extension TestModel {
+    // We're not using this method at the moment,
+    // but we might use it for validation of
+    // other deep copy methods.
+    func deepCopyUsingRecord() throws -> TestModel {
+        guard let record = try asRecord() as? TestModelRecord else {
+            throw OWSAssertionError("Could not convert to record.")
+        }
+        return try TestModel.fromRecord(record)
+    }
+}
+#endif

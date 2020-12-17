@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "BaseModel.h"
@@ -13,22 +13,17 @@ NS_ASSUME_NONNULL_BEGIN
 typedef NS_ENUM(NSUInteger, TSAttachmentType) {
     TSAttachmentTypeDefault = 0,
     TSAttachmentTypeVoiceMessage = 1,
+    TSAttachmentTypeBorderless = 2,
 };
 
-@interface TSAttachment : BaseModel {
-
-@protected
-    NSString *_contentType;
-}
+@interface TSAttachment : BaseModel
 
 // TSAttachment is a base class for TSAttachmentPointer (a yet-to-be-downloaded
 // incoming attachment) and TSAttachmentStream (an outgoing or already-downloaded
 // incoming attachment).
-//
-// The attachmentSchemaVersion and serverId properties only apply to
-// TSAttachmentPointer, which can be distinguished by the isDownloaded
-// property.
 @property (atomic, readwrite) UInt64 serverId;
+@property (atomic) NSString *cdnKey;
+@property (atomic) UInt32 cdnNumber;
 @property (atomic, readwrite, nullable) NSData *encryptionKey;
 @property (nonatomic, readonly) NSString *contentType;
 @property (nonatomic) TSAttachmentType attachmentType;
@@ -42,10 +37,14 @@ typedef NS_ENUM(NSUInteger, TSAttachmentType) {
 
 @property (nonatomic, readonly, nullable) NSString *blurHash;
 
+// This property will be non-zero if set.
+@property (nonatomic) UInt64 uploadTimestamp;
+
 #pragma mark - Media Album
 
 @property (nonatomic, readonly, nullable) NSString *caption;
 @property (nonatomic, readonly, nullable) NSString *albumMessageId;
+@property (nonatomic, readonly) NSString *emoji;
 
 - (nullable TSMessage *)fetchAlbumMessageWithTransaction:(SDSAnyReadTransaction *)transaction
     NS_SWIFT_NAME(fetchAlbumMessage(transaction:));
@@ -57,16 +56,25 @@ typedef NS_ENUM(NSUInteger, TSAttachmentType) {
 
 #pragma mark -
 
++ (instancetype)new NS_UNAVAILABLE;
+- (instancetype)init NS_UNAVAILABLE;
+- (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithUniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
+- (instancetype)initWithGrdbId:(int64_t)grdbId uniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
+
 // This constructor is used for new instances of TSAttachmentPointer,
 // i.e. undownloaded incoming attachments.
 - (instancetype)initWithServerId:(UInt64)serverId
+                          cdnKey:(NSString *)cdnKey
+                       cdnNumber:(UInt32)cdnNumber
                    encryptionKey:(NSData *)encryptionKey
                        byteCount:(UInt32)byteCount
                      contentType:(NSString *)contentType
                   sourceFilename:(nullable NSString *)sourceFilename
                          caption:(nullable NSString *)caption
                   albumMessageId:(nullable NSString *)albumMessageId
-                        blurHash:(nullable NSString *)blurHash;
+                        blurHash:(nullable NSString *)blurHash
+                 uploadTimestamp:(unsigned long long)uploadTimestamp NS_DESIGNATED_INITIALIZER;
 
 // This constructor is used for new instances of TSAttachmentPointer,
 // i.e. undownloaded restoring attachments.
@@ -74,7 +82,7 @@ typedef NS_ENUM(NSUInteger, TSAttachmentType) {
                                contentType:(NSString *)contentType
                             sourceFilename:(nullable NSString *)sourceFilename
                                    caption:(nullable NSString *)caption
-                            albumMessageId:(nullable NSString *)albumMessageId;
+                            albumMessageId:(nullable NSString *)albumMessageId NS_DESIGNATED_INITIALIZER;
 
 // This constructor is used for new instances of TSAttachmentStream
 // that represent new, un-uploaded outgoing attachments.
@@ -82,11 +90,12 @@ typedef NS_ENUM(NSUInteger, TSAttachmentType) {
                                     byteCount:(UInt32)byteCount
                                sourceFilename:(nullable NSString *)sourceFilename
                                       caption:(nullable NSString *)caption
-                               albumMessageId:(nullable NSString *)albumMessageId;
+                               albumMessageId:(nullable NSString *)albumMessageId NS_DESIGNATED_INITIALIZER;
 
 // This constructor is used for new instances of TSAttachmentStream
 // that represent downloaded incoming attachments.
-- (instancetype)initWithPointer:(TSAttachmentPointer *)pointer transaction:(SDSAnyReadTransaction *)transaction;
+- (instancetype)initWithPointer:(TSAttachmentPointer *)pointer
+                    transaction:(SDSAnyReadTransaction *)transaction NS_DESIGNATED_INITIALIZER;
 
 // --- CODE GENERATION MARKER
 
@@ -101,29 +110,36 @@ typedef NS_ENUM(NSUInteger, TSAttachmentType) {
                         blurHash:(nullable NSString *)blurHash
                        byteCount:(unsigned int)byteCount
                          caption:(nullable NSString *)caption
+                          cdnKey:(NSString *)cdnKey
+                       cdnNumber:(unsigned int)cdnNumber
                      contentType:(NSString *)contentType
                    encryptionKey:(nullable NSData *)encryptionKey
                         serverId:(unsigned long long)serverId
                   sourceFilename:(nullable NSString *)sourceFilename
-NS_SWIFT_NAME(init(grdbId:uniqueId:albumMessageId:attachmentType:blurHash:byteCount:caption:contentType:encryptionKey:serverId:sourceFilename:));
+                 uploadTimestamp:(unsigned long long)uploadTimestamp
+NS_DESIGNATED_INITIALIZER NS_SWIFT_NAME(init(grdbId:uniqueId:albumMessageId:attachmentType:blurHash:byteCount:caption:cdnKey:cdnNumber:contentType:encryptionKey:serverId:sourceFilename:uploadTimestamp:));
 
 // clang-format on
 
 // --- CODE GENERATION MARKER
 
-- (nullable instancetype)initWithCoder:(NSCoder *)coder;
-
 - (void)upgradeFromAttachmentSchemaVersion:(NSUInteger)attachmentSchemaVersion;
 
 @property (nonatomic, readonly) BOOL isAnimated;
 @property (nonatomic, readonly) BOOL isImage;
+@property (nonatomic, readonly) BOOL isWebpImage;
 @property (nonatomic, readonly) BOOL isVideo;
 @property (nonatomic, readonly) BOOL isAudio;
 @property (nonatomic, readonly) BOOL isVoiceMessage;
+@property (nonatomic, readonly) BOOL isBorderless;
 @property (nonatomic, readonly) BOOL isVisualMedia;
 @property (nonatomic, readonly) BOOL isOversizeText;
 
 + (NSString *)emojiForMimeType:(NSString *)contentType;
+
+// This should only ever be used before the attachment is saved,
+// after that point the content type will be already set.
+- (void)setDefaultContentType:(NSString *)contentType;
 
 #pragma mark - Update With...
 

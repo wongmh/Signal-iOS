@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "SSKMessageDecryptJobRecord.h"
@@ -8,7 +8,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 @implementation SSKMessageDecryptJobRecord
 
-- (instancetype)initWithEnvelopeData:(NSData *)envelopData label:(NSString *)label
+- (nullable instancetype)initWithCoder:(NSCoder *)coder
+{
+    return [super initWithCoder:coder];
+}
+
+- (instancetype)initWithEnvelopeData:(NSData *)envelopData
+             serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
+                               label:(NSString *)label
 {
     self = [super initWithLabel:label];
     if (!self) {
@@ -16,6 +23,7 @@ NS_ASSUME_NONNULL_BEGIN
     }
 
     _envelopeData = envelopData;
+    _serverDeliveryTimestamp = serverDeliveryTimestamp;
 
     return self;
 }
@@ -33,6 +41,7 @@ NS_ASSUME_NONNULL_BEGIN
                           sortId:(unsigned long long)sortId
                           status:(SSKJobRecordStatus)status
                     envelopeData:(nullable NSData *)envelopeData
+         serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
 {
     self = [super initWithGrdbId:grdbId
                         uniqueId:uniqueId
@@ -46,6 +55,7 @@ NS_ASSUME_NONNULL_BEGIN
     }
 
     _envelopeData = envelopeData;
+    _serverDeliveryTimestamp = serverDeliveryTimestamp;
 
     return self;
 }

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -144,19 +144,51 @@ extension KnownStickerPack: SDSModel {
     }
 }
 
+// MARK: - DeepCopyable
+
+extension KnownStickerPack: DeepCopyable {
+
+    public func deepCopy() throws -> AnyObject {
+        // Any subclass can be cast to it's superclass,
+        // so the order of this switch statement matters.
+        // We need to do a "depth first" search by type.
+        guard let id = self.grdbId?.int64Value else {
+            throw OWSAssertionError("Model missing grdbId.")
+        }
+
+        do {
+            let modelToCopy = self
+            assert(type(of: modelToCopy) == KnownStickerPack.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let dateCreated: Date = modelToCopy.dateCreated
+            // NOTE: If this generates build errors, you made need to
+            // implement DeepCopyable for this type in DeepCopy.swift.
+            let info: StickerPackInfo = try DeepCopies.deepCopy(modelToCopy.info)
+            let referenceCount: Int = modelToCopy.referenceCount
+
+            return KnownStickerPack(grdbId: id,
+                                    uniqueId: uniqueId,
+                                    dateCreated: dateCreated,
+                                    info: info,
+                                    referenceCount: referenceCount)
+        }
+
+    }
+}
+
 // MARK: - Table Metadata
 
 extension KnownStickerPackSerializer {
 
     // This defines all of the columns used in the table
     // where this model (and any subclasses) are persisted.
-    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey, columnIndex: 0)
-    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64, columnIndex: 1)
-    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true, columnIndex: 2)
+    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey)
+    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64)
+    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true)
     // Properties
-    static let dateCreatedColumn = SDSColumnMetadata(columnName: "dateCreated", columnType: .double, columnIndex: 3)
-    static let infoColumn = SDSColumnMetadata(columnName: "info", columnType: .blob, columnIndex: 4)
-    static let referenceCountColumn = SDSColumnMetadata(columnName: "referenceCount", columnType: .int64, columnIndex: 5)
+    static let dateCreatedColumn = SDSColumnMetadata(columnName: "dateCreated", columnType: .double)
+    static let infoColumn = SDSColumnMetadata(columnName: "info", columnType: .blob)
+    static let referenceCountColumn = SDSColumnMetadata(columnName: "referenceCount", columnType: .int64)
 
     // TODO: We should decide on a naming convention for
     //       tables that store models.
@@ -278,9 +310,11 @@ public extension KnownStickerPack {
 
 @objc
 public class KnownStickerPackCursor: NSObject {
+    private let transaction: GRDBReadTransaction
     private let cursor: RecordCursor<KnownStickerPackRecord>?
 
-    init(cursor: RecordCursor<KnownStickerPackRecord>?) {
+    init(transaction: GRDBReadTransaction, cursor: RecordCursor<KnownStickerPackRecord>?) {
+        self.transaction = transaction
         self.cursor = cursor
     }
 
@@ -322,10 +356,10 @@ public extension KnownStickerPack {
         let database = transaction.database
         do {
             let cursor = try KnownStickerPackRecord.fetchCursor(database)
-            return KnownStickerPackCursor(cursor: cursor)
+            return KnownStickerPackCursor(transaction: transaction, cursor: cursor)
         } catch {
             owsFailDebug("Read failed: \(error)")
-            return KnownStickerPackCursor(cursor: nil)
+            return KnownStickerPackCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -531,11 +565,11 @@ public extension KnownStickerPack {
         do {
             let sqlRequest = SQLRequest<Void>(sql: sql, arguments: arguments, cached: true)
             let cursor = try KnownStickerPackRecord.fetchCursor(transaction.database, sqlRequest)
-            return KnownStickerPackCursor(cursor: cursor)
+            return KnownStickerPackCursor(transaction: transaction, cursor: cursor)
         } catch {
             Logger.error("sql: \(sql)")
             owsFailDebug("Read failed: \(error)")
-            return KnownStickerPackCursor(cursor: nil)
+            return KnownStickerPackCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -585,3 +619,20 @@ class KnownStickerPackSerializer: SDSSerializer {
         return KnownStickerPackRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, dateCreated: dateCreated, info: info, referenceCount: referenceCount)
     }
 }
+
+// MARK: - Deep Copy
+
+#if TESTABLE_BUILD
+@objc
+public extension KnownStickerPack {
+    // We're not using this method at the moment,
+    // but we might use it for validation of
+    // other deep copy methods.
+    func deepCopyUsingRecord() throws -> KnownStickerPack {
+        guard let record = try asRecord() as? KnownStickerPackRecord else {
+            throw OWSAssertionError("Could not convert to record.")
+        }
+        return try KnownStickerPack.fromRecord(record)
+    }
+}
+#endif

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import <UIKit/UIKit.h>
@@ -20,6 +20,7 @@ extern NSString *const ThemeDidChangeNotification;
 
 + (SDSKeyValueStore *)keyValueStore;
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
 
 @property (class, readonly, atomic) BOOL isDarkThemeEnabled;
@@ -41,8 +42,6 @@ extern NSString *const ThemeDidChangeNotification;
 @property (class, readonly, nonatomic) UIColor *placeholderColor;
 @property (class, readonly, nonatomic) UIColor *hairlineColor;
 @property (class, readonly, nonatomic) UIColor *outlineColor;
-
-@property (class, readonly, nonatomic) UIColor *reactionBackgroundColor;
 @property (class, readonly, nonatomic) UIColor *backdropColor;
 
 @property (class, readonly, nonatomic) UIColor *navbarBackgroundColor;
@@ -55,11 +54,22 @@ extern NSString *const ThemeDidChangeNotification;
 @property (class, readonly, nonatomic) UIColor *attachmentKeyboardItemImageColor;
 
 @property (class, readonly, nonatomic) UIColor *conversationButtonBackgroundColor;
+@property (class, readonly, nonatomic) UIColor *conversationButtonTextColor;
 
 @property (class, readonly, nonatomic) UIColor *cellSelectedColor;
 @property (class, readonly, nonatomic) UIColor *cellSeparatorColor;
 
 @property (class, readonly, nonatomic) UIColor *cursorColor;
+
+// For accessibility:
+//
+// * Flat areas (e.g. button backgrounds) should use UIColor.ows_accentBlueColor.
+// * Fine detail (e.g., text, non-filled icons) should use Theme.accentBlueColor.
+//   It is brighter in dark mode, improving legibility.
+@property (class, readonly, nonatomic) UIColor *accentBlueColor;
+
+@property (class, readonly, nonatomic) UIColor *tableCellBackgroundColor;
+@property (class, readonly, nonatomic) UIColor *tableViewBackgroundColor;
 
 // In some contexts, e.g. media viewing/sending, we always use "dark theme" UI regardless of the
 // users chosen theme.
@@ -67,6 +77,7 @@ extern NSString *const ThemeDidChangeNotification;
 @property (class, readonly, nonatomic) UIColor *darkThemeNavbarBackgroundColor;
 @property (class, readonly, nonatomic) UIColor *darkThemeBackgroundColor;
 @property (class, readonly, nonatomic) UIColor *darkThemePrimaryColor;
+@property (class, readonly, nonatomic) UIColor *lightThemePrimaryColor;
 @property (class, readonly, nonatomic) UIColor *darkThemeSecondaryTextAndIconColor;
 @property (class, readonly, nonatomic) UIBlurEffect *darkThemeBarBlurEffect;
 @property (class, readonly, nonatomic) UIColor *galleryHighlightColor;

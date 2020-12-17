@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -16,12 +16,6 @@ public class ThreadDetailsCell: ConversationViewCell {
     @objc
     public required init(coder aDecoder: NSCoder) {
         notImplemented()
-    }
-
-    // MARK: Dependencies
-
-    var contactsManager: OWSContactsManager {
-        return Environment.shared.contactsManager
     }
 
     // MARK: 
@@ -49,7 +43,7 @@ public class ThreadDetailsCell: ConversationViewCell {
 
         avatarContainer.layoutMargins = UIEdgeInsets(top: 0, leading: 0, bottom: avatarBottomInset, trailing: 0)
 
-        titleLabel.font = UIFont.ows_dynamicTypeTitle1.ows_semibold()
+        titleLabel.font = UIFont.ows_dynamicTypeTitle1.ows_semibold
         titleLabel.numberOfLines = 0
         titleLabel.lineBreakMode = .byWordWrapping
         titleLabel.textAlignment = .center
@@ -116,11 +110,8 @@ public class ThreadDetailsCell: ConversationViewCell {
             return
         }
 
-        self.avatarView = ConversationAvatarImageView(
-            thread: viewItem.thread,
-            diameter: UInt(avatarDiameter),
-            contactsManager: Environment.shared.contactsManager
-        )
+        self.avatarView = ConversationAvatarImageView(thread: viewItem.thread,
+                                                      diameter: UInt(avatarDiameter))
 
         avatarContainer.addSubview(avatarView!)
         avatarView?.autoSetDimension(.height, toSize: avatarDiameter)
@@ -168,9 +159,14 @@ public class ThreadDetailsCell: ConversationViewCell {
 
         switch viewItem.thread {
         case let groupThread as TSGroupThread:
-            let formatString = NSLocalizedString("THREAD_DETAILS_GROUP_MEMBER_COUNT_FORMAT",
-                                                 comment: "The number of members in a group. Embeds {{member count}}")
-            details = String(format: formatString, groupThread.groupModel.groupMembers.count)
+            if let groupModelV2 = groupThread.groupModel as? TSGroupModelV2,
+                groupModelV2.isPlaceholderModel {
+                // Don't show details for a placeholder.
+                return
+            }
+
+            let memberCount = groupThread.groupModel.groupMembers.count
+            details = GroupViewUtils.formatGroupMembersLabel(memberCount: memberCount)
         case let contactThread as TSContactThread where contactThread.isNoteToSelf:
             details = NSLocalizedString("THREAD_DETAILS_NOTE_TO_SELF_EXPLANATION",
                                         comment: "Subtitle appearing at the top of the users 'note to self' conversation")
@@ -258,7 +254,7 @@ public class ThreadDetailsCell: ConversationViewCell {
                 return owsFailDebug("Unexpectedly tried to insert too many group names")
             }
 
-            let boldGroupName = NSAttributedString(string: groupName, attributes: [.font: UIFont.ows_dynamicTypeSubheadline.ows_semibold()])
+            let boldGroupName = NSAttributedString(string: groupName, attributes: [.font: UIFont.ows_dynamicTypeSubheadline.ows_semibold])
             mutableAttributedString.replaceCharacters(in: nextInsertionPoint, with: boldGroupName)
         }
 

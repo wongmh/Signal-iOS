@@ -1,10 +1,9 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
 import SignalServiceKit
-import YYImage
 
 private class StickerPackActionButton: UIView {
 
@@ -33,7 +32,7 @@ private class StickerPackActionButton: UIView {
         actionIconView.tintColor = Theme.secondaryTextAndIconColor
         actionCircleView.addSubview(actionIconView)
         actionIconView.autoCenterInSuperview()
-        actionIconView.autoSetDimensions(to: CGSize(width: actionIconSize, height: actionIconSize))
+        actionIconView.autoSetDimensions(to: CGSize(square: actionIconSize))
 
         self.addSubview(actionCircleView)
         actionCircleView.autoPinEdgesToSuperviewEdges()
@@ -54,22 +53,7 @@ private class StickerPackActionButton: UIView {
 @objc
 public class ManageStickersViewController: OWSTableViewController {
 
-    // MARK: - Dependencies
-
-    private var databaseStorage: SDSDatabaseStorage {
-        return SDSDatabaseStorage.shared
-    }
-
-    private var stickerManager: StickerManager {
-        return SSKEnvironment.shared.stickerManager
-    }
-
     // MARK: Initializers
-
-    @available(*, unavailable, message:"use other constructor instead.")
-    required public init?(coder aDecoder: NSCoder) {
-        notImplemented()
-    }
 
     @objc
     public required override init() {
@@ -200,7 +184,6 @@ public class ManageStickersViewController: OWSTableViewController {
                 }
                 return self.buildTableCell(installedStickerPack: dataSource)
                 },
-                                     customRowHeight: UITableView.automaticDimension,
                                      actionBlock: { [weak self] in
                                         guard let packInfo = dataSource.info else {
                                             owsFailDebug("Source missing info.")
@@ -218,7 +201,6 @@ public class ManageStickersViewController: OWSTableViewController {
                 }
                 return self.buildTableCell(availableStickerPack: dataSource)
                 },
-                         customRowHeight: UITableView.automaticDimension,
                          actionBlock: { [weak self] in
                             guard let packInfo = dataSource.info else {
                                 owsFailDebug("Source missing info.")
@@ -284,10 +266,8 @@ public class ManageStickersViewController: OWSTableViewController {
     }
 
     private func buildTableCell(installedStickerPack dataSource: StickerPackDataSource) -> UITableViewCell {
-        var actionIconName: String?
-        if FeatureFlags.stickerSharing {
-            actionIconName = CurrentAppContext().isRTL ? "reply-filled-24" : "reply-filled-reversed-24"
-        }
+        let actionIconName = CurrentAppContext().isRTL ? "reply-filled-24" : "reply-filled-reversed-24"
+
         return buildTableCell(dataSource: dataSource,
                               actionIconName: actionIconName) { [weak self] in
                                 guard let packInfo = dataSource.info else {
@@ -336,7 +316,7 @@ public class ManageStickersViewController: OWSTableViewController {
             iconView = UIView()
         }
         let iconSize: CGFloat = 64
-        iconView.autoSetDimensions(to: CGSize(width: iconSize, height: iconSize))
+        iconView.autoSetDimensions(to: CGSize(square: iconSize))
 
         let title: String
         if let titleValue = titleValue?.ows_stripped(),
@@ -347,7 +327,7 @@ public class ManageStickersViewController: OWSTableViewController {
         }
         let titleLabel = UILabel()
         titleLabel.text = title
-        titleLabel.font = UIFont.ows_dynamicTypeBody.ows_semibold()
+        titleLabel.font = UIFont.ows_dynamicTypeBody.ows_semibold
         titleLabel.textColor = Theme.primaryTextColor
         titleLabel.lineBreakMode = .byTruncatingTail
 
@@ -367,7 +347,7 @@ public class ManageStickersViewController: OWSTableViewController {
         var authorViews = [UIView]()
         if isDefaultStickerPack {
             let builtInPackView = UIImageView()
-            builtInPackView.setTemplateImageName("check-circle-filled-16", tintColor: UIColor.ows_signalBlue)
+            builtInPackView.setTemplateImageName("check-circle-filled-16", tintColor: Theme.accentBlueColor)
             builtInPackView.setCompressionResistanceHigh()
             builtInPackView.setContentHuggingHigh()
             authorViews.append(builtInPackView)
@@ -377,8 +357,8 @@ public class ManageStickersViewController: OWSTableViewController {
             authorName.count > 0 {
             let authorLabel = UILabel()
             authorLabel.text = authorName
-            authorLabel.font = isDefaultStickerPack ? UIFont.ows_dynamicTypeCaption1.ows_semibold() : UIFont.ows_dynamicTypeCaption1
-            authorLabel.textColor = isDefaultStickerPack ? UIColor.ows_signalBlue : Theme.secondaryTextAndIconColor
+            authorLabel.font = isDefaultStickerPack ? UIFont.ows_dynamicTypeCaption1.ows_semibold : UIFont.ows_dynamicTypeCaption1
+            authorLabel.textColor = isDefaultStickerPack ? Theme.accentBlueColor : Theme.secondaryTextAndIconColor
             authorLabel.lineBreakMode = .byTruncatingTail
             authorViews.append(authorLabel)
         }
@@ -414,23 +394,7 @@ public class ManageStickersViewController: OWSTableViewController {
 
     private func imageView(forStickerInfo stickerInfo: StickerInfo,
                            dataSource: StickerPackDataSource) -> UIView? {
-
-        guard let filePath = dataSource.filePath(forSticker: stickerInfo) else {
-            owsFailDebug("Missing sticker data file path.")
-            return nil
-        }
-        guard NSData.ows_isValidImage(atPath: filePath, mimeType: OWSMimeTypeImageWebp) else {
-            owsFailDebug("Invalid sticker.")
-            return nil
-        }
-        guard let stickerImage = YYImage(contentsOfFile: filePath) else {
-            owsFailDebug("Sticker could not be parsed.")
-            return nil
-        }
-
-        let stickerView = YYAnimatedImageView()
-        stickerView.image = stickerImage
-        return stickerView
+        StickerView.stickerView(forStickerInfo: stickerInfo, dataSource: dataSource)
     }
 
     private func buildEmptySectionItem(labelText: String) -> OWSTableItem {
@@ -439,8 +403,7 @@ public class ManageStickersViewController: OWSTableViewController {
                 return UITableViewCell()
             }
             return self.buildEmptySectionCell(labelText: labelText)
-            },
-                                          customRowHeight: UITableView.automaticDimension)
+            })
     }
 
     private func buildEmptySectionCell(labelText: String) -> UITableViewCell {
@@ -464,12 +427,7 @@ public class ManageStickersViewController: OWSTableViewController {
         label.setCompressionResistanceHigh()
         label.setContentHuggingHigh()
         cell.contentView.addSubview(label)
-        // This sidesteps an apparent bug in iOS Auto Layout.
-        if #available(iOS 11.0, *) {
-            label.autoPinEdgesToSuperviewMargins(with: UIEdgeInsets(top: 24, leading: 16, bottom: 24, trailing: 16))
-        } else {
-            label.autoPinEdgesToSuperviewMargins()
-        }
+        label.autoPinEdgesToSuperviewMargins(with: UIEdgeInsets(top: 24, leading: 16, bottom: 24, trailing: 16))
 
         return cell
     }

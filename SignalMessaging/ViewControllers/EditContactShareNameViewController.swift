@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -59,7 +59,7 @@ class ContactNameFieldView: UIView {
         let nameLabel = UILabel()
         nameLabel.text = name
         nameLabel.font = UIFont.ows_dynamicTypeBody
-        nameLabel.textColor = UIColor.ows_signalBlue
+        nameLabel.textColor = Theme.accentBlueColor
         nameLabel.lineBreakMode = .byTruncatingTail
         stackView.addArrangedSubview(nameLabel)
         nameLabel.setContentHuggingHigh()
@@ -134,17 +134,12 @@ public class EditContactShareNameViewController: OWSViewController, ContactNameF
 
     // MARK: Initializers
 
-    @available(*, unavailable, message:"use other constructor instead.")
-    required public init?(coder aDecoder: NSCoder) {
-        notImplemented()
-    }
-
     @objc
     required public init(contactShare: ContactShareViewModel, delegate: EditContactShareNameViewControllerDelegate) {
         self.contactShare = contactShare
         self.delegate = delegate
 
-        super.init(nibName: nil, bundle: nil)
+        super.init()
 
         buildFields()
     }

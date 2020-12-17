@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import UIKit
@@ -32,7 +32,7 @@ public class ImageEditorColor: NSObject {
     }
 
     public class func defaultColor() -> ImageEditorColor {
-        return ImageEditorColor(color: UIColor(rgbHex: 0xffffff), palettePhase: 0)
+        return ImageEditorColor(color: UIColor(rgbHex: 0xff0000), palettePhase: 0)
     }
 
     public static var gradientUIColors: [UIColor] {
@@ -112,8 +112,7 @@ private class PalettePreviewView: OWSLayerView {
         //
         // The size doesn't matter since this view is
         // mostly transparent and isn't hot.
-        autoSetDimensions(to: CGSize(width: PalettePreviewView.innerRadius * 4,
-                                     height: PalettePreviewView.innerRadius * 4))
+        autoSetDimensions(to: CGSize(square: PalettePreviewView.innerRadius * 4))
     }
 
     @available(*, unavailable, message: "use other init() instead.")
@@ -163,8 +162,7 @@ private class PalettePreviewView: OWSLayerView {
         teardropLayer.path = teardropPath.cgPath
         teardropLayer.frame = bounds
 
-        let innerCircleSize = CGSize(width: innerRadius * 2,
-                                height: innerRadius * 2)
+        let innerCircleSize = CGSize(square: innerRadius * 2)
         let circleFrame = CGRect(origin: circleCenter.minus(innerCircleSize.asPoint.times(0.5)),
                                  size: innerCircleSize)
         circleLayer.path = UIBezierPath(ovalIn: circleFrame).cgPath
@@ -243,7 +241,7 @@ public class ImageEditorPaletteView: UIView {
 
         selectionView.addBorder(with: .white)
         selectionView.layer.cornerRadius = selectionSize / 2
-        selectionView.autoSetDimensions(to: CGSize(width: selectionSize, height: selectionSize))
+        selectionView.autoSetDimensions(to: CGSize(square: selectionSize))
         imageWrapper.addSubview(selectionView)
         selectionView.autoHCenterInSuperview()
 
@@ -273,7 +271,7 @@ public class ImageEditorPaletteView: UIView {
     private let selectionSize: CGFloat = 20
 
     private func selectColor(atLocationY y: CGFloat) {
-        let palettePhase = y.inverseLerp(0, imageView.height(), shouldClamp: true)
+        let palettePhase = y.inverseLerp(0, imageView.height, shouldClamp: true)
         self.selectedValue = value(for: palettePhase)
 
         updateState()
@@ -336,7 +334,7 @@ public class ImageEditorPaletteView: UIView {
             owsFailDebug("Missing selectionConstraint.")
             return
         }
-        let selectionY = imageWrapper.height() * selectedValue.palettePhase
+        let selectionY = imageWrapper.height * selectedValue.palettePhase
         selectionConstraint.constant = selectionY
 
         guard let previewConstraint = previewConstraint else {

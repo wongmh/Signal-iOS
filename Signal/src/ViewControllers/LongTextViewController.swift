@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -15,12 +15,6 @@ public protocol LongTextViewDelegate {
 @objc
 public class LongTextViewController: OWSViewController {
 
-    // MARK: - Dependencies
-
-    private var databaseStorage: SDSDatabaseStorage {
-        return SDSDatabaseStorage.shared
-    }
-
     // MARK: - Properties
 
     @objc
@@ -34,21 +28,16 @@ public class LongTextViewController: OWSViewController {
         return viewItem.displayableBodyText
     }
 
-    var fullText: String {
-        return displayableText?.fullText ?? ""
+    var fullAttributedText: NSAttributedString {
+        return displayableText?.fullAttributedText ?? NSAttributedString()
     }
 
     // MARK: Initializers
 
-    @available(*, unavailable, message:"use other constructor instead.")
-    public required init?(coder aDecoder: NSCoder) {
-        notImplemented()
-    }
-
     @objc
     public required init(viewItem: ConversationViewItem) {
         self.viewItem = viewItem
-        super.init(nibName: nil, bundle: nil)
+        super.init()
     }
 
     // MARK: View Lifecycle
@@ -63,7 +52,7 @@ public class LongTextViewController: OWSViewController {
 
         self.messageTextView.contentOffset = CGPoint(x: 0, y: self.messageTextView.contentInset.top)
 
-        databaseStorage.add(databaseStorageObserver: self)
+        databaseStorage.appendUIDatabaseSnapshotDelegate(self)
     }
 
     // MARK: -
@@ -111,7 +100,17 @@ public class LongTextViewController: OWSViewController {
         messageTextView.isUserInteractionEnabled = true
         messageTextView.textColor = Theme.primaryTextColor
         if let displayableText = displayableText {
-            messageTextView.text = fullText
+            let mutableText = NSMutableAttributedString(attributedString: fullAttributedText)
+            mutableText.addAttributes(
+                [.font: UIFont.ows_dynamicTypeBody, .foregroundColor: Theme.primaryTextColor],
+                range: NSRange(location: 0, length: mutableText.length)
+            )
+
+            // Mentions have a custom style on the long-text view
+            // that differs from the message, so we re-color them here.
+            Mention.updateWithStyle(.longMessageView, in: mutableText)
+
+            messageTextView.attributedText = mutableText
             messageTextView.textAlignment = displayableText.fullTextNaturalAlignment
             messageTextView.ensureShouldLinkifyText(displayableText.shouldAllowLinkification)
         } else {
@@ -159,7 +158,7 @@ public class LongTextViewController: OWSViewController {
     // MARK: - Actions
 
     @objc func shareButtonPressed(_ sender: UIBarButtonItem) {
-        AttachmentSharing.showShareUI(forText: fullText, sender: sender)
+        AttachmentSharing.showShareUI(forText: fullAttributedText.string, sender: sender)
     }
 
     @objc func forwardButtonPressed() {
@@ -169,25 +168,30 @@ public class LongTextViewController: OWSViewController {
 
 // MARK: -
 
-extension LongTextViewController: SDSDatabaseStorageObserver {
-    public func databaseStorageDidUpdate(change: SDSDatabaseStorageChange) {
+extension LongTextViewController: UIDatabaseSnapshotDelegate {
+
+    public func uiDatabaseSnapshotWillUpdate() {
+        AssertIsOnMainThread()
+    }
+
+    public func uiDatabaseSnapshotDidUpdate(databaseChanges: UIDatabaseChanges) {
         AssertIsOnMainThread()
 
-        guard change.didUpdate(interaction: self.viewItem.interaction) else {
+        guard databaseChanges.didUpdate(interaction: self.viewItem.interaction) else {
             return
         }
-        assert(change.didUpdateInteractions)
+        assert(databaseChanges.didUpdateInteractions)
 
         refreshContent()
     }
 
-    public func databaseStorageDidUpdateExternally() {
+    public func uiDatabaseSnapshotDidUpdateExternally() {
         AssertIsOnMainThread()
 
         refreshContent()
     }
 
-    public func databaseStorageDidReset() {
+    public func uiDatabaseSnapshotDidReset() {
         AssertIsOnMainThread()
 
         refreshContent()

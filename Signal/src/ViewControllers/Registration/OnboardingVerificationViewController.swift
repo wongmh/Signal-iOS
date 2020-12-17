@@ -1,11 +1,11 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import UIKit
 import PromiseKit
 
-private protocol OnboardingCodeViewTextFieldDelegate {
+private protocol OnboardingCodeViewTextFieldDelegate: AnyObject {
     func textFieldDidDeletePrevious()
 }
 
@@ -18,7 +18,7 @@ private protocol OnboardingCodeViewTextFieldDelegate {
 // digit.
 private class OnboardingCodeViewTextField: UITextField {
 
-    fileprivate var codeDelegate: OnboardingCodeViewTextFieldDelegate?
+    fileprivate weak var codeDelegate: OnboardingCodeViewTextFieldDelegate?
 
     override func deleteBackward() {
         var isDeletePrevious = false
@@ -40,7 +40,7 @@ private class OnboardingCodeViewTextField: UITextField {
 
 // MARK: -
 
-protocol OnboardingCodeViewDelegate {
+protocol OnboardingCodeViewDelegate: AnyObject {
     func codeViewDidChange()
 }
 
@@ -56,7 +56,7 @@ protocol OnboardingCodeViewDelegate {
 // last/next digit.
 private class OnboardingCodeView: UIView {
 
-    var delegate: OnboardingCodeViewDelegate?
+    weak var delegate: OnboardingCodeViewDelegate?
 
     public init() {
         super.init(frame: .zero)
@@ -291,7 +291,7 @@ public class OnboardingVerificationViewController: OnboardingBaseViewController 
         errorLabel.text = NSLocalizedString("ONBOARDING_VERIFICATION_INVALID_CODE",
                                             comment: "Label indicating that the verification code is incorrect in the 'onboarding verification' view.")
         errorLabel.textColor = .ows_accentRed
-        errorLabel.font = UIFont.ows_dynamicTypeBodyClamped.ows_semibold()
+        errorLabel.font = UIFont.ows_dynamicTypeBodyClamped.ows_semibold
         errorLabel.textAlignment = .center
         errorLabel.autoSetDimension(.height, toSize: errorLabel.font.lineHeight)
         errorLabel.accessibilityIdentifier = "onboarding.verification." + "errorLabel"
@@ -406,7 +406,10 @@ public class OnboardingVerificationViewController: OnboardingBaseViewController 
         if let phoneNumber = onboardingController.phoneNumber {
             e164PhoneNumber = phoneNumber.e164
         }
-        let formattedPhoneNumber = PhoneNumber.bestEffortLocalizedPhoneNumber(withE164: e164PhoneNumber)
+
+        let formattedPhoneNumber =
+            PhoneNumber.bestEffortLocalizedPhoneNumber(withE164: e164PhoneNumber)
+                .replacingOccurrences(of: " ", with: "\u{00a0}")
 
         // Update titleLabel
         switch codeState {
@@ -434,12 +437,12 @@ public class OnboardingVerificationViewController: OnboardingBaseViewController 
             codeStateLink.setTitle(title: NSLocalizedString("ONBOARDING_VERIFICATION_ORIGINAL_CODE_MISSING_LINK",
                                                             comment: "Label for link that can be used when the original code did not arrive."),
                                    font: .ows_dynamicTypeBodyClamped,
-                                   titleColor: .ows_signalBlue)
+                                   titleColor: Theme.accentBlueColor)
         case .resent:
             codeStateLink.setTitle(title: NSLocalizedString("ONBOARDING_VERIFICATION_RESENT_CODE_MISSING_LINK",
                                                             comment: "Label for link that can be used when the resent code did not arrive."),
                                    font: .ows_dynamicTypeBodyClamped,
-                                   titleColor: .ows_signalBlue)
+                                   titleColor: Theme.accentBlueColor)
         }
     }
 
@@ -483,8 +486,8 @@ public class OnboardingVerificationViewController: OnboardingBaseViewController 
             actionSheet.addAction(ActionSheetAction(title: NSLocalizedString("ONBOARDING_VERIFICATION_EMAIL_SIGNAL_SUPPORT",
                                                                          comment: "action sheet item shown after a number of failures to receive a verificaiton SMS during registration"),
                                                 style: .default) { _ in
-                                                    Pastelog.submitEmail(logUrl: nil,
-                                                                         subject: "Signal Registration - Verification Code for iOS")
+                                                    Pastelog.submitEmailWithDefaultErrorHandling(subject: "Signal Registration - Verification Code for iOS",
+                                                                                                 logUrl: nil)
             })
         }
 

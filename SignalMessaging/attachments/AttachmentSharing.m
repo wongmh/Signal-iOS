@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "AttachmentSharing.h"
@@ -8,6 +8,7 @@
 #import <SignalServiceKit/AppContext.h>
 #import <SignalServiceKit/FunctionalUtil.h>
 #import <SignalServiceKit/TSAttachmentStream.h>
+#import <YYImage/YYImage.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -17,16 +18,14 @@ NS_ASSUME_NONNULL_BEGIN
 {
     OWSAssertDebug(stream);
 
-    [self showShareUIForURL:stream.originalMediaURL sender:sender];
+    [self showShareUIForAttachments:@[ stream ] sender:sender];
 }
 
 + (void)showShareUIForAttachments:(NSArray<TSAttachmentStream *> *)attachments sender:(nullable id)sender
 {
     OWSAssertDebug(attachments.count > 0);
 
-    [self showShareUIForURLs:[attachments map:^(TSAttachmentStream *attachment){
-        return attachment.originalMediaURL;
-    }] sender:sender completion:nil];
+    [self showShareUIForActivityItems:attachments sender:sender completion:nil];
 }
 
 + (void)showShareUIForURL:(NSURL *)url sender:(nullable id)sender
@@ -144,6 +143,59 @@ NS_ASSUME_NONNULL_BEGIN
         OWSAssertDebug(fromViewController);
         [fromViewController presentViewController:activityViewController animated:YES completion:nil];
     });
+}
+
+@end
+
+@interface TSAttachmentStream (AttachmentSharing) <UIActivityItemSource>
+
+@end
+
+@implementation TSAttachmentStream (AttachmentSharing)
+
+// called to determine data type. only the class of the return type is consulted. it should match what
+// -itemForActivityType: returns later
+- (id)activityViewControllerPlaceholderItem:(UIActivityViewController *)activityViewController
+{
+    // HACK: If this is an image we want to provide the image object to
+    // the share sheet rather than the file path. This ensures that when
+    // the user saves multiple images to their camera roll the OS doesn't
+    // asynchronously read the files and save them to them in a random
+    // order. Note: when sharing a mixture of image and non-image data
+    // (e.g. an album with photos and videos) the OS will still incorrectly
+    // order the video items. I haven't found any way to work around this
+    // since videos may only be shared as URLs.
+    return self.isImage ? [UIImage new] : self.originalMediaURL;
+}
+
+// called to fetch data after an activity is selected. you can return nil.
+- (nullable id)activityViewController:(UIActivityViewController *)activityViewController
+                  itemForActivityType:(nullable UIActivityType)activityType
+{
+    if ([self.contentType isEqualToString:OWSMimeTypeImageWebp]) {
+        return self.originalImage;
+    }
+    if (self.isAnimated) {
+        return self.originalMediaURL;
+    }
+    return self.isImage ? self.originalImage : self.originalMediaURL;
+}
+
+@end
+
+// YYImage does not specify that the sublcass still supports secure coding,
+// this is required for anything that subclasses a class that supports secure
+// coding. We do so here, otherwise copy / save will not work for YYImages
+
+@interface YYImage (SecureCoding)
+
+@end
+
+@implementation YYImage (SecureCoding)
+
++ (BOOL)supportsSecureCoding
+{
+    return YES;
 }
 
 @end

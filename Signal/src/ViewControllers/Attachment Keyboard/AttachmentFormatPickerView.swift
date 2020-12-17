@@ -1,8 +1,9 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
+import PromiseKit
 
 protocol AttachmentFormatPickerDelegate: class {
     func didTapCamera(withPhotoCapture: PhotoCapture?)
@@ -61,11 +62,13 @@ class AttachmentFormatPickerView: UICollectionView {
 
         photoCapture.startVideoCapture().done { [weak self] in
             self?.reloadData()
-        }.retainUntilComplete()
+        }.catch { error in
+            owsFailDebug("Error: \(error)")
+        }
     }
 
     func stopCameraPreview() {
-        photoCapture?.stopCapture().retainUntilComplete()
+        photoCapture?.stopCapture()
         photoCapture = nil
     }
 
@@ -220,10 +223,10 @@ class AttachmentFormatCell: UICollectionViewCell {
 
         contentView.addSubview(imageView)
         imageView.autoHCenterInSuperview()
-        imageView.autoSetDimensions(to: CGSize(width: 32, height: 32))
+        imageView.autoSetDimensions(to: CGSize(square: 32))
         imageView.contentMode = .scaleAspectFit
 
-        label.font = UIFont.ows_dynamicTypeFootnoteClamped.ows_semibold()
+        label.font = UIFont.ows_dynamicTypeFootnoteClamped.ows_semibold
         label.textColor = Theme.attachmentKeyboardItemImageColor
         label.textAlignment = .center
         label.adjustsFontSizeToFitWidth = true

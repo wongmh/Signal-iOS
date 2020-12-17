@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "BaseModel.h"
@@ -9,6 +9,9 @@ NS_ASSUME_NONNULL_BEGIN
 @class SDSAnyReadTransaction;
 @class SDSAnyWriteTransaction;
 @class SignalServiceAddress;
+
+typedef NS_CLOSED_ENUM(
+    NSUInteger, SignalRecipientTrustLevel) { SignalRecipientTrustLevelLow, SignalRecipientTrustLevelHigh };
 
 /// SignalRecipient serves two purposes:
 ///
@@ -23,10 +26,20 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, readonly) NSOrderedSet<NSNumber *> *devices;
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
+- (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithUniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
+- (instancetype)initWithGrdbId:(int64_t)grdbId uniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
 
 - (instancetype)initWithAddress:(SignalServiceAddress *)address NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithUUIDString:(NSString *)uuidString NS_DESIGNATED_INITIALIZER;
+
+#if TESTABLE_BUILD
+- (instancetype)initWithPhoneNumber:(nullable NSString *)phoneNumber
+                               uuid:(nullable NSUUID *)uuid
+                            devices:(NSArray<NSNumber *> *)devices;
+#endif
 
 // --- CODE GENERATION MARKER
 
@@ -39,7 +52,7 @@ NS_ASSUME_NONNULL_BEGIN
                          devices:(NSOrderedSet<NSNumber *> *)devices
             recipientPhoneNumber:(nullable NSString *)recipientPhoneNumber
                    recipientUUID:(nullable NSString *)recipientUUID
-NS_SWIFT_NAME(init(grdbId:uniqueId:devices:recipientPhoneNumber:recipientUUID:));
+NS_DESIGNATED_INITIALIZER NS_SWIFT_NAME(init(grdbId:uniqueId:devices:recipientPhoneNumber:recipientUUID:));
 
 // clang-format on
 
@@ -66,13 +79,17 @@ NS_SWIFT_NAME(init(grdbId:uniqueId:devices:recipientPhoneNumber:recipientUUID:))
 + (BOOL)isRegisteredRecipient:(SignalServiceAddress *)address transaction:(SDSAnyReadTransaction *)transaction;
 
 + (SignalRecipient *)markRecipientAsRegisteredAndGet:(SignalServiceAddress *)address
+                                          trustLevel:(SignalRecipientTrustLevel)trustLevel
                                          transaction:(SDSAnyWriteTransaction *)transaction;
 
 + (void)markRecipientAsRegistered:(SignalServiceAddress *)address
                          deviceId:(UInt32)deviceId
+                       trustLevel:(SignalRecipientTrustLevel)trustLevel
                       transaction:(SDSAnyWriteTransaction *)transaction;
 
 + (void)markRecipientAsUnregistered:(SignalServiceAddress *)address transaction:(SDSAnyWriteTransaction *)transaction;
+
+- (void)removePhoneNumberForDatabaseMigration;
 
 @end
 

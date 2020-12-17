@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -7,7 +7,8 @@ import Foundation
 // MARK: -
 
 public struct EmojiItem {
-    let emoji: String
+    // If a specific emoji is not specified, this item represents "all" emoji
+    let emoji: String?
     let count: Int
 
     let didSelect: () -> Void
@@ -107,29 +108,24 @@ class EmojiCountCell: UICollectionViewCell {
     override init(frame: CGRect) {
         super.init(frame: .zero)
 
-        contentView.layoutMargins = UIEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
-
         let selectedBackground = UIView()
         selectedBackground.backgroundColor = (Theme.isDarkThemeEnabled
             ? UIColor.ows_gray60
             : UIColor.ows_gray05)
         selectedBackgroundView = selectedBackground
 
-        emoji.font = .systemFont(ofSize: 22)
-        emoji.setContentHuggingHigh()
-        emoji.setCompressionResistanceHigh()
-        contentView.addSubview(emoji)
-        emoji.autoPinLeadingToSuperviewMargin()
-        emoji.autoPinHeightToSuperviewMargins()
+        let stackView = UIStackView(arrangedSubviews: [emoji, count])
+        stackView.isLayoutMarginsRelativeArrangement = true
+        stackView.layoutMargins = UIEdgeInsets(top: 8, leading: 8, bottom: 8, trailing: 8)
+        stackView.spacing = 4
+        contentView.addSubview(stackView)
+        stackView.autoPinEdgesToSuperviewEdges()
+        stackView.autoSetDimension(.height, toSize: 32)
 
-        count.font = UIFont.ows_dynamicTypeSubheadlineClamped.ows_semibold().ows_monospaced()
+        emoji.font = .systemFont(ofSize: 22)
+
+        count.font = UIFont.ows_dynamicTypeSubheadlineClamped.ows_monospaced.ows_semibold
         count.textColor = Theme.primaryTextColor
-        count.setContentHuggingHigh()
-        count.setCompressionResistanceHigh()
-        contentView.addSubview(count)
-        count.autoPinLeading(toTrailingEdgeOf: emoji, offset: 4)
-        count.autoPinTrailingToSuperviewMargin()
-        count.autoPinHeightToSuperviewMargins()
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -138,12 +134,22 @@ class EmojiCountCell: UICollectionViewCell {
 
     func configure(with item: EmojiItem) {
         emoji.text = item.emoji
-        count.text = "\(OWSFormat.formatInt(Int32(item.count)))"
+        emoji.isHidden = item.emoji == nil
+
+        if item.emoji != nil {
+            count.text = item.count.abbreviatedString
+        } else {
+            count.text = String(
+                format: NSLocalizedString("REACTION_DETAIL_ALL_FORMAT",
+                                          comment: "The header used to indicate All reactions to a given message. Embeds {{number of reactions}}"),
+                item.count.abbreviatedString
+            )
+        }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
 
-        selectedBackgroundView?.layer.cornerRadius = height() / 2
+        selectedBackgroundView?.layer.cornerRadius = height / 2
     }
 }

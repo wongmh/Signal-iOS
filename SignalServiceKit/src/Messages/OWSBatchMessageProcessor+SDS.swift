@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -32,6 +32,7 @@ public struct MessageContentJobRecord: SDSRecord {
     public let envelopeData: Data
     public let plaintextData: Data?
     public let wasReceivedByUD: Bool
+    public let serverDeliveryTimestamp: UInt64
 
     public enum CodingKeys: String, CodingKey, ColumnExpression, CaseIterable {
         case id
@@ -41,6 +42,7 @@ public struct MessageContentJobRecord: SDSRecord {
         case envelopeData
         case plaintextData
         case wasReceivedByUD
+        case serverDeliveryTimestamp
     }
 
     public static func columnName(_ column: MessageContentJobRecord.CodingKeys, fullyQualified: Bool = false) -> String {
@@ -71,6 +73,7 @@ public extension MessageContentJobRecord {
         envelopeData = row[4]
         plaintextData = row[5]
         wasReceivedByUD = row[6]
+        serverDeliveryTimestamp = row[7]
     }
 }
 
@@ -106,6 +109,7 @@ extension OWSMessageContentJob {
             let createdAt: Date = SDSDeserialization.requiredDoubleAsDate(createdAtInterval, name: "createdAt")
             let envelopeData: Data = record.envelopeData
             let plaintextData: Data? = SDSDeserialization.optionalData(record.plaintextData, name: "plaintextData")
+            let serverDeliveryTimestamp: UInt64 = record.serverDeliveryTimestamp
             let wasReceivedByUD: Bool = record.wasReceivedByUD
 
             return OWSMessageContentJob(grdbId: recordId,
@@ -113,6 +117,7 @@ extension OWSMessageContentJob {
                                         createdAt: createdAt,
                                         envelopeData: envelopeData,
                                         plaintextData: plaintextData,
+                                        serverDeliveryTimestamp: serverDeliveryTimestamp,
                                         wasReceivedByUD: wasReceivedByUD)
 
         default:
@@ -148,20 +153,55 @@ extension OWSMessageContentJob: SDSModel {
     }
 }
 
+// MARK: - DeepCopyable
+
+extension OWSMessageContentJob: DeepCopyable {
+
+    public func deepCopy() throws -> AnyObject {
+        // Any subclass can be cast to it's superclass,
+        // so the order of this switch statement matters.
+        // We need to do a "depth first" search by type.
+        guard let id = self.grdbId?.int64Value else {
+            throw OWSAssertionError("Model missing grdbId.")
+        }
+
+        do {
+            let modelToCopy = self
+            assert(type(of: modelToCopy) == OWSMessageContentJob.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let createdAt: Date = modelToCopy.createdAt
+            let envelopeData: Data = modelToCopy.envelopeData
+            let plaintextData: Data? = modelToCopy.plaintextData
+            let serverDeliveryTimestamp: UInt64 = modelToCopy.serverDeliveryTimestamp
+            let wasReceivedByUD: Bool = modelToCopy.wasReceivedByUD
+
+            return OWSMessageContentJob(grdbId: id,
+                                        uniqueId: uniqueId,
+                                        createdAt: createdAt,
+                                        envelopeData: envelopeData,
+                                        plaintextData: plaintextData,
+                                        serverDeliveryTimestamp: serverDeliveryTimestamp,
+                                        wasReceivedByUD: wasReceivedByUD)
+        }
+
+    }
+}
+
 // MARK: - Table Metadata
 
 extension OWSMessageContentJobSerializer {
 
     // This defines all of the columns used in the table
     // where this model (and any subclasses) are persisted.
-    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey, columnIndex: 0)
-    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64, columnIndex: 1)
-    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true, columnIndex: 2)
+    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey)
+    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64)
+    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true)
     // Properties
-    static let createdAtColumn = SDSColumnMetadata(columnName: "createdAt", columnType: .double, columnIndex: 3)
-    static let envelopeDataColumn = SDSColumnMetadata(columnName: "envelopeData", columnType: .blob, columnIndex: 4)
-    static let plaintextDataColumn = SDSColumnMetadata(columnName: "plaintextData", columnType: .blob, isOptional: true, columnIndex: 5)
-    static let wasReceivedByUDColumn = SDSColumnMetadata(columnName: "wasReceivedByUD", columnType: .int, columnIndex: 6)
+    static let createdAtColumn = SDSColumnMetadata(columnName: "createdAt", columnType: .double)
+    static let envelopeDataColumn = SDSColumnMetadata(columnName: "envelopeData", columnType: .blob)
+    static let plaintextDataColumn = SDSColumnMetadata(columnName: "plaintextData", columnType: .blob, isOptional: true)
+    static let wasReceivedByUDColumn = SDSColumnMetadata(columnName: "wasReceivedByUD", columnType: .int)
+    static let serverDeliveryTimestampColumn = SDSColumnMetadata(columnName: "serverDeliveryTimestamp", columnType: .int64)
 
     // TODO: We should decide on a naming convention for
     //       tables that store models.
@@ -174,7 +214,8 @@ extension OWSMessageContentJobSerializer {
         createdAtColumn,
         envelopeDataColumn,
         plaintextDataColumn,
-        wasReceivedByUDColumn
+        wasReceivedByUDColumn,
+        serverDeliveryTimestampColumn
         ])
 }
 
@@ -284,9 +325,11 @@ public extension OWSMessageContentJob {
 
 @objc
 public class OWSMessageContentJobCursor: NSObject {
+    private let transaction: GRDBReadTransaction
     private let cursor: RecordCursor<MessageContentJobRecord>?
 
-    init(cursor: RecordCursor<MessageContentJobRecord>?) {
+    init(transaction: GRDBReadTransaction, cursor: RecordCursor<MessageContentJobRecord>?) {
+        self.transaction = transaction
         self.cursor = cursor
     }
 
@@ -328,10 +371,10 @@ public extension OWSMessageContentJob {
         let database = transaction.database
         do {
             let cursor = try MessageContentJobRecord.fetchCursor(database)
-            return OWSMessageContentJobCursor(cursor: cursor)
+            return OWSMessageContentJobCursor(transaction: transaction, cursor: cursor)
         } catch {
             owsFailDebug("Read failed: \(error)")
-            return OWSMessageContentJobCursor(cursor: nil)
+            return OWSMessageContentJobCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -537,11 +580,11 @@ public extension OWSMessageContentJob {
         do {
             let sqlRequest = SQLRequest<Void>(sql: sql, arguments: arguments, cached: true)
             let cursor = try MessageContentJobRecord.fetchCursor(transaction.database, sqlRequest)
-            return OWSMessageContentJobCursor(cursor: cursor)
+            return OWSMessageContentJobCursor(transaction: transaction, cursor: cursor)
         } catch {
             Logger.error("sql: \(sql)")
             owsFailDebug("Read failed: \(error)")
-            return OWSMessageContentJobCursor(cursor: nil)
+            return OWSMessageContentJobCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -588,7 +631,25 @@ class OWSMessageContentJobSerializer: SDSSerializer {
         let envelopeData: Data = model.envelopeData
         let plaintextData: Data? = model.plaintextData
         let wasReceivedByUD: Bool = model.wasReceivedByUD
+        let serverDeliveryTimestamp: UInt64 = model.serverDeliveryTimestamp
 
-        return MessageContentJobRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, createdAt: createdAt, envelopeData: envelopeData, plaintextData: plaintextData, wasReceivedByUD: wasReceivedByUD)
+        return MessageContentJobRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, createdAt: createdAt, envelopeData: envelopeData, plaintextData: plaintextData, wasReceivedByUD: wasReceivedByUD, serverDeliveryTimestamp: serverDeliveryTimestamp)
     }
 }
+
+// MARK: - Deep Copy
+
+#if TESTABLE_BUILD
+@objc
+public extension OWSMessageContentJob {
+    // We're not using this method at the moment,
+    // but we might use it for validation of
+    // other deep copy methods.
+    func deepCopyUsingRecord() throws -> OWSMessageContentJob {
+        guard let record = try asRecord() as? MessageContentJobRecord else {
+            throw OWSAssertionError("Could not convert to record.")
+        }
+        return try OWSMessageContentJob.fromRecord(record)
+    }
+}
+#endif

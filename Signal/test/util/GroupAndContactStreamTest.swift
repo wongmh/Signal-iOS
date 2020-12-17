@@ -1,11 +1,31 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
 import XCTest
+import Contacts
 
 class GroupAndContactStreamTest: SignalBaseTest {
+
+    // MARK: - Dependencies
+
+    private var tsAccountManager: TSAccountManager {
+        return TSAccountManager.shared()
+    }
+
+    // MARK: - Test Life Cycle
+
+    override func setUp() {
+        super.setUp()
+
+        // ensure local client has necessary "registered" state
+        let localE164Identifier = "+13235551234"
+        let localUUID = UUID()
+        tsAccountManager.registerForTests(withLocalNumber: localE164Identifier, uuid: localUUID)
+    }
+
+    // MARK: -
 
     let outputContactSyncData = "IQoMKzEzMjMxMTExMTExEgdBbGljZS0xIgRibHVlQABYADkSB0FsaWNlLTIiBGJsdWVAAEokMzFDRTE0MTItOUEyOC00RTZGLUI0RUUtMjIyMjIyMjIyMjIyWABHCgwrMTMyMTMzMzMzMzMSB0FsaWNlLTMiBGJsdWVAAEokMUQ0QUIwNDUtODhGQi00QzRFLTlGNkEtMzMzMzMzMzMzMzMzWAA="
 
@@ -87,23 +107,30 @@ class GroupAndContactStreamTest: SignalBaseTest {
         }
     }
 
-    let outputGroupSyncData = "pwEKEHNddRc9sZVW92G7XH8DdEgaDCsxMzIxMzIxNDMyMRoMKzEzMjEzMjE0MzIzMAA6BWJyb3duSg4SDCsxMzIxMzIxNDMyMUo0CiQxRDRBQjA0NS04OEZCLTRDNEUtOUY2QS1GOTIxMTI0QkQ1MjkSDCsxMzIxMzIxNDMyM0omCiQzMUNFMTQxMi05QTI4LTRFNkYtQjRFRS1BMjVDMzE3OUQwODVYAJABChBzbbYXPbGVVvdhu1x/A3RIEglCb29rIENsdWIaDCsxMzIxMzIxNDMyMRoMKzE1NTUzMjE0MzIzMAA6CWJsdWVfZ3JleUoOEgwrMTMyMTMyMTQzMjFKNAokNTU1NTU1NTUtODhGQi00QzRFLTlGNkEtRjkyMTEyNEJENTI5EgwrMTU1NTMyMTQzMjNQAVgBiwEKEHN99xc9sZVW92G7XH8DdEgSCUNvb2sgQmx1YhoMKzEzMjEzMjEzMzMzGgwrMTU1NTMyMTIyMjIwADoEYmx1ZUoOEgwrMTMyMTMyMTMzMzNKNAokNTU1NTU1NTUtODhGQi00QzRFLTlGNkEtMjIyMjIyMjIyMjIyEgwrMTU1NTMyMTIyMjJQAFgB"
+    let outputGroupSyncData = "awoQc111Fz2xlVb3YbtcfwN0SBoMKzEzMjEzMjE0MzIxGgwrMTMyMTMyMTQzMjMiDgoJaW1hZ2UvcG5nEKMBMAA6BWJyb3duSg4SDCsxMzIxMzIxNDMyMUoOEgwrMTMyMTMyMTQzMjNQAVgAiVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAAD5Ip3+AAAADUlEQVQIHWP4z8DwHwAFAAH/yA9iFgAAAABJRU5ErkJggnoKEHNtthc9sZVW92G7XH8DdEgSCUJvb2sgQ2x1YhoMKzEzMjEzMjE0MzIxGgwrMTU1NTMyMTQzMjMiDgoJaW1hZ2UvcG5nEKMBMAA6CWJsdWVfZ3JleUoOEgwrMTMyMTMyMTQzMjFKDhIMKzE1NTUzMjE0MzIzUAJYAYlQTkcNChoKAAAADUlIRFIAAAABAAAAAQgGAAAAHxXEiQAAAAFzUkdCAK7OHOkAAABEZVhJZk1NACoAAAAIAAGHaQAEAAAAAQAAABoAAAAAAAOgAQADAAAAAQABAACgAgAEAAAAAQAAAAGgAwAEAAAAAQAAAAEAAAAA+SKd/gAAAA1JREFUCB1jYGD4/x8AAwIB/6fhVKUAAAAASUVORK5CYIJ1ChBzffcXPbGVVvdhu1x/A3RIEglDb29rIEJsdWIaDCsxMzIxMzIxMzMzMxoMKzE1NTUzMjEyMjIyIg4KCWltYWdlL3BuZxCjATAAOgRibHVlSg4SDCsxMzIxMzIxMzMzM0oOEgwrMTU1NTMyMTIyMjJQAFgBiVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAAD5Ip3+AAAADUlEQVQIHWNg+M/wHwAEAQH/MH0Y7gAAAABJRU5ErkJggg=="
+
+    let groupImageData1 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAAD5Ip3+AAAADUlEQVQIHWP4z8DwHwAFAAH/yA9iFgAAAABJRU5ErkJggg=="
+    let groupImageData2 =  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAAD5Ip3+AAAADUlEQVQIHWNgYPj/HwADAgH/p+FUpQAAAABJRU5ErkJggg=="
+    let groupImageData3 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAERlWElmTU0AKgAAAAgAAYdpAAQAAAABAAAAGgAAAAAAA6ABAAMAAAABAAEAAKACAAQAAAABAAAAAaADAAQAAAABAAAAAQAAAAD5Ip3+AAAADUlEQVQIHWNg+M/wHwAEAQH/MH0Y7gAAAABJRU5ErkJggg=="
+
     func test_writeGroupSync() throws {
+        let groupAvatarData1 = Data(base64Encoded: groupImageData1)!
+        let groupAvatarData2 = Data(base64Encoded: groupImageData2)!
+        let groupAvatarData3 = Data(base64Encoded: groupImageData3)!
+
         let group1: TSGroupThread = {
             let groupId = Data(base64Encoded: "c111Fz2xlVb3YbtcfwN0SA==")!
             let groupMembers: [SignalServiceAddress] = [
                 .init(phoneNumber: "+13213214321"),
-                .init(uuidString: "31ce1412-9a28-4e6f-b4ee-a25c3179d085"),
                 .init(uuidString: "1d4ab045-88fb-4c4e-9f6a-f921124bd529", phoneNumber: "+13213214323")
             ]
 
             var thread: TSGroupThread!
             write { transaction in
-                thread = try! GroupManager.createGroupForTests(transaction: transaction,
-                                                               members: groupMembers,
-                                                               groupId: groupId)
-
-                thread.anyInsert(transaction: transaction)
+                thread = try! GroupManager.createGroupForTests(members: groupMembers,
+                                                               avatarData: groupAvatarData1,
+                                                               groupId: groupId,
+                                                               transaction: transaction)
                 thread.updateConversationColorName(.burlap, transaction: transaction)
             }
             return thread
@@ -118,14 +145,15 @@ class GroupAndContactStreamTest: SignalBaseTest {
 
             var thread: TSGroupThread!
             write {
-                thread = try! GroupManager.createGroupForTests(transaction: $0,
-                                                               members: groupMembers,
+                thread = try! GroupManager.createGroupForTests(members: groupMembers,
                                                                name: "Book Club",
-                                                               groupId: groupId)
+                                                               avatarData: groupAvatarData2,
+                                                               groupId: groupId,
+                                                               transaction: $0)
                 thread.shouldThreadBeVisible = true
                 thread.anyOverwritingUpdate(transaction: $0)
                 thread.updateConversationColorName(.taupe, transaction: $0)
-                thread.archiveThread(with: $0)
+                thread.archiveThread(updateStorageService: false, transaction: $0)
             }
             return thread
         }()
@@ -139,10 +167,11 @@ class GroupAndContactStreamTest: SignalBaseTest {
 
             var thread: TSGroupThread!
             write { transaction in
-                thread = try! GroupManager.createGroupForTests(transaction: transaction,
-                                                               members: groupMembers,
+                thread = try! GroupManager.createGroupForTests(members: groupMembers,
                                                                name: "Cook Blub",
-                                                               groupId: groupId)
+                                                               avatarData: groupAvatarData3,
+                                                               groupId: groupId,
+                                                               transaction: transaction)
                 thread.shouldThreadBeVisible = true
                 thread.anyOverwritingUpdate(transaction: transaction)
                 thread.updateConversationColorName(.blue, transaction: transaction)
@@ -151,7 +180,7 @@ class GroupAndContactStreamTest: SignalBaseTest {
                 messageFactory.threadCreator = { _ in return thread }
                 _ = messageFactory.create(transaction: transaction)
 
-                thread.archiveThread(with: transaction)
+                thread.archiveThread(updateStorageService: false, transaction: transaction)
             }
             return thread
         }()
@@ -162,6 +191,10 @@ class GroupAndContactStreamTest: SignalBaseTest {
     }
 
     func test_readGroupSync() throws {
+        let groupAvatarData1 = Data(base64Encoded: groupImageData1)!
+        let groupAvatarData2 = Data(base64Encoded: groupImageData2)!
+        let groupAvatarData3 = Data(base64Encoded: groupImageData3)!
+
         var groups: [GroupDetails] = []
 
         let data = Data(base64Encoded: outputGroupSyncData)!
@@ -187,16 +220,15 @@ class GroupAndContactStreamTest: SignalBaseTest {
             XCTAssertEqual(group.name, nil)
             XCTAssertEqual(group.memberAddresses, [
                 SignalServiceAddress(phoneNumber: "+13213214321"),
-                SignalServiceAddress(uuidString: "31ce1412-9a28-4e6f-b4ee-a25c3179d085"),
                 SignalServiceAddress(uuidString: "1d4ab045-88fb-4c4e-9f6a-f921124bd529", phoneNumber: "+13213214323")
-            ])
+                ])
 
             XCTAssertEqual(group.conversationColorName, ConversationColorName.burlap.rawValue)
             XCTAssertEqual(group.isBlocked, false)
             XCTAssertEqual(group.expireTimer, 0)
-            XCTAssertEqual(group.avatarData, nil)
+            XCTAssertEqual(group.avatarData, groupAvatarData1)
             XCTAssertEqual(false, group.isArchived)
-            XCTAssertNil(group.inboxSortOrder)
+            XCTAssertEqual(1, group.inboxSortOrder)
         }
 
         do {
@@ -206,13 +238,13 @@ class GroupAndContactStreamTest: SignalBaseTest {
             XCTAssertEqual(group.memberAddresses, [
                 SignalServiceAddress(phoneNumber: "+13213214321"),
                 SignalServiceAddress(uuidString: "55555555-88fb-4c4e-9f6a-f921124bd529", phoneNumber: "+15553214323")
-            ])
+                ])
             XCTAssertEqual(group.conversationColorName, ConversationColorName.taupe.rawValue)
             XCTAssertEqual(group.isBlocked, false)
             XCTAssertEqual(group.expireTimer, 0)
-            XCTAssertEqual(group.avatarData, nil)
+            XCTAssertEqual(group.avatarData, groupAvatarData2)
             XCTAssertEqual(true, group.isArchived)
-            XCTAssertEqual(1, group.inboxSortOrder)
+            XCTAssertEqual(2, group.inboxSortOrder)
         }
 
         do {
@@ -226,7 +258,7 @@ class GroupAndContactStreamTest: SignalBaseTest {
             XCTAssertEqual(group.conversationColorName, ConversationColorName.blue.rawValue)
             XCTAssertEqual(group.isBlocked, false)
             XCTAssertEqual(group.expireTimer, 0)
-            XCTAssertEqual(group.avatarData, nil)
+            XCTAssertEqual(group.avatarData, groupAvatarData3)
             XCTAssertEqual(true, group.isArchived)
             XCTAssertEqual(0, group.inboxSortOrder)
         }
@@ -246,7 +278,7 @@ class GroupAndContactStreamTest: SignalBaseTest {
             contactFactory.cnContactIdBuilder = { "123" }
             contactFactory.uniqueIdBuilder = { "123" }
 
-            signalAccount.contact = try contactFactory.build()
+            signalAccount.replaceContactForTests(try contactFactory.build())
 
             contactsOutputStream.write(signalAccount,
                                        recipientIdentity: nil,
@@ -311,6 +343,22 @@ class TestContactsManager: NSObject, ContactsManagerProtocol {
         return "Fake Name"
     }
 
+    func shortDisplayName(for address: SignalServiceAddress, transaction: SDSAnyReadTransaction) -> String {
+        return address.stringForDisplay
+    }
+
+    func conversationColorName(for address: SignalServiceAddress, transaction: SDSAnyReadTransaction) -> String {
+        return ConversationColorName.taupe.rawValue
+    }
+
+    func nameComponents(for address: SignalServiceAddress) -> PersonNameComponents? {
+        return PersonNameComponents()
+    }
+
+    func nameComponents(for address: SignalServiceAddress, transaction: SDSAnyReadTransaction) -> PersonNameComponents? {
+        return PersonNameComponents()
+    }
+
     func signalAccounts() -> [SignalAccount] {
         return []
     }
@@ -327,8 +375,17 @@ class TestContactsManager: NSObject, ContactsManagerProtocol {
         return true
     }
 
+    func hasNameInSystemContacts(for address: SignalServiceAddress) -> Bool {
+        return false
+    }
+
     func compare(signalAccount left: SignalAccount, with right: SignalAccount) -> ComparisonResult {
         return .orderedSame
+    }
+
+    public func sortSignalServiceAddresses(_ addresses: [SignalServiceAddress],
+                                           transaction: SDSAnyReadTransaction) -> [SignalServiceAddress] {
+        return addresses
     }
 
     func cnContact(withId contactId: String?) -> CNContact? {
@@ -342,4 +399,6 @@ class TestContactsManager: NSObject, ContactsManagerProtocol {
     func avatarImage(forCNContactId contactId: String?) -> UIImage? {
         return nil
     }
+
+    var unknownUserLabel: String = "unknown"
 }

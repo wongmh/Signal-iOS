@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -15,6 +15,7 @@ public class ProvisioningSocket {
     public weak var delegate: ProvisioningSocketDelegate?
 
     public init() {
+        // TODO: Will this work with censorship circumvention?
         let serviceBaseURL = URL(string: TSConstants.textSecureWebSocketAPI)!
         let socketURL = URL(string: "/v1/websocket/provisioning/?agent=\(OWSUserAgent)",
                             relativeTo: serviceBaseURL)!
@@ -82,13 +83,13 @@ extension ProvisioningSocket: SSKWebSocketDelegate {
             guard let body = request.body else {
                 throw OWSAssertionError("body was unexpectedly nil")
             }
-            let uuidProto = try ProvisioningProtoProvisioningUuid.parseData(body)
+            let uuidProto = try ProvisioningProtoProvisioningUuid(serializedData: body)
             delegate?.provisioningSocket(self, didReceiveDeviceId: uuidProto.uuid)
         case ("PUT", "/v1/message"):
             guard let body = request.body else {
                 throw OWSAssertionError("body was unexpectedly nil")
             }
-            let envelopeProto = try ProvisioningProtoProvisionEnvelope.parseData(body)
+            let envelopeProto = try ProvisioningProtoProvisionEnvelope(serializedData: body)
             delegate?.provisioningSocket(self, didReceiveEnvelope: envelopeProto)
         default:
             throw OWSAssertionError("unexpected request: \(request)")

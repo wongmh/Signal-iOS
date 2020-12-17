@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -96,7 +96,7 @@ class AudioMessageView: UIStackView {
         progressSlider.autoVCenterInSuperview()
 
         playbackTimeLabel.textColor = conversationStyle.bubbleSecondaryTextColor(isIncoming: isIncoming)
-        playbackTimeLabel.font = UIFont.ows_dynamicTypeCaption1.ows_monospaced()
+        playbackTimeLabel.font = UIFont.ows_dynamicTypeCaption1.ows_monospaced
         playbackTimeLabel.setContentHuggingHigh()
 
         let playerStack = UIStackView(arrangedSubviews: [playPauseAnimation, waveformContainer, playbackTimeLabel])
@@ -132,7 +132,7 @@ class AudioMessageView: UIStackView {
         }
 
         let locationInSlider = convert(point, to: waveformProgress)
-        return locationInSlider.x >= 0 && locationInSlider.x <= waveformProgress.width()
+        return locationInSlider.x >= 0 && locationInSlider.x <= waveformProgress.width
     }
 
     @objc func scrubToLocation(_ point: CGPoint) -> TimeInterval {

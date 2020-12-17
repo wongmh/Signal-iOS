@@ -1,36 +1,21 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
+import PromiseKit
 
 @objc
 public class StickerSharingViewController: SelectThreadViewController {
-
-    // MARK: Dependencies
-
-    private var databaseStorage: SDSDatabaseStorage {
-        return SDSDatabaseStorage.shared
-    }
-
-    var linkPreviewManager: OWSLinkPreviewManager {
-        return SSKEnvironment.shared.linkPreviewManager
-    }
-
-    // MARK: -
 
     private let stickerPackInfo: StickerPackInfo
 
     init(stickerPackInfo: StickerPackInfo) {
         self.stickerPackInfo = stickerPackInfo
 
-        super.init(nibName: nil, bundle: nil)
+        super.init()
 
         self.selectThreadViewDelegate = self
-    }
-
-    required public init(coder: NSCoder) {
-        notImplemented()
     }
 
     public override func viewDidLoad() {
@@ -57,19 +42,23 @@ public class StickerSharingViewController: SelectThreadViewController {
         let packUrl = stickerPackInfo.shareUrl()
 
         // Try to include a link preview of the sticker pack.
-        linkPreviewManager.tryToBuildPreviewInfo(previewUrl: packUrl)
-            .done { (linkPreviewDraft) in
-                self.shareAndDismiss(thread: thread,
-                                     packUrl: packUrl,
-                                     linkPreviewDraft: linkPreviewDraft)
-            }.catch { error in
-                owsFailDebug("Could not build link preview: \(error)")
-
-                self.shareAndDismiss(thread: thread,
-                                     packUrl: packUrl,
-                                     linkPreviewDraft: nil)
+        firstly { () -> Promise<OWSLinkPreviewDraft> in
+            guard let url = URL(string: packUrl) else {
+                throw OWSAssertionError("Invalid url")
             }
-            .retainUntilComplete()
+            return linkPreviewManager.fetchLinkPreview(for: url)
+
+        }.done { (linkPreviewDraft) in
+            self.shareAndDismiss(thread: thread,
+                                 packUrl: packUrl,
+                                 linkPreviewDraft: linkPreviewDraft)
+        }.catch { error in
+            owsFailDebug("Could not build link preview: \(error)")
+
+            self.shareAndDismiss(thread: thread,
+                                 packUrl: packUrl,
+                                 linkPreviewDraft: nil)
+        }
     }
 
     private func shareAndDismiss(thread: TSThread,
@@ -78,7 +67,11 @@ public class StickerSharingViewController: SelectThreadViewController {
         AssertIsOnMainThread()
 
         databaseStorage.read { transaction in
-            ThreadUtil.enqueueMessage(withText: packUrl, in: thread, quotedReplyModel: nil, linkPreviewDraft: linkPreviewDraft, transaction: transaction)
+            ThreadUtil.enqueueMessage(with: MessageBody(text: packUrl, ranges: .empty),
+                                      thread: thread,
+                                      quotedReplyModel: nil,
+                                      linkPreviewDraft: linkPreviewDraft,
+                                      transaction: transaction)
         }
 
         self.dismiss(animated: true)

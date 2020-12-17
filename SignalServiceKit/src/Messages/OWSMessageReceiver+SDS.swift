@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -30,6 +30,7 @@ public struct MessageDecryptJobRecord: SDSRecord {
     // Properties
     public let createdAt: Double
     public let envelopeData: Data
+    public let serverDeliveryTimestamp: UInt64
 
     public enum CodingKeys: String, CodingKey, ColumnExpression, CaseIterable {
         case id
@@ -37,6 +38,7 @@ public struct MessageDecryptJobRecord: SDSRecord {
         case uniqueId
         case createdAt
         case envelopeData
+        case serverDeliveryTimestamp
     }
 
     public static func columnName(_ column: MessageDecryptJobRecord.CodingKeys, fullyQualified: Bool = false) -> String {
@@ -65,6 +67,7 @@ public extension MessageDecryptJobRecord {
         uniqueId = row[2]
         createdAt = row[3]
         envelopeData = row[4]
+        serverDeliveryTimestamp = row[5]
     }
 }
 
@@ -99,11 +102,13 @@ extension OWSMessageDecryptJob {
             let createdAtInterval: Double = record.createdAt
             let createdAt: Date = SDSDeserialization.requiredDoubleAsDate(createdAtInterval, name: "createdAt")
             let envelopeData: Data = record.envelopeData
+            let serverDeliveryTimestamp: UInt64 = record.serverDeliveryTimestamp
 
             return OWSMessageDecryptJob(grdbId: recordId,
                                         uniqueId: uniqueId,
                                         createdAt: createdAt,
-                                        envelopeData: envelopeData)
+                                        envelopeData: envelopeData,
+                                        serverDeliveryTimestamp: serverDeliveryTimestamp)
 
         default:
             owsFailDebug("Unexpected record type: \(record.recordType)")
@@ -138,18 +143,49 @@ extension OWSMessageDecryptJob: SDSModel {
     }
 }
 
+// MARK: - DeepCopyable
+
+extension OWSMessageDecryptJob: DeepCopyable {
+
+    public func deepCopy() throws -> AnyObject {
+        // Any subclass can be cast to it's superclass,
+        // so the order of this switch statement matters.
+        // We need to do a "depth first" search by type.
+        guard let id = self.grdbId?.int64Value else {
+            throw OWSAssertionError("Model missing grdbId.")
+        }
+
+        do {
+            let modelToCopy = self
+            assert(type(of: modelToCopy) == OWSMessageDecryptJob.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let createdAt: Date = modelToCopy.createdAt
+            let envelopeData: Data = modelToCopy.envelopeData
+            let serverDeliveryTimestamp: UInt64 = modelToCopy.serverDeliveryTimestamp
+
+            return OWSMessageDecryptJob(grdbId: id,
+                                        uniqueId: uniqueId,
+                                        createdAt: createdAt,
+                                        envelopeData: envelopeData,
+                                        serverDeliveryTimestamp: serverDeliveryTimestamp)
+        }
+
+    }
+}
+
 // MARK: - Table Metadata
 
 extension OWSMessageDecryptJobSerializer {
 
     // This defines all of the columns used in the table
     // where this model (and any subclasses) are persisted.
-    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey, columnIndex: 0)
-    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64, columnIndex: 1)
-    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true, columnIndex: 2)
+    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey)
+    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64)
+    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true)
     // Properties
-    static let createdAtColumn = SDSColumnMetadata(columnName: "createdAt", columnType: .double, columnIndex: 3)
-    static let envelopeDataColumn = SDSColumnMetadata(columnName: "envelopeData", columnType: .blob, columnIndex: 4)
+    static let createdAtColumn = SDSColumnMetadata(columnName: "createdAt", columnType: .double)
+    static let envelopeDataColumn = SDSColumnMetadata(columnName: "envelopeData", columnType: .blob)
+    static let serverDeliveryTimestampColumn = SDSColumnMetadata(columnName: "serverDeliveryTimestamp", columnType: .int64)
 
     // TODO: We should decide on a naming convention for
     //       tables that store models.
@@ -160,7 +196,8 @@ extension OWSMessageDecryptJobSerializer {
         recordTypeColumn,
         uniqueIdColumn,
         createdAtColumn,
-        envelopeDataColumn
+        envelopeDataColumn,
+        serverDeliveryTimestampColumn
         ])
 }
 
@@ -270,9 +307,11 @@ public extension OWSMessageDecryptJob {
 
 @objc
 public class OWSMessageDecryptJobCursor: NSObject {
+    private let transaction: GRDBReadTransaction
     private let cursor: RecordCursor<MessageDecryptJobRecord>?
 
-    init(cursor: RecordCursor<MessageDecryptJobRecord>?) {
+    init(transaction: GRDBReadTransaction, cursor: RecordCursor<MessageDecryptJobRecord>?) {
+        self.transaction = transaction
         self.cursor = cursor
     }
 
@@ -314,10 +353,10 @@ public extension OWSMessageDecryptJob {
         let database = transaction.database
         do {
             let cursor = try MessageDecryptJobRecord.fetchCursor(database)
-            return OWSMessageDecryptJobCursor(cursor: cursor)
+            return OWSMessageDecryptJobCursor(transaction: transaction, cursor: cursor)
         } catch {
             owsFailDebug("Read failed: \(error)")
-            return OWSMessageDecryptJobCursor(cursor: nil)
+            return OWSMessageDecryptJobCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -523,11 +562,11 @@ public extension OWSMessageDecryptJob {
         do {
             let sqlRequest = SQLRequest<Void>(sql: sql, arguments: arguments, cached: true)
             let cursor = try MessageDecryptJobRecord.fetchCursor(transaction.database, sqlRequest)
-            return OWSMessageDecryptJobCursor(cursor: cursor)
+            return OWSMessageDecryptJobCursor(transaction: transaction, cursor: cursor)
         } catch {
             Logger.error("sql: \(sql)")
             owsFailDebug("Read failed: \(error)")
-            return OWSMessageDecryptJobCursor(cursor: nil)
+            return OWSMessageDecryptJobCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -572,7 +611,25 @@ class OWSMessageDecryptJobSerializer: SDSSerializer {
         // Properties
         let createdAt: Double = archiveDate(model.createdAt)
         let envelopeData: Data = model.envelopeData
+        let serverDeliveryTimestamp: UInt64 = model.serverDeliveryTimestamp
 
-        return MessageDecryptJobRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, createdAt: createdAt, envelopeData: envelopeData)
+        return MessageDecryptJobRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, createdAt: createdAt, envelopeData: envelopeData, serverDeliveryTimestamp: serverDeliveryTimestamp)
     }
 }
+
+// MARK: - Deep Copy
+
+#if TESTABLE_BUILD
+@objc
+public extension OWSMessageDecryptJob {
+    // We're not using this method at the moment,
+    // but we might use it for validation of
+    // other deep copy methods.
+    func deepCopyUsingRecord() throws -> OWSMessageDecryptJob {
+        guard let record = try asRecord() as? MessageDecryptJobRecord else {
+            throw OWSAssertionError("Could not convert to record.")
+        }
+        return try OWSMessageDecryptJob.fromRecord(record)
+    }
+}
+#endif

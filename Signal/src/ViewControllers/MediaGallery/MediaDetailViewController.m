@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "MediaDetailViewController.h"
@@ -61,7 +61,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithGalleryItemBox:(GalleryItemBox *)galleryItemBox
                               viewItem:(nullable id<ConversationViewItem>)viewItem
 {
-    self = [super initWithNibName:nil bundle:nil];
+    self = [super init];
     if (!self) {
         return self;
     }
@@ -176,15 +176,11 @@ NS_ASSUME_NONNULL_BEGIN
     scrollView.showsHorizontalScrollIndicator = NO;
     scrollView.decelerationRate = UIScrollViewDecelerationRateFast;
 
-    if (@available(iOS 11.0, *)) {
-        [scrollView contentInsetAdjustmentBehavior];
-    } else {
-        self.automaticallyAdjustsScrollViewInsets = NO;
-    }
+    [scrollView contentInsetAdjustmentBehavior];
 
-    [scrollView ows_autoPinToSuperviewEdges];
+    [scrollView autoPinEdgesToSuperviewEdges];
 
-    if (self.isAnimated) {
+    if (self.attachmentStream.shouldBeRenderedByYY) {
         if (self.attachmentStream.isValidImage) {
             YYImage *animatedGif = [YYImage imageWithContentsOfFile:self.attachmentStream.originalFilePath];
             YYAnimatedImageView *animatedView = [YYAnimatedImageView new];
@@ -379,7 +375,7 @@ NS_ASSUME_NONNULL_BEGIN
 
     CGFloat xOffset = MAX(0, (scrollViewSize.width - imageViewSize.width) / 2);
     self.mediaViewLeadingConstraint.constant = xOffset;
-    self.mediaViewTrailingConstraint.constant = xOffset;
+    self.mediaViewTrailingConstraint.constant = -xOffset;
 }
 
 - (void)scrollViewDidZoom:(UIScrollView *)scrollView

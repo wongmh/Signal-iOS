@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -78,7 +78,7 @@ extension ContactConversationItem: ConversationItem {
 
     // MARK: - Dependencies
 
-    var contactManager: OWSContactsManager {
+    var contactsManager: OWSContactsManager {
         return Environment.shared.contactsManager
     }
 
@@ -101,8 +101,8 @@ extension ContactConversationItem: ConversationItem {
     }
 
     var image: UIImage? {
-        return databaseStorage.uiread { transaction in
-            return self.contactManager.image(for: self.address, transaction: transaction)
+        return databaseStorage.uiRead { transaction in
+            return self.contactsManager.image(for: self.address, transaction: transaction)
         }
     }
 }

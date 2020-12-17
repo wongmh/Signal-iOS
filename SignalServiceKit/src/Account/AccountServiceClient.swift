@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -33,14 +33,9 @@ public class AccountServiceClient: NSObject {
                                                      preauthChallenge: preauthChallenge,
                                                      captchaToken: captchaToken,
                                                      transport: transport).recover { error in
-            switch error {
-            case let networkingError as NetworkManagerError:
-                if networkingError.statusCode == 402 {
-                    throw AccountServiceClientError.captchaRequired
-                }
-            default:
-                break
-            }
+                                                        if error.httpStatusCode == 402 {
+                                                            throw AccountServiceClientError.captchaRequired
+                                                        }
             throw error
         }
     }
@@ -57,18 +52,18 @@ public class AccountServiceClient: NSObject {
         return serviceClient.setCurrentSignedPreKey(signedPreKey)
     }
 
-    public func updateAttributes() -> Promise<Void> {
-        return serviceClient.updateAccountAttributes()
+    public func updatePrimaryDeviceAccountAttributes() -> Promise<Void> {
+        return serviceClient.updatePrimaryDeviceAccountAttributes()
     }
 
     public func getUuid() -> Promise<UUID> {
         return serviceClient.getAccountUuid()
     }
 
-    public func verifySecondaryDevice(deviceName: String,
-                                      verificationCode: String,
+    public func verifySecondaryDevice(verificationCode: String,
                                       phoneNumber: String,
-                                      authKey: String) -> Promise<UInt32> {
-        return serviceClient.verifySecondaryDevice(deviceName: deviceName, verificationCode: verificationCode, phoneNumber: phoneNumber, authKey: authKey)
+                                      authKey: String,
+                                      encryptedDeviceName: Data) -> Promise<UInt32> {
+        return serviceClient.verifySecondaryDevice(verificationCode: verificationCode, phoneNumber: phoneNumber, authKey: authKey, encryptedDeviceName: encryptedDeviceName)
     }
 }

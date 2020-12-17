@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import UIKit
@@ -36,7 +36,7 @@ class ContactCell: UITableViewCell {
         textStackView.axis = .vertical
         textStackView.addArrangedSubview(titleLabel)
 
-        contactImageView.autoSetDimensions(to: CGSize(width: CGFloat(ContactCell.kAvatarDiameter), height: CGFloat(ContactCell.kAvatarDiameter)))
+        contactImageView.autoSetDimensions(to: CGSize(square: CGFloat(ContactCell.kAvatarDiameter)))
 
         let contentColumns: UIStackView = UIStackView(arrangedSubviews: [contactImageView, textStackView])
         contentColumns.axis = .horizontal
@@ -94,7 +94,11 @@ class ContactCell: UITableViewCell {
                 contactIdForDeterminingBackgroundColor = contact.fullName
             }
 
-            let avatarBuilder = OWSContactAvatarBuilder(nonSignalName: contact.fullName,
+            var nameComponents = PersonNameComponents()
+            nameComponents.givenName = contact.firstName
+            nameComponents.familyName = contact.lastName
+
+            let avatarBuilder = OWSContactAvatarBuilder(nonSignalNameComponents: nameComponents,
                                                         colorSeed: contactIdForDeterminingBackgroundColor,
                                                         diameter: ContactCell.kAvatarDiameter)
 

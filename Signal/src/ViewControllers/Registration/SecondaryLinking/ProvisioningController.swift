@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -49,10 +49,14 @@ public class ProvisioningController: NSObject {
 
     @objc
     public static func presentRelinkingFlow() {
-        let provisioningController = ProvisioningController(onboardingController: OnboardingController())
+        let onboardingController = OnboardingController(onboardingMode: .provisioning)
+        let navController = OnboardingNavigationController(onboardingController: onboardingController)
+
+        let provisioningController = ProvisioningController(onboardingController: onboardingController)
         let vc = SecondaryLinkingQRCodeViewController(provisioningController: provisioningController)
-        let navController = OWSNavigationController(rootViewController: vc)
-        provisioningController.awaitProvisioning(from: vc)
+        navController.setViewControllers([vc], animated: false)
+
+        provisioningController.awaitProvisioning(from: vc, navigationController: navController)
         navController.isNavigationBarHidden = true
         CurrentAppContext().mainWindow?.rootViewController = navController
     }
@@ -68,14 +72,11 @@ public class ProvisioningController: NSObject {
         let qrCodeViewController = SecondaryLinkingQRCodeViewController(provisioningController: self)
         navigationController.pushViewController(qrCodeViewController, animated: true)
 
-        awaitProvisioning(from: qrCodeViewController)
+        awaitProvisioning(from: qrCodeViewController, navigationController: navigationController)
     }
 
-    func awaitProvisioning(from viewController: SecondaryLinkingQRCodeViewController) {
-        guard let navigationController = viewController.navigationController else {
-            owsFailDebug("navigationController was unexpectedly nil")
-            return
-        }
+    func awaitProvisioning(from viewController: SecondaryLinkingQRCodeViewController,
+                           navigationController: UINavigationController) {
 
         awaitProvisionMessage.done { [weak self, weak navigationController] message in
             guard let self = self else { throw PMKError.cancelled }
@@ -118,7 +119,7 @@ public class ProvisioningController: NSObject {
                 }))
                 navigationController.presentActionSheet(alert)
             }
-        }.retainUntilComplete()
+        }
     }
 
     func didSetDeviceName(_ deviceName: String, from viewController: UIViewController) {
@@ -129,18 +130,39 @@ public class ProvisioningController: NSObject {
                 }
             }.catch { error in
                 Logger.warn("error: \(error)")
-                let alert = ActionSheetController(title: NSLocalizedString("SECONDARY_LINKING_ERROR_WAITING_FOR_SCAN", comment: "alert title"),
-                                              message: error.localizedDescription)
-                alert.addAction(ActionSheetAction(title: CommonStrings.retryButton,
-                                              accessibilityIdentifier: "alert.retry",
-                                              style: .default,
-                                              handler: { _ in
-                                                self.didSetDeviceName(deviceName, from: viewController)
-                }))
+
+                let alert: ActionSheetController
+                switch error {
+                case SignalServiceError.obsoleteLinkedDevice:
+                    let title = NSLocalizedString("SECONDARY_LINKING_ERROR_OBSOLETE_LINKED_DEVICE_TITLE",
+                                                  comment: "Title for error alert indicating that a linked device must be upgraded before it can be linked.")
+                    let message = NSLocalizedString("SECONDARY_LINKING_ERROR_OBSOLETE_LINKED_DEVICE_MESSAGE",
+                                                    comment: "Message for error alert indicating that a linked device must be upgraded before it can be linked.")
+                    alert = ActionSheetController(title: title, message: message)
+
+                    let updateButtonText = NSLocalizedString("APP_UPDATE_NAG_ALERT_UPDATE_BUTTON", comment: "Label for the 'update' button in the 'new app version available' alert.")
+                    let updateAction = ActionSheetAction(title: updateButtonText,
+                                                         accessibilityIdentifier: "alert.update",
+                                                         style: .default) { _ in
+                                                            let url = URL(string: "https://itunes.apple.com/us/app/signal-private-messenger/id874139669?mt=8")!
+                                                            UIApplication.shared.open(url, options: [:])
+                    }
+                    alert.addAction(updateAction)
+                default:
+                    let title = NSLocalizedString("SECONDARY_LINKING_ERROR_WAITING_FOR_SCAN", comment: "alert title")
+                    let message = error.localizedDescription
+                    alert = ActionSheetController(title: title, message: message)
+                    alert.addAction(ActionSheetAction(title: CommonStrings.retryButton,
+                                                      accessibilityIdentifier: "alert.retry",
+                                                      style: .default,
+                                                      handler: { _ in
+                                                        self.didSetDeviceName(deviceName, from: viewController)
+                    }))
+                }
                 modal.dismiss {
                     viewController.presentActionSheet(alert)
                 }
-            }.retainUntilComplete()
+            }
         }
 
         ModalActivityIndicatorViewController.present(fromViewController: viewController,
@@ -183,12 +205,7 @@ public class ProvisioningController: NSObject {
             .secondaryDevicePublicKey
             .serialized
             .base64EncodedString()
-
-        // Match behavior of encodeURIComponent used by desktop.
-        var characterSet = CharacterSet.alphanumerics
-        characterSet.insert(charactersIn: "-_.!~*'()")
-
-        guard let encodedPubKey = base64PubKey.addingPercentEncoding(withAllowedCharacters: characterSet) else {
+        guard let encodedPubKey = base64PubKey.encodeURIComponent else {
             throw OWSAssertionError("Failed to url encode query params")
         }
 

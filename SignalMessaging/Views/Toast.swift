@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -34,7 +34,7 @@ public class ToastController: NSObject, ToastViewDelegate {
         view.addSubview(toastView)
         toastView.setCompressionResistanceHigh()
         toastView.autoPinEdge(.bottom, to: .bottom, of: view, withOffset: -inset)
-        toastView.autoPinWidthToSuperview(withMargin: 24)
+        toastView.autoPinWidthToSuperview(withMargin: 8)
 
         if let currentToastController = type(of: self).currentToastController {
             currentToastController.dismissToastView()
@@ -42,11 +42,11 @@ public class ToastController: NSObject, ToastViewDelegate {
         }
         type(of: self).currentToastController = self
 
-        UIView.animate(withDuration: 0.1) {
+        UIView.animate(withDuration: 0.2) {
             self.toastView.alpha = 1
         }
 
-        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 1.5) {
+        DispatchQueue.main.asyncAfter(deadline: DispatchTime.now() + 4) {
             // intentional strong reference to self.
             // As with an AlertController, the caller likely expects toast to
             // be presented and dismissed without maintaining a strong reference to ToastController
@@ -80,7 +80,7 @@ public class ToastController: NSObject, ToastViewDelegate {
             type(of: self).currentToastController = nil
         }
 
-        UIView.animate(withDuration: 0.1,
+        UIView.animate(withDuration: 0.2,
                        animations: {
             self.toastView.alpha = 0
         },
@@ -108,6 +108,7 @@ class ToastView: UIView {
     weak var delegate: ToastViewDelegate?
 
     private let label: UILabel
+    private let darkThemeBackgroundOverlay = UIView()
 
     // MARK: Initializers
 
@@ -115,12 +116,24 @@ class ToastView: UIView {
         label = UILabel()
         super.init(frame: frame)
 
-        self.layer.cornerRadius = 4
-        self.backgroundColor = Theme.toastBackgroundColor
+        self.layer.cornerRadius = 12
+        self.clipsToBounds = true
         self.layoutMargins = UIEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
 
+        if UIAccessibility.isReduceTransparencyEnabled {
+            backgroundColor = .ows_blackAlpha80
+        } else {
+            let blurEffectView = UIVisualEffectView(effect: UIBlurEffect(style: .dark))
+            addSubview(blurEffectView)
+            blurEffectView.autoPinEdgesToSuperviewEdges()
+        }
+
+        addSubview(darkThemeBackgroundOverlay)
+        darkThemeBackgroundOverlay.autoPinEdgesToSuperviewEdges()
+        darkThemeBackgroundOverlay.backgroundColor = UIColor.white.withAlphaComponent(0.10)
+
         label.textAlignment = .center
-        label.textColor = Theme.toastForegroundColor
+        label.textColor = Theme.darkThemePrimaryColor
         label.font = UIFont.ows_dynamicTypeBody
         label.numberOfLines = 0
         self.addSubview(label)
@@ -131,6 +144,10 @@ class ToastView: UIView {
 
         let swipeGesture = UISwipeGestureRecognizer(target: self, action: #selector(didSwipe(gesture:)))
         self.addGestureRecognizer(swipeGesture)
+
+        NotificationCenter.default.addObserver(self, selector: #selector(applyTheme), name: .ThemeDidChange, object: nil)
+        applyTheme()
+
     }
 
     required init?(coder aDecoder: NSCoder) {
@@ -138,6 +155,10 @@ class ToastView: UIView {
     }
 
     // MARK: Gestures
+
+    @objc func applyTheme() {
+        darkThemeBackgroundOverlay.isHidden = !Theme.isDarkThemeEnabled
+    }
 
     @objc
     func didTap(gesture: UITapGestureRecognizer) {

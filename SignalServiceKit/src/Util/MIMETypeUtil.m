@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "MIMETypeUtil.h"
@@ -12,6 +12,7 @@
 #import <CoreServices/CoreServices.h>
 
 #endif
+#import <SignalServiceKit/SignalServiceKit-Swift.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -24,16 +25,24 @@ NSString *const OWSMimeTypeImageTiff2 = @"image/x-tiff";
 NSString *const OWSMimeTypeImageBmp1 = @"image/bmp";
 NSString *const OWSMimeTypeImageBmp2 = @"image/x-windows-bmp";
 NSString *const OWSMimeTypeImageWebp = @"image/webp";
+NSString *const OWSMimeTypeImageHeic = @"image/heic";
+NSString *const OWSMimeTypeImageHeif = @"image/heif";
 NSString *const OWSMimeTypePdf = @"application/pdf";
 NSString *const OWSMimeTypeOversizeTextMessage = @"text/x-signal-plain";
 NSString *const OWSMimeTypeUnknownForTests = @"unknown/mimetype";
 NSString *const OWSMimeTypeApplicationZip = @"application/zip";
 NSString *const OWSMimeTypeProtobuf = @"application/x-protobuf";
+NSString *const OWSMimeTypeJson = @"application/json";
+// TODO: We're still finalizing the MIME type.
+NSString *const OWSMimeTypeLottieSticker = @"text/x-signal-sticker-lottie";
+NSString *const OWSMimeTypeImageApng1 = @"image/apng";
+NSString *const OWSMimeTypeImageApng2 = @"image/vnd.mozilla.apng";
 
 NSString *const kOversizeTextAttachmentUTI = @"org.whispersystems.oversize-text-attachment";
 NSString *const kOversizeTextAttachmentFileExtension = @"txt";
 NSString *const kUnknownTestAttachmentUTI = @"org.whispersystems.unknown";
 NSString *const kSyncMessageFileExtension = @"bin";
+NSString *const kLottieStickerFileExtension = @"lottiesticker";
 
 @implementation MIMETypeUtil
 
@@ -84,7 +93,7 @@ NSString *const kSyncMessageFileExtension = @"bin";
     static NSDictionary *result = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        result = @{
+        result = @ {
             OWSMimeTypeImageJpeg : @"jpeg",
             @"image/pjpeg" : @"jpeg",
             OWSMimeTypeImagePng : @"png",
@@ -92,6 +101,8 @@ NSString *const kSyncMessageFileExtension = @"bin";
             @"image/x-tiff" : @"tif",
             @"image/bmp" : @"bmp",
             @"image/x-windows-bmp" : @"bmp",
+            OWSMimeTypeImageHeic : @"heic",
+            OWSMimeTypeImageHeif : @"heif",
             OWSMimeTypeImageWebp : @"webp",
         };
     });
@@ -102,9 +113,20 @@ NSString *const kSyncMessageFileExtension = @"bin";
     static NSDictionary *result = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        result = @{
+        NSMutableDictionary<NSString *, NSString *> *value = [@ {
             OWSMimeTypeImageGif : @"gif",
-        };
+        } mutableCopy];
+        if (SSKFeatureFlags.supportAnimatedStickers_AnimatedWebp) {
+            value[OWSMimeTypeImageWebp] = @"webp";
+        }
+        if (SSKFeatureFlags.supportAnimatedStickers_Lottie) {
+            value[OWSMimeTypeLottieSticker] = kLottieStickerFileExtension;
+        }
+        if (SSKFeatureFlags.supportAnimatedStickers_Apng) {
+            value[OWSMimeTypeImageApng1] = @"png";
+            value[OWSMimeTypeImageApng2] = @"png";
+        }
+        result = [value copy];
     });
     return result;
 }
@@ -171,7 +193,7 @@ NSString *const kSyncMessageFileExtension = @"bin";
     static NSDictionary *result = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        result = @{
+        result = @ {
             @"png" : OWSMimeTypeImagePng,
             @"x-png" : OWSMimeTypeImagePng,
             @"jfif" : @"image/jpeg",
@@ -184,6 +206,8 @@ NSString *const kSyncMessageFileExtension = @"bin";
             @"tif" : @"image/tiff",
             @"tiff" : @"image/tiff",
             @"webp" : OWSMimeTypeImageWebp,
+            @"heic" : OWSMimeTypeImageHeic,
+            @"heif" : OWSMimeTypeImageHeif,
         };
     });
     return result;
@@ -193,9 +217,13 @@ NSString *const kSyncMessageFileExtension = @"bin";
     static NSDictionary *result = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        result = @{
+        NSMutableDictionary<NSString *, NSString *> *value = [@ {
             @"gif" : OWSMimeTypeImageGif,
-        };
+        } mutableCopy];
+        if (SSKFeatureFlags.supportAnimatedStickers_Lottie) {
+            value[kLottieStickerFileExtension] = OWSMimeTypeLottieSticker;
+        }
+        result = [value copy];
     });
     return result;
 }
@@ -263,7 +291,8 @@ NSString *const kSyncMessageFileExtension = @"bin";
     return [[self supportedBinaryDataMIMETypesToExtensionTypes] objectForKey:supportedMIMEType];
 }
 
-#pragma mark full attachment utilities
+#pragma mark - Full attachment utilities
+
 + (BOOL)isAnimated:(NSString *)contentType {
     return [MIMETypeUtil isSupportedAnimatedMIMEType:contentType];
 }
@@ -507,12 +536,29 @@ NSString *const kSyncMessageFileExtension = @"bin";
     return result;
 }
 
-+ (NSSet<NSString *> *)supportedImageUTITypes
++ (NSSet<NSString *> *)supportedInputImageUTITypes
 {
     static NSSet<NSString *> *result = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         result = [self utiTypesForMIMETypes:[self supportedImageMIMETypesToExtensionTypes].allKeys];
+    });
+    return result;
+}
+
++ (NSSet<NSString *> *)supportedOutputImageUTITypes
+{
+    static NSSet<NSString *> *result = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        NSMutableArray<NSString *> *imageMIMETypes =
+            [[self supportedImageMIMETypesToExtensionTypes].allKeys mutableCopy];
+        [imageMIMETypes removeObjectsInArray:@[
+            OWSMimeTypeImageWebp,
+            OWSMimeTypeImageHeic,
+            OWSMimeTypeImageHeif,
+        ]];
+        result = [self utiTypesForMIMETypes:imageMIMETypes];
     });
     return result;
 }
@@ -532,7 +578,9 @@ NSString *const kSyncMessageFileExtension = @"bin";
     static NSDictionary *result = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        result = @{
+        result = @ {
+            OWSMimeTypeImageApng1 : @"png",
+            OWSMimeTypeImageApng2 : @"png",
             @"application/acad" : @"dwg",
             @"application/andrew-inset" : @"ez",
             @"application/applixware" : @"aw",
@@ -1357,6 +1405,8 @@ NSString *const kSyncMessageFileExtension = @"bin";
             @"image/fif" : @"fif",
             @"image/g3fax" : @"g3",
             @"image/gif" : @"gif",
+            @"image/heic" : @"heic",
+            @"image/heif" : @"heif",
             @"image/ief" : @"ief",
             @"image/jpeg" : @"jpg",
             @"image/jutvision" : @"jut",
@@ -1606,7 +1656,10 @@ NSString *const kSyncMessageFileExtension = @"bin";
     static NSDictionary *result = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        result = @{
+        result = @ {
+            // Custom MIME types.
+            kLottieStickerFileExtension : OWSMimeTypeLottieSticker,
+            // Common MIME types.
             @"123" : @"application/vnd.lotus-1-2-3",
             @"3dml" : @"text/vnd.in3d.3dml",
             @"3ds" : @"image/x-3ds",
@@ -1908,6 +1961,8 @@ NSString *const kSyncMessageFileExtension = @"bin";
             @"hal" : @"application/vnd.hal+xml",
             @"hbci" : @"application/vnd.hbci",
             @"hdf" : @"application/x-hdf",
+            @"heic" : @"image/heic",
+            @"heif" : @"image/heif",
             @"hh" : @"text/x-c",
             @"hlp" : @"application/winhlp",
             @"hpgl" : @"application/vnd.hp-hpgl",

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "NotificationSettingsOptionsViewController.h"
@@ -12,7 +12,9 @@
 - (void)viewDidLoad
 {
     [super viewDidLoad];
-    
+
+    self.useThemeBackgroundColors = YES;
+
     [self updateTableContents];
 }
 
@@ -59,7 +61,7 @@
     [Environment.shared.preferences setNotificationPreviewType:notificationType];
 
     // rebuild callUIAdapter since notification configuration changed.
-    [AppEnvironment.shared.callService createCallUIAdapter];
+    [AppEnvironment.shared.callService.individualCallService createCallUIAdapter];
 
     [self.navigationController popViewControllerAnimated:YES];
 }

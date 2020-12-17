@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -16,14 +16,14 @@ public class BroadcastMediaMessageJobQueue: NSObject, JobQueue {
         return type(of: self).jobRecordLabel
     }
 
-    public var runningOperations: [BroadcastMediaMessageOperation] = []
-    public var isSetup: Bool = false
+    public var runningOperations = AtomicArray<BroadcastMediaMessageOperation>()
+    public var isSetup = AtomicBool(false)
 
     @objc
     public override init() {
         super.init()
 
-        AppReadiness.runNowOrWhenAppDidBecomeReady {
+        AppReadiness.runNowOrWhenAppDidBecomeReadyPolite {
             self.setup()
         }
     }
@@ -62,7 +62,7 @@ public class BroadcastMediaMessageJobQueue: NSObject, JobQueue {
 public class BroadcastMediaMessageOperation: OWSOperation, DurableOperation {
     public typealias JobRecordType = OWSBroadcastMediaMessageJobRecord
     public typealias DurableOperationDelegateType = BroadcastMediaMessageJobQueue
-    public var durableOperationDelegate: BroadcastMediaMessageJobQueue?
+    public weak var durableOperationDelegate: BroadcastMediaMessageJobQueue?
     public var jobRecord: OWSBroadcastMediaMessageJobRecord
     public var operation: OWSOperation {
         return self
@@ -87,8 +87,14 @@ public class BroadcastMediaMessageOperation: OWSOperation, DurableOperation {
     // MARK: -
 
     public override func run() {
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(attachmentUploadProgressNotification),
+                                               name: .attachmentUploadProgress,
+                                               object: nil)
+
         let uploadOperations = jobRecord.attachmentIdMap.keys.map { attachmentId in
-            return OWSUploadOperation(attachmentId: attachmentId)
+            // This is only used for media attachments, so we can always use v3.
+            return OWSUploadOperation(attachmentId: attachmentId, canUseV3: true)
         }
 
         OWSUploadOperation.uploadQueue.addOperations(uploadOperations, waitUntilFinished: true)
@@ -118,11 +124,17 @@ public class BroadcastMediaMessageOperation: OWSOperation, DurableOperation {
                 }
 
                 let serverId = uploadedAttachment.serverId
+                let cdnKey = uploadedAttachment.cdnKey
+                let cdnNumber = uploadedAttachment.cdnNumber
+                let uploadTimestamp = uploadedAttachment.uploadTimestamp
                 guard let encryptionKey = uploadedAttachment.encryptionKey,
                     let digest = uploadedAttachment.digest,
-                    serverId > 0 else {
+                    (serverId > 0 || !cdnKey.isEmpty) else {
                         owsFailDebug("uploaded attachment was incomplete")
                         continue
+                }
+                if uploadTimestamp < 1 {
+                    owsFailDebug("Missing uploadTimestamp.")
                 }
 
                 for correspondingId in correspondingAttachments {
@@ -134,6 +146,9 @@ public class BroadcastMediaMessageOperation: OWSOperation, DurableOperation {
                     correspondingAttachment.updateAsUploaded(withEncryptionKey: encryptionKey,
                                                              digest: digest,
                                                              serverId: serverId,
+                                                             cdnKey: cdnKey,
+                                                             cdnNumber: cdnNumber,
+                                                             uploadTimestamp: uploadTimestamp,
                                                              transaction: transaction)
 
                     guard let albumMessageId = correspondingAttachment.albumMessageId else {
@@ -156,6 +171,38 @@ public class BroadcastMediaMessageOperation: OWSOperation, DurableOperation {
 
         reportSuccess()
     }
+
+    // MARK: - Notifications
+
+    @objc
+    func attachmentUploadProgressNotification(_ notification: Notification) {
+        guard let notificationAttachmentId = notification.userInfo?[kAttachmentUploadAttachmentIDKey] as? String else {
+            owsFailDebug("Missing notificationAttachmentId.")
+            return
+        }
+        guard let progress = notification.userInfo?[kAttachmentUploadProgressKey] as? NSNumber else {
+            owsFailDebug("Missing progress.")
+            return
+        }
+        guard let correspondingAttachments = self.jobRecord.attachmentIdMap[notificationAttachmentId] else {
+            return
+        }
+        // Forward upload progress notifications to the corresponding attachments.
+        for correspondingId in correspondingAttachments {
+            guard correspondingId != notificationAttachmentId else {
+                owsFailDebug("Unexpected attachment id.")
+                continue
+            }
+            NotificationCenter.default.post(name: .attachmentUploadProgress,
+                                            object: nil,
+                                            userInfo: [
+                                                kAttachmentUploadAttachmentIDKey: correspondingId,
+                                                kAttachmentUploadProgressKey: progress
+            ])
+        }
+    }
+
+    // MARK: -
 
     public override func didSucceed() {
         self.databaseStorage.write { transaction in

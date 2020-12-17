@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSIncomingSentMessageTranscript.h"
@@ -25,6 +25,22 @@ NS_ASSUME_NONNULL_BEGIN
 
 @implementation OWSIncomingSentMessageTranscript
 
+#pragma mark - Dependencies
+
++ (TSAccountManager *)tsAccountManager
+{
+    OWSAssertDebug(SSKEnvironment.shared.tsAccountManager);
+
+    return SSKEnvironment.shared.tsAccountManager;
+}
+
+- (id<GroupsV2>)groupsV2
+{
+    return SSKEnvironment.shared.groupsV2;
+}
+
+#pragma mark -
+
 - (nullable instancetype)initWithProto:(SSKProtoSyncMessageSent *)sentProto transaction:(SDSAnyWriteTransaction *)transaction
 {
     self = [super init];
@@ -46,15 +62,52 @@ NS_ASSUME_NONNULL_BEGIN
     _expirationStartedAt = sentProto.expirationStartTimestamp;
     _expirationDuration = _dataMessage.expireTimer;
     _body = _dataMessage.body;
+    if (_dataMessage.bodyRanges.count > 0) {
+        _bodyRanges = [[MessageBodyRanges alloc] initWithProtos:_dataMessage.bodyRanges];
+    }
     _dataMessageTimestamp = _dataMessage.timestamp;
-    SSKProtoGroupContext *_Nullable group = _dataMessage.group;
-    if (group != nil) {
-        if (group.id.length < 1) {
+    _disappearingMessageToken = [DisappearingMessageToken tokenForProtoExpireTimer:_dataMessage.expireTimer];
+
+    SSKProtoGroupContext *_Nullable groupContextV1 = _dataMessage.group;
+    SSKProtoGroupContextV2 *_Nullable groupContextV2 = _dataMessage.groupV2;
+    if (groupContextV1 != nil) {
+        if (groupContextV2 != nil) {
+            OWSFailDebug(@"Transcript has both v1 and v2 group contexts.");
+            return nil;
+        }
+
+        _groupId = groupContextV1.id;
+        if (_groupId.length < 1) {
             OWSFailDebug(@"Missing groupId.");
             return nil;
         }
-        _groupId = group.id;
-        _isGroupUpdate = (group.hasType && group.unwrappedType == SSKProtoGroupContextTypeUpdate);
+        if (![GroupManager isValidGroupId:_groupId groupsVersion:GroupsVersionV1]) {
+            OWSFailDebug(@"Invalid groupId.");
+            return nil;
+        }
+        _isGroupUpdate = (groupContextV1.hasType && groupContextV1.unwrappedType == SSKProtoGroupContextTypeUpdate);
+    } else if (groupContextV2 != nil) {
+        NSData *_Nullable masterKey = groupContextV2.masterKey;
+        if (masterKey.length < 1) {
+            OWSFailDebug(@"Missing masterKey.");
+            return nil;
+        }
+        NSError *_Nullable error;
+        GroupV2ContextInfo *_Nullable contextInfo = [self.groupsV2 groupV2ContextInfoForMasterKeyData:masterKey
+                                                                                                error:&error];
+        if (error != nil || contextInfo == nil) {
+            OWSFailDebug(@"Couldn't parse contextInfo: %@.", error);
+            return nil;
+        }
+        _groupId = contextInfo.groupId;
+        if (_groupId.length < 1) {
+            OWSFailDebug(@"Missing groupId.");
+            return nil;
+        }
+        if (![GroupManager isValidGroupId:_groupId groupsVersion:GroupsVersionV2]) {
+            OWSFailDebug(@"Invalid groupId.");
+            return nil;
+        }
     } else {
         if (sentProto.destinationAddress == nil) {
             OWSFailDebug(@"Missing destinationAddress.");
@@ -62,6 +115,11 @@ NS_ASSUME_NONNULL_BEGIN
         }
         _recipientAddress = sentProto.destinationAddress;
     }
+
+    if (_groupId != nil) {
+        [TSGroupThread ensureGroupIdMappingForGroupId:_groupId transaction:transaction];
+    }
+
     if (_dataMessage.hasFlags) {
         uint32_t flags = _dataMessage.flags;
         _isExpirationTimerUpdate = (flags & SSKProtoDataMessageFlagsExpirationTimerUpdate) != 0;
@@ -77,20 +135,82 @@ NS_ASSUME_NONNULL_BEGIN
     if (self.isRecipientUpdate) {
         // Fetch, don't create.  We don't want recipient updates to resurrect messages or threads.
         if (_groupId != nil) {
-            _thread = [TSGroupThread getThreadWithGroupId:_groupId transaction:transaction];
+            _thread = [TSGroupThread fetchWithGroupId:_groupId transaction:transaction];
         } else {
             OWSFailDebug(@"We should never receive a 'recipient update' for messages in contact threads.");
+            return nil;
         }
         // Skip the other processing for recipient updates.
     } else {
         if (_groupId != nil) {
-            _thread = [TSGroupThread getOrCreateThreadWithGroupId:_groupId transaction:transaction];
+            TSGroupThread *_Nullable groupThread = [TSGroupThread fetchWithGroupId:_groupId transaction:transaction];
+            _thread = groupThread;
+
+            if (groupContextV1 != nil) {
+                SignalServiceAddress *_Nullable localAddress
+                    = OWSIncomingSentMessageTranscript.tsAccountManager.localAddress;
+                if (localAddress == nil) {
+                    OWSFailDebug(@"Missing localAddress.");
+                    return nil;
+                }
+
+                if (_thread == nil) {
+                    NSArray<SignalServiceAddress *> *members = @[ localAddress ];
+                    NSError *_Nullable groupError;
+                    _thread = [GroupManager remoteUpsertExistingGroupV1WithGroupId:_groupId
+                                                                              name:groupContextV1.name
+                                                                        avatarData:nil
+                                                                           members:members
+                                                          disappearingMessageToken:self.disappearingMessageToken
+                                                          groupUpdateSourceAddress:localAddress
+                                                                 infoMessagePolicy:InfoMessagePolicyAlways
+                                                                       transaction:transaction
+                                                                             error:&groupError]
+                                  .groupThread;
+                    if (groupError != nil || _thread == nil) {
+                        OWSFailDebug(@"Could not create group: %@", groupError);
+                        return nil;
+                    }
+                }
+                if (!_thread.isGroupV1Thread) {
+                    OWSFailDebug(@"Invalid thread for v1 group.");
+                    return nil;
+                }
+            } else if (groupContextV2 != nil) {
+                if (groupThread == nil) {
+                    // GroupsV2MessageProcessor should have already created the v2 group
+                    // by now.
+                    OWSFailDebug(@"Missing thread for v2 group.");
+                    return nil;
+                } else if (!_thread.isGroupV2Thread) {
+                    OWSFailDebug(@"Invalid thread for v2 group.");
+                    return nil;
+                }
+                if (!groupContextV2.hasRevision) {
+                    OWSFailDebug(@"Missing revision.");
+                    return nil;
+                }
+                uint32_t revision = groupContextV2.revision;
+                if (![groupThread.groupModel isKindOfClass:TSGroupModelV2.class]) {
+                    OWSFailDebug(@"Invalid group model.");
+                    return nil;
+                }
+                TSGroupModelV2 *groupModel = (TSGroupModelV2 *)groupThread.groupModel;
+                if (revision > groupModel.revision) {
+                    OWSFailDebug(@"Unexpected revision.");
+                    return nil;
+                }
+            } else {
+                OWSFailDebug(@"Missing group context.");
+                return nil;
+            }
         } else {
             _thread = [TSContactThread getOrCreateThreadWithContactAddress:_recipientAddress transaction:transaction];
         }
 
-        _quotedMessage =
-            [TSQuotedMessage quotedMessageForDataMessage:_dataMessage thread:_thread transaction:transaction];
+        _quotedMessage = [TSQuotedMessage quotedMessageForDataMessage:_dataMessage
+                                                               thread:_thread
+                                                          transaction:transaction];
         _contact = [OWSContacts contactForDataMessage:_dataMessage transaction:transaction];
 
         NSError *linkPreviewError;

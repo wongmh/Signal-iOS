@@ -1,10 +1,11 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
 import MediaPlayer
 import SignalServiceKit
+import PromiseKit
 
 // A modal view that be used during blocking interactions (e.g. waiting on response from
 // service or on the completion of a long-running local operation).
@@ -13,8 +14,13 @@ public class ModalActivityIndicatorViewController: OWSViewController {
 
     let canCancel: Bool
 
+    private let _wasCancelled = AtomicBool(false)
     @objc
-    public var wasCancelled: Bool = false
+    public var wasCancelled: Bool {
+        _wasCancelled.get()
+    }
+    public let wasCancelledPromise: Promise<Void>
+    private let wasCancelledResolver: Resolver<Void>
 
     var activityIndicator: UIActivityIndicatorView?
 
@@ -22,21 +28,20 @@ public class ModalActivityIndicatorViewController: OWSViewController {
 
     var wasDimissed: Bool = false
 
-    private static let kPresentationDelayDefault: TimeInterval = 1
+    private static let kPresentationDelayDefault: TimeInterval = 0.05
     private let presentationDelay: TimeInterval
 
     // MARK: Initializers
-
-    @available(*, unavailable, message:"use other constructor instead.")
-    public required init?(coder aDecoder: NSCoder) {
-        notImplemented()
-    }
 
     public required init(canCancel: Bool, presentationDelay: TimeInterval) {
         self.canCancel = canCancel
         self.presentationDelay = presentationDelay
 
-        super.init(nibName: nil, bundle: nil)
+        let (promise, resolver) = Promise<Void>.pending()
+        self.wasCancelledPromise = promise
+        self.wasCancelledResolver = resolver
+
+        super.init()
     }
 
     @objc
@@ -68,8 +73,13 @@ public class ModalActivityIndicatorViewController: OWSViewController {
     }
 
     @objc
-    public func dismiss(completion : @escaping () -> Void) {
+    public func dismiss(completion completionParam: @escaping () -> Void) {
         AssertIsOnMainThread()
+
+        let completion = {
+            completionParam()
+            self.wasCancelledResolver.reject(OWSGenericError("ModalActivityIndicatorViewController was not cancelled."))
+        }
 
         if !wasDimissed {
             // Only dismiss once.
@@ -101,7 +111,7 @@ public class ModalActivityIndicatorViewController: OWSViewController {
             cancelButton.setTitle(CommonStrings.cancelButton, for: .normal)
             cancelButton.setTitleColor(UIColor.white, for: .normal)
             cancelButton.backgroundColor = UIColor.ows_gray80
-            let font = UIFont.ows_dynamicTypeBody.ows_semibold()
+            let font = UIFont.ows_dynamicTypeBody.ows_semibold
             cancelButton.titleLabel?.font = font
             cancelButton.layer.cornerRadius = ScaleFromIPhone5To7Plus(4, 5)
             cancelButton.clipsToBounds = true
@@ -174,9 +184,10 @@ public class ModalActivityIndicatorViewController: OWSViewController {
     @objc func cancelPressed() {
         AssertIsOnMainThread()
 
-        wasCancelled = true
+        _wasCancelled.set(true)
 
-        dismiss {
-        }
+        self.wasCancelledResolver.fulfill(())
+
+        dismiss {}
     }
 }

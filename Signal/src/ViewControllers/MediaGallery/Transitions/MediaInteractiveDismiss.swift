@@ -1,12 +1,29 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
 
 protocol InteractiveDismissDelegate: AnyObject {
-    func interactiveDismiss(_ interactiveDismiss: MediaInteractiveDismiss, didChangeTouchOffset offset: CGPoint)
-    func interactiveDismissDidFinish(_ interactiveDismiss: MediaInteractiveDismiss)
+    func interactiveDismissDidBegin(_ interactiveDismiss: UIPercentDrivenInteractiveTransition)
+    func interactiveDismissUpdate(_ interactiveDismiss: UIPercentDrivenInteractiveTransition, didChangeTouchOffset offset: CGPoint)
+    func interactiveDismissDidFinish(_ interactiveDismiss: UIPercentDrivenInteractiveTransition)
+    func interactiveDismissDidCancel(_ interactiveDismiss: UIPercentDrivenInteractiveTransition)
+}
+
+extension InteractiveDismissDelegate {
+    func interactiveDismissDidBegin(_ interactiveDismiss: UIPercentDrivenInteractiveTransition) {
+        
+    }
+    func interactiveDismissUpdate(_ interactiveDismiss: UIPercentDrivenInteractiveTransition, didChangeTouchOffset offset: CGPoint) {
+        
+    }
+    func interactiveDismissDidFinish(_ interactiveDismiss: UIPercentDrivenInteractiveTransition) {
+        
+    }
+    func interactiveDismissDidCancel(_ interactiveDismiss: UIPercentDrivenInteractiveTransition) {
+        
+    }
 }
 
 class MediaInteractiveDismiss: UIPercentDrivenInteractiveTransition {
@@ -24,6 +41,8 @@ class MediaInteractiveDismiss: UIPercentDrivenInteractiveTransition {
         let gesture = DirectionalPanGestureRecognizer(direction: .vertical,
                                                       target: self,
                                                       action: #selector(handleGesture(_:)))
+        // Allow panning with trackpad
+        if #available(iOS 13.4, *) { gesture.allowedScrollTypesMask = .continuous }
         view.addGestureRecognizer(gesture)
     }
 
@@ -77,7 +96,7 @@ class MediaInteractiveDismiss: UIPercentDrivenInteractiveTransition {
             farEnoughToCompleteTransition = progress >= 0.5
             update(progress)
 
-            interactiveDismissDelegate?.interactiveDismiss(self, didChangeTouchOffset: offset)
+            interactiveDismissDelegate?.interactiveDismissUpdate(self, didChangeTouchOffset: offset)
 
         case .cancelled:
             interactiveDismissDelegate?.interactiveDismissDidFinish(self)

@@ -1,11 +1,12 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSBatchMessageProcessor.h"
 #import "AppContext.h"
 #import "AppReadiness.h"
 #import "NSArray+OWS.h"
+#import "NSNotificationCenter+OWS.h"
 #import "NotificationsProtocol.h"
 #import "OWSBackgroundTask.h"
 #import "OWSMessageManager.h"
@@ -18,6 +19,9 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+NSNotificationName const kNSNotificationNameMessageProcessingDidFlushQueue
+    = @"kNSNotificationNameMessageProcessingDidFlushQueue";
+
 @implementation OWSMessageContentJob
 
 + (NSString *)collection
@@ -28,6 +32,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithEnvelopeData:(NSData *)envelopeData
                        plaintextData:(NSData *_Nullable)plaintextData
                      wasReceivedByUD:(BOOL)wasReceivedByUD
+             serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
 {
     OWSAssertDebug(envelopeData);
 
@@ -39,6 +44,7 @@ NS_ASSUME_NONNULL_BEGIN
     _envelopeData = envelopeData;
     _plaintextData = plaintextData;
     _wasReceivedByUD = wasReceivedByUD;
+    _serverDeliveryTimestamp = serverDeliveryTimestamp;
     _createdAt = [NSDate new];
 
     return self;
@@ -55,6 +61,7 @@ NS_ASSUME_NONNULL_BEGIN
                        createdAt:(NSDate *)createdAt
                     envelopeData:(NSData *)envelopeData
                    plaintextData:(nullable NSData *)plaintextData
+         serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
                  wasReceivedByUD:(BOOL)wasReceivedByUD
 {
     self = [super initWithGrdbId:grdbId
@@ -67,6 +74,7 @@ NS_ASSUME_NONNULL_BEGIN
     _createdAt = createdAt;
     _envelopeData = envelopeData;
     _plaintextData = plaintextData;
+    _serverDeliveryTimestamp = serverDeliveryTimestamp;
     _wasReceivedByUD = wasReceivedByUD;
 
     return self;
@@ -84,7 +92,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable SSKProtoEnvelope *)envelope
 {
     NSError *error;
-    SSKProtoEnvelope *_Nullable result = [SSKProtoEnvelope parseData:self.envelopeData error:&error];
+    SSKProtoEnvelope *_Nullable result = [[SSKProtoEnvelope alloc] initWithSerializedData:self.envelopeData
+                                                                                    error:&error];
 
     if (error) {
         OWSFailDebug(@"paring SSKProtoEnvelope failed with error: %@", error);
@@ -98,11 +107,15 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Queue Processing
 
-@interface OWSMessageContentQueue : NSObject
+@interface OWSMessageContentQueue : NSObject <OWSMessageProcessingPipelineStage>
 
 @property (nonatomic, readonly) AnyMessageContentJobFinder *finder;
 @property (nonatomic) BOOL isDrainingQueue;
 @property (atomic) BOOL isAppInBackground;
+
+#ifdef TESTABLE_BUILD
+@property (nonatomic) BOOL shouldProcessDuringTests;
+#endif
 
 @end
 
@@ -132,14 +145,13 @@ NS_ASSUME_NONNULL_BEGIN
                                                object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(registrationStateDidChange:)
-                                                 name:RegistrationStateDidChangeNotification
+                                                 name:NSNotificationNameRegistrationStateDidChange
                                                object:nil];
 
     // Start processing.
     [AppReadiness runNowOrWhenAppDidBecomeReady:^{
-        if (CurrentAppContext().isMainApp) {
-            [self drainQueue];
-        }
+        [self.pipelineSupervisor registerPipelineStage:self];
+        [self drainQueue];
     }];
 
     return self;
@@ -171,6 +183,16 @@ NS_ASSUME_NONNULL_BEGIN
     return SDSDatabaseStorage.shared;
 }
 
+- (GroupsV2MessageProcessor *)groupsV2MessageProcessor
+{
+    return SSKEnvironment.shared.groupsV2MessageProcessor;
+}
+
+- (OWSMessagePipelineSupervisor *)pipelineSupervisor
+{
+    return SSKEnvironment.shared.messagePipelineSupervisor;
+}
+
 #pragma mark - Notifications
 
 - (void)applicationWillEnterForeground:(NSNotification *)notification
@@ -187,11 +209,7 @@ NS_ASSUME_NONNULL_BEGIN
 {
     OWSAssertIsOnMainThread();
 
-    [AppReadiness runNowOrWhenAppDidBecomeReady:^{
-        if (CurrentAppContext().isMainApp) {
-            [self drainQueue];
-        }
-    }];
+    [AppReadiness runNowOrWhenAppDidBecomeReady:^{ [self drainQueue]; }];
 }
 
 #pragma mark - instance methods
@@ -209,6 +227,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)enqueueEnvelopeData:(NSData *)envelopeData
               plaintextData:(NSData *_Nullable)plaintextData
             wasReceivedByUD:(BOOL)wasReceivedByUD
+    serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
                 transaction:(SDSAnyWriteTransaction *)transaction
 {
     OWSAssertDebug(envelopeData);
@@ -218,15 +237,19 @@ NS_ASSUME_NONNULL_BEGIN
     [self.finder addJobWithEnvelopeData:envelopeData
                           plaintextData:plaintextData
                         wasReceivedByUD:wasReceivedByUD
+                serverDeliveryTimestamp:serverDeliveryTimestamp
                             transaction:transaction];
+}
+
+- (BOOL)hasPendingJobsWithTransaction:(SDSAnyReadTransaction *)transaction
+{
+    return [self.finder jobCountWithTransaction:transaction] > 0;
 }
 
 - (void)drainQueue
 {
     OWSAssertDebugUnlessRunningTests(AppReadiness.isAppReady);
-
-    // Don't process incoming messages in app extensions.
-    if (!CurrentAppContext().isMainApp) {
+    if (!self.pipelineSupervisor.isMessageProcessingPermitted) {
         return;
     }
     if (!self.tsAccountManager.isRegisteredAndReady) {
@@ -238,7 +261,7 @@ NS_ASSUME_NONNULL_BEGIN
             return;
         }
         self.isDrainingQueue = YES;
-
+        
         [self drainQueueWorkStep];
     });
 }
@@ -247,39 +270,58 @@ NS_ASSUME_NONNULL_BEGIN
 {
     AssertOnDispatchQueue(self.serialQueue);
 
-    if (SSKFeatureFlags.suppressBackgroundActivity) {
+    if (SSKDebugFlags.suppressBackgroundActivity) {
         // Don't process queues.
         return;
     }
 
+#ifdef TESTABLE_BUILD
+    // By default, we don't process this queue during the tests
+    // to avoid spurious failures caused by accessing the database
+    // when it isn't configured.
+    if (CurrentAppContext().isRunningTests && !self.shouldProcessDuringTests) {
+        OWSAssertDebug(SSKEnvironment.shared.storageCoordinator.isStorageReady);
+        self.isDrainingQueue = NO;
+        return;
+    }
+#endif
+
     // We want a value that is just high enough to yield perf benefits.
     const NSUInteger kIncomingMessageBatchSize = 32;
+    // If the app is in the background, use batch size of 1.
+    // This reduces the cost of being interrupted and rolled back if
+    // app is suspended.
+    NSUInteger batchSize = self.isAppInBackground ? 1 : kIncomingMessageBatchSize;
 
     __block NSArray<OWSMessageContentJob *> *batchJobs;
     [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        batchJobs = [self.finder nextJobsWithBatchSize:kIncomingMessageBatchSize transaction:transaction];
+        batchJobs = [self.finder nextJobsWithBatchSize:batchSize transaction:transaction];
     }];
     OWSAssertDebug(batchJobs);
     if (batchJobs.count < 1) {
         self.isDrainingQueue = NO;
         OWSLogVerbose(@"Queue is drained");
+
+        [[NSNotificationCenter defaultCenter]
+            postNotificationNameAsync:kNSNotificationNameMessageProcessingDidFlushQueue
+                               object:nil
+                             userInfo:nil];
+
         return;
     }
 
-    OWSBackgroundTask *_Nullable backgroundTask = [OWSBackgroundTask backgroundTaskWithLabelStr:__PRETTY_FUNCTION__];
+    __block OWSBackgroundTask *_Nullable backgroundTask =
+        [OWSBackgroundTask backgroundTaskWithLabelStr:__PRETTY_FUNCTION__];
 
     __block NSArray<OWSMessageContentJob *> *processedJobs;
     __block NSUInteger jobCount;
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         processedJobs = [self processJobs:batchJobs transaction:transaction];
-
+        
         [self.finder removeJobsWithUniqueIds:processedJobs.uniqueIds transaction:transaction];
-
+        
         jobCount = [self.finder jobCountWithTransaction:transaction];
-    }];
-
-    OWSAssertDebug(backgroundTask);
-    backgroundTask = nil;
+    });
 
     OWSLogVerbose(@"completed %lu/%lu jobs. %lu jobs left.",
         (unsigned long)processedJobs.count,
@@ -292,6 +334,9 @@ NS_ASSUME_NONNULL_BEGIN
     // batching.
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5f * NSEC_PER_SEC)), self.serialQueue, ^{
         [self drainQueueWorkStep];
+
+        OWSAssertDebug(backgroundTask);
+        backgroundTask = nil;
     });
 }
 
@@ -311,19 +356,24 @@ NS_ASSUME_NONNULL_BEGIN
                                                                                 transaction:transaction];
         };
 
-        @try {
-            SSKProtoEnvelope *_Nullable envelope = job.envelope;
-            if (!envelope) {
-                reportFailure(transaction);
-            } else {
-                [self.messageManager throws_processEnvelope:envelope
-                                              plaintextData:job.plaintextData
-                                            wasReceivedByUD:job.wasReceivedByUD
-                                                transaction:transaction];
-            }
-        } @catch (NSException *exception) {
-            OWSFailDebug(@"Received an invalid envelope: %@", exception.debugDescription);
+        SSKProtoEnvelope *_Nullable envelope = job.envelope;
+        if (!envelope) {
             reportFailure(transaction);
+        } else if ([GroupsV2MessageProcessor isGroupsV2MessageWithEnvelope:envelope plaintextData:job.plaintextData]) {
+            [self.groupsV2MessageProcessor enqueueWithEnvelopeData:job.envelopeData
+                                                     plaintextData:job.plaintextData
+                                                          envelope:envelope
+                                                   wasReceivedByUD:job.wasReceivedByUD
+                                           serverDeliveryTimestamp:job.serverDeliveryTimestamp
+                                                       transaction:transaction];
+        } else {
+            if (![self.messageManager processEnvelope:envelope
+                                        plaintextData:job.plaintextData
+                                      wasReceivedByUD:job.wasReceivedByUD
+                              serverDeliveryTimestamp:job.serverDeliveryTimestamp
+                                          transaction:transaction]) {
+                reportFailure(transaction);
+            }
         }
         [processedJobs addObject:job];
 
@@ -337,6 +387,13 @@ NS_ASSUME_NONNULL_BEGIN
         }
     }
     return processedJobs;
+}
+
+#pragma mark - <OWSMessageProcessingPipelineStage>
+
+- (void)supervisorDidResumeMessageProcessing:(OWSMessagePipelineSupervisor *)supervisor
+{
+    [AppReadiness runNowOrWhenAppDidBecomeReady:^{ [self drainQueue]; }];
 }
 
 @end
@@ -364,11 +421,7 @@ NS_ASSUME_NONNULL_BEGIN
 
     _processingQueue = [OWSMessageContentQueue new];
 
-    [AppReadiness runNowOrWhenAppDidBecomeReady:^{
-        if (CurrentAppContext().isMainApp) {
-            [self.processingQueue drainQueue];
-        }
-    }];
+    [AppReadiness runNowOrWhenAppDidBecomeReady:^{ [self.processingQueue drainQueue]; }];
 
     return self;
 }
@@ -378,6 +431,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)enqueueEnvelopeData:(NSData *)envelopeData
               plaintextData:(NSData *_Nullable)plaintextData
             wasReceivedByUD:(BOOL)wasReceivedByUD
+    serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
                 transaction:(SDSAnyWriteTransaction *)transaction
 {
     if (envelopeData.length < 1) {
@@ -390,15 +444,30 @@ NS_ASSUME_NONNULL_BEGIN
     [self.processingQueue enqueueEnvelopeData:envelopeData
                                 plaintextData:plaintextData
                               wasReceivedByUD:wasReceivedByUD
+                      serverDeliveryTimestamp:serverDeliveryTimestamp
                                   transaction:transaction];
 
     // The new envelope won't be visible to the finder until this transaction commits,
     // so drainQueue in the transaction completion.
-    [transaction addCompletionWithQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)
-                                  block:^{
-                                      [self.processingQueue drainQueue];
-                                  }];
+    [transaction addAsyncCompletionWithQueue:dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0)
+                                       block:^{
+                                           [self.processingQueue drainQueue];
+                                       }];
 }
+
+- (BOOL)hasPendingJobsWithTransaction:(SDSAnyReadTransaction *)transaction
+{
+    return [self.processingQueue hasPendingJobsWithTransaction:transaction];
+}
+
+#ifdef TESTABLE_BUILD
+- (void)setShouldProcessDuringTests:(BOOL)shouldProcessDuringTests
+{
+    _shouldProcessDuringTests = shouldProcessDuringTests;
+
+    self.processingQueue.shouldProcessDuringTests = shouldProcessDuringTests;
+}
+#endif
 
 @end
 

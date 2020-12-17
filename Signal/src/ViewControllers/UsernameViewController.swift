@@ -1,19 +1,11 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
 
 @objc
 class UsernameViewController: OWSViewController {
-
-    // MARK: - Dependencies
-
-    var databaseStorage: SDSDatabaseStorage {
-        return SSKEnvironment.shared.databaseStorage
-    }
-
-    // MARK: -
 
     @objc
     public var modalPresentation = false {
@@ -89,7 +81,7 @@ class UsernameViewController: OWSViewController {
         let titleLabel = UILabel()
         titleLabel.text = NSLocalizedString("USERNAME_FIELD", comment: "Label for the username field in the username view.")
         titleLabel.textColor = Theme.primaryTextColor
-        titleLabel.font = UIFont.ows_dynamicTypeBodyClamped.ows_semibold()
+        titleLabel.font = UIFont.ows_dynamicTypeBodyClamped.ows_semibold
 
         usernameRow.addSubview(titleLabel)
         titleLabel.autoPinLeadingToSuperviewMargin()
@@ -208,7 +200,7 @@ class UsernameViewController: OWSViewController {
                     self.usernameSavedOrCanceled()
                 }
             }.catch { error in
-                if case .taskError(let task, _)? = error as? NetworkManagerError, task.statusCode() == 409 {
+                if error.httpStatusCode == 409 {
                     modalView.dismiss { self.validationState = .inUse }
                     return
                 }

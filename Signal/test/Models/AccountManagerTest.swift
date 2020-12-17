@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import XCTest
@@ -41,12 +41,9 @@ class FailingTSAccountManager: TSAccountManager {
 
 class VerifyingTSAccountManager: FailingTSAccountManager {
     override func verifyAccount(with request: TSRequest, success successBlock: @escaping (Any?) -> Void, failure failureBlock: @escaping (Error) -> Void) {
-        successBlock(nil)
+        successBlock(["uuid": UUID().uuidString])
     }
 
-    override func performUpdateAccountAttributes() -> AnyPromise {
-        return AnyPromise(Promise.value(()))
-    }
 }
 
 class TokenObtainingTSAccountManager: VerifyingTSAccountManager {
@@ -78,7 +75,7 @@ class AccountManagerTest: SignalBaseTest {
         let expectation = self.expectation(description: "should fail")
 
         firstly {
-            accountManager.register(verificationCode: "", pin: "")
+            accountManager.register(verificationCode: "", pin: "", checkForAvailableTransfer: false)
         }.done {
             XCTFail("Should fail")
         }.catch { error in
@@ -88,7 +85,7 @@ class AccountManagerTest: SignalBaseTest {
             } else {
                 XCTFail("Unexpected error: \(error)")
             }
-        }.retainUntilComplete()
+        }
 
         self.waitForExpectations(timeout: 1.0, handler: nil)
     }
@@ -99,7 +96,7 @@ class AccountManagerTest: SignalBaseTest {
         let expectation = self.expectation(description: "should fail")
 
         firstly {
-            accountManager.register(verificationCode: "123456", pin: "")
+            accountManager.register(verificationCode: "123456", pin: "", checkForAvailableTransfer: false)
         }.done {
             XCTFail("Should fail")
         }.catch { error in
@@ -108,7 +105,7 @@ class AccountManagerTest: SignalBaseTest {
             } else {
                 XCTFail("Unexpected error: \(error)")
             }
-        }.retainUntilComplete()
+        }
 
         self.waitForExpectations(timeout: 1.0, handler: nil)
     }
@@ -125,12 +122,12 @@ class AccountManagerTest: SignalBaseTest {
         let expectation = self.expectation(description: "should succeed")
 
         firstly {
-            accountManager.register(verificationCode: "123456", pin: "")
+            accountManager.register(verificationCode: "123456", pin: "", checkForAvailableTransfer: false)
         }.done {
             expectation.fulfill()
         }.catch { error in
             XCTFail("Unexpected error: \(error)")
-        }.retainUntilComplete()
+        }
 
         self.waitForExpectations(timeout: 1.0, handler: nil)
     }
@@ -146,7 +143,7 @@ class AccountManagerTest: SignalBaseTest {
             XCTFail("Expected to fail.")
         }.catch { _ in
             expectation.fulfill()
-        }.retainUntilComplete()
+        }
 
         self.waitForExpectations(timeout: 1.0, handler: nil)
     }

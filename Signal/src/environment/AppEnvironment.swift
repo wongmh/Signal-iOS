@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -32,10 +32,7 @@ import SignalMessaging
     public var callService: CallService
 
     @objc
-    public var outboundCallInitiator: OutboundCallInitiator
-
-    @objc
-    public var messageFetcherJob: MessageFetcherJob
+    public var outboundIndividualCallInitiator: OutboundIndividualCallInitiator
 
     @objc
     public var accountManager: AccountManager
@@ -61,11 +58,13 @@ import SignalMessaging
     @objc
     public var backupLazyRestore: BackupLazyRestore
 
+    @objc
+    let deviceTransferService = DeviceTransferService()
+
     private override init() {
         self.callMessageHandler = WebRTCCallMessageHandler()
         self.callService = CallService()
-        self.outboundCallInitiator = OutboundCallInitiator()
-        self.messageFetcherJob = MessageFetcherJob()
+        self.outboundIndividualCallInitiator = OutboundIndividualCallInitiator()
         self.accountManager = AccountManager()
         self.notificationPresenter = NotificationPresenter()
         self.pushRegistrationManager = PushRegistrationManager()
@@ -86,15 +85,7 @@ import SignalMessaging
 
     @objc
     public func setup() {
-        AppReadiness.runNowOrWhenAppWillBecomeReady {
-            // For now, we can't create createCallUIAdapter until
-            // storage is ready, because the FeatureFlag.calling
-            // consults storage.
-
-            // TODO MULTIRING - once calling is enabled on all devices
-            // we can move this back to an inline call.
-            self.callService.createCallUIAdapter()
-        }
+        callService.individualCallService.createCallUIAdapter()
 
         // Hang certain singletons on SSKEnvironment too.
         SSKEnvironment.shared.notificationsManager = notificationPresenter

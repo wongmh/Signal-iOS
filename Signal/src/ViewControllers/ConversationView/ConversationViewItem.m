@@ -1,15 +1,13 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "ConversationViewItem.h"
-#import "OWSContactOffersCell.h"
 #import "OWSMessageCell.h"
-#import "OWSMessageHeaderView.h"
 #import "OWSSystemMessageCell.h"
 #import "Signal-Swift.h"
+#import <MobileCoreServices/UTCoreTypes.h>
 #import <SignalCoreKit/NSString+OWS.h>
-#import <SignalMessaging/OWSUnreadIndicator.h>
 #import <SignalServiceKit/NSData+Image.h>
 #import <SignalServiceKit/OWSContact.h>
 #import <SignalServiceKit/SignalServiceKit-Swift.h>
@@ -99,6 +97,15 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
     return attachmentPointer.state == TSAttachmentPointerStateFailed;
 }
 
+- (BOOL)isPendingMessageRequest
+{
+    if (![self.attachment isKindOfClass:[TSAttachmentPointer class]]) {
+        return NO;
+    }
+    TSAttachmentPointer *attachmentPointer = (TSAttachmentPointer *)self.attachment;
+    return attachmentPointer.state == TSAttachmentPointerStatePendingMessageRequest;
+}
+
 @end
 
 #pragma mark -
@@ -121,6 +128,7 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 @property (nonatomic, nullable) OWSQuotedReplyModel *quotedReply;
 @property (nonatomic, nullable) StickerInfo *stickerInfo;
 @property (nonatomic, nullable) TSAttachmentStream *stickerAttachment;
+@property (nonatomic, nullable) StickerMetadata *stickerMetadata;
 @property (nonatomic) BOOL isFailedSticker;
 @property (nonatomic) ViewOnceMessageState viewOnceMessageState;
 @property (nonatomic, nullable) TSAttachmentStream *attachmentStream;
@@ -128,8 +136,10 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 @property (nonatomic, nullable) ContactShareViewModel *contactShare;
 @property (nonatomic, nullable) OWSLinkPreview *linkPreview;
 @property (nonatomic, nullable) TSAttachment *linkPreviewAttachment;
+@property (nonatomic, nullable) GroupInviteLinkViewModel *groupInviteLinkViewModel;
 @property (nonatomic, nullable) NSArray<ConversationMediaAlbumItem *> *mediaAlbumItems;
 @property (nonatomic, nullable) NSString *systemMessageText;
+@property (nonatomic, nullable) NSArray<GroupUpdateCopyItem *> *systemMessageGroupUpdates;
 @property (nonatomic, nullable) TSThread *incomingMessageAuthorThread;
 @property (nonatomic, nullable) NSString *authorConversationColorName;
 @property (nonatomic, nullable) ConversationStyle *conversationStyle;
@@ -142,9 +152,7 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 
 @implementation ConversationInteractionViewItem
 
-@synthesize shouldShowDate = _shouldShowDate;
 @synthesize shouldShowSenderAvatar = _shouldShowSenderAvatar;
-@synthesize unreadIndicator = _unreadIndicator;
 @synthesize didCellMediaFailToLoad = _didCellMediaFailToLoad;
 @synthesize interaction = _interaction;
 @synthesize isFirstInCluster = _isFirstInCluster;
@@ -153,10 +161,13 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 @synthesize lastAudioMessageView = _lastAudioMessageView;
 @synthesize senderName = _senderName;
 @synthesize senderUsername = _senderUsername;
+@synthesize senderProfileName = _senderProfileName;
 @synthesize accessibilityAuthorName = _accessibilityAuthorName;
 @synthesize shouldHideFooter = _shouldHideFooter;
 @synthesize audioPlaybackState = _audioPlaybackState;
 @synthesize needsUpdate = _needsUpdate;
+@synthesize shouldCollapseSystemMessageAction = _shouldCollapseSystemMessageAction;
+@synthesize isTruncatedTextVisible = _isTruncatedTextVisible;
 
 - (instancetype)initWithInteraction:(TSInteraction *)interaction
                              thread:(TSThread *)thread
@@ -193,9 +204,19 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
     return SDSDatabaseStorage.shared;
 }
 
++ (SDSDatabaseStorage *)databaseStorage
+{
+    return SDSDatabaseStorage.shared;
+}
+
 - (OWSContactsManager *)contactsManager
 {
     return Environment.shared.contactsManager;
+}
+
+- (id<GroupsV2>)groupsV2
+{
+    return SSKEnvironment.shared.groupsV2;
 }
 
 #pragma mark -
@@ -216,15 +237,19 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
     self.quotedReply = nil;
     self.stickerInfo = nil;
     self.stickerAttachment = nil;
+    self.stickerMetadata = nil;
     self.isFailedSticker = NO;
     self.viewOnceMessageState = ViewOnceMessageState_Unknown;
     self.contactShare = nil;
     self.systemMessageText = nil;
+    self.systemMessageGroupUpdates = nil;
     self.authorConversationColorName = nil;
     self.linkPreview = nil;
     self.linkPreviewAttachment = nil;
+    self.groupInviteLinkViewModel = nil;
     self.senderName = nil;
     self.senderUsername = nil;
+    self.senderProfileName = nil;
     self.accessibilityAuthorName = nil;
 
     [self setAuthorConversationColorNameWithTransaction:transaction];
@@ -355,20 +380,26 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
     return message.isViewOnceMessage;
 }
 
-- (BOOL)hasCellHeader
+- (BOOL)canShowDate
 {
-    return self.shouldShowDate || self.unreadIndicator;
-}
-
-- (void)setShouldShowDate:(BOOL)shouldShowDate
-{
-    if (_shouldShowDate == shouldShowDate) {
-        return;
+    switch (self.interaction.interactionType) {
+        case OWSInteractionType_Unknown:
+        case OWSInteractionType_TypingIndicator:
+        case OWSInteractionType_ThreadDetails:
+        case OWSInteractionType_DateHeader:
+            return NO;
+        case OWSInteractionType_Info: {
+            // Only show the date for non-synced thread messages;
+            TSInfoMessage *infoMessage = (TSInfoMessage *)self.interaction;
+            return infoMessage.messageType != TSInfoMessageSyncedThread;
+        }
+        case OWSInteractionType_UnreadIndicator:
+        case OWSInteractionType_IncomingMessage:
+        case OWSInteractionType_OutgoingMessage:
+        case OWSInteractionType_Error:
+        case OWSInteractionType_Call:
+            return YES;
     }
-
-    _shouldShowDate = shouldShowDate;
-
-    [self clearCachedLayoutState];
 }
 
 - (void)setShouldShowSenderAvatar:(BOOL)shouldShowSenderAvatar
@@ -437,17 +468,6 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
     [self setNeedsUpdate];
 }
 
-- (void)setUnreadIndicator:(nullable OWSUnreadIndicator *)unreadIndicator
-{
-    if ([NSObject isNullableObject:_unreadIndicator equalTo:unreadIndicator]) {
-        return;
-    }
-
-    _unreadIndicator = unreadIndicator;
-
-    [self clearCachedLayoutState];
-}
-
 - (void)setStickerInfo:(nullable StickerInfo *)stickerInfo
 {
     if ([NSObject isNullableObject:_stickerInfo equalTo:stickerInfo]) {
@@ -461,9 +481,20 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 
 - (void)setStickerAttachment:(nullable TSAttachmentStream *)stickerAttachment
 {
-    BOOL didChange = ((_stickerAttachment != nil) != (stickerAttachment != nil));
+    BOOL didChange = ![NSObject isNullableObject:_stickerAttachment.uniqueId equalTo:stickerAttachment.uniqueId];
 
     _stickerAttachment = stickerAttachment;
+
+    if (didChange) {
+        [self clearCachedLayoutState];
+    }
+}
+
+- (void)setStickerMetadata:(nullable StickerMetadata *)stickerMetadata
+{
+    BOOL didChange = ![NSObject isNullableObject:_stickerMetadata equalTo:stickerMetadata];
+
+    _stickerMetadata = stickerMetadata;
 
     if (didChange) {
         [self clearCachedLayoutState];
@@ -488,6 +519,39 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
     }
 
     _viewOnceMessageState = viewOnceMessageState;
+
+    [self clearCachedLayoutState];
+}
+
+- (void)setShouldCollapseSystemMessageAction:(BOOL)shouldCollapseSystemMessageAction
+{
+    if (_shouldCollapseSystemMessageAction == shouldCollapseSystemMessageAction) {
+        return;
+    }
+
+    _shouldCollapseSystemMessageAction = shouldCollapseSystemMessageAction;
+
+    [self clearCachedLayoutState];
+}
+
+- (void)setIsTruncatedTextVisible:(BOOL)isTruncatedTextVisible
+{
+    if (_isTruncatedTextVisible == isTruncatedTextVisible) {
+        return;
+    }
+
+    _isTruncatedTextVisible = isTruncatedTextVisible;
+
+    [self clearCachedLayoutState];
+}
+
+- (void)setGroupInviteLinkViewModel:(nullable GroupInviteLinkViewModel *)groupInviteLinkViewModel
+{
+    if ([NSObject isNullableObject:_groupInviteLinkViewModel equalTo:groupInviteLinkViewModel]) {
+        return;
+    }
+
+    _groupInviteLinkViewModel = groupInviteLinkViewModel;
 
     [self clearCachedLayoutState];
 }
@@ -537,13 +601,13 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 
     // For performance reasons, we cache one instance of each kind of
     // cell and uses these cells for measurement.
-    static NSMutableDictionary<NSNumber *, ConversationViewCell *> *measurementCellCache = nil;
+    static NSMutableDictionary<NSString *, ConversationViewCell *> *measurementCellCache = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         measurementCellCache = [NSMutableDictionary new];
     });
 
-    NSNumber *cellCacheKey = @(self.interaction.interactionType);
+    NSString *cellCacheKey = self.cellReuseIdentifier;
     ConversationViewCell *_Nullable measurementCell = measurementCellCache[cellCacheKey];
     if (!measurementCell) {
         switch (self.interaction.interactionType) {
@@ -559,14 +623,17 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
             case OWSInteractionType_Call:
                 measurementCell = [OWSSystemMessageCell new];
                 break;
-            case OWSInteractionType_Offer:
-                measurementCell = [OWSContactOffersCell new];
-                break;
             case OWSInteractionType_TypingIndicator:
                 measurementCell = [OWSTypingIndicatorCell new];
                 break;
             case OWSInteractionType_ThreadDetails:
                 measurementCell = [OWSThreadDetailsCell new];
+                break;
+            case OWSInteractionType_UnreadIndicator:
+                measurementCell = [OWSUnreadIndicatorCell new];
+                break;
+            case OWSInteractionType_DateHeader:
+                measurementCell = [OWSDateHeaderCell new];
                 break;
         }
 
@@ -581,24 +648,104 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 {
     OWSAssertDebug(previousLayoutItem);
 
-    if (self.hasCellHeader) {
-        return OWSMessageHeaderViewDateHeaderVMargin;
+    switch (self.interaction.interactionType) {
+        case OWSInteractionType_DateHeader:
+        case OWSInteractionType_UnreadIndicator:
+            return ConversationStyle.defaultMessageSpacing;
+        case OWSInteractionType_IncomingMessage:
+            switch (previousLayoutItem.interaction.interactionType) {
+                case OWSInteractionType_IncomingMessage: {
+                    TSIncomingMessage *incomingMessage = (TSIncomingMessage *)self.interaction;
+                    TSIncomingMessage *previousIncomingMessage = (TSIncomingMessage *)previousLayoutItem.interaction;
+                    if ([incomingMessage.authorAddress isEqualToAddress:previousIncomingMessage.authorAddress]) {
+                        return ConversationStyle.compactMessageSpacing;
+                    }
+                    return ConversationStyle.defaultMessageSpacing;
+                }
+                case OWSInteractionType_Call:
+                case OWSInteractionType_Info:
+                case OWSInteractionType_Error:
+                    return ConversationStyle.systemMessageSpacing;
+                default:
+                    return ConversationStyle.defaultMessageSpacing;
+            }
+        case OWSInteractionType_OutgoingMessage:
+            switch (previousLayoutItem.interaction.interactionType) {
+                case OWSInteractionType_OutgoingMessage:
+                    return ConversationStyle.compactMessageSpacing;
+                case OWSInteractionType_Call:
+                case OWSInteractionType_Info:
+                case OWSInteractionType_Error:
+                    return ConversationStyle.systemMessageSpacing;
+                default:
+                    return ConversationStyle.defaultMessageSpacing;
+            }
+        case OWSInteractionType_Call:
+        case OWSInteractionType_Info:
+        case OWSInteractionType_Error:
+            if (previousLayoutItem.interaction.interactionType == self.interaction.interactionType) {
+                switch (previousLayoutItem.interaction.interactionType) {
+                    case OWSInteractionType_Error: {
+                        TSErrorMessage *previousErrorMessage = (TSErrorMessage *)previousLayoutItem.interaction;
+                        TSErrorMessage *errorMessage = (TSErrorMessage *)self.interaction;
+                        if (errorMessage.errorType == TSErrorMessageNonBlockingIdentityChange
+                            || previousErrorMessage.errorType != errorMessage.errorType) {
+                            return ConversationStyle.defaultMessageSpacing;
+                        }
+                        return ConversationStyle.compactMessageSpacing;
+                    }
+                    case OWSInteractionType_Info: {
+                        TSInfoMessage *previousInfoMessage = (TSInfoMessage *)previousLayoutItem.interaction;
+                        TSInfoMessage *infoMessage = (TSInfoMessage *)self.interaction;
+                        if (infoMessage.messageType == TSInfoMessageVerificationStateChange
+                            || previousInfoMessage.messageType != infoMessage.messageType) {
+                            return ConversationStyle.defaultMessageSpacing;
+                        }
+                        return ConversationStyle.compactMessageSpacing;
+                    }
+                    case OWSInteractionType_Call:
+                        return ConversationStyle.compactMessageSpacing;
+                    default:
+                        break;
+                }
+            } else if (previousLayoutItem.interaction.interactionType == OWSInteractionType_OutgoingMessage
+                || previousLayoutItem.interaction.interactionType == OWSInteractionType_IncomingMessage) {
+                return ConversationStyle.systemMessageSpacing;
+            } else {
+                return ConversationStyle.defaultMessageSpacing;
+            }
+        default:
+            return ConversationStyle.defaultMessageSpacing;
     }
+}
 
-    // "Bubble Collapse".  Adjacent messages with the same author should be close together.
-    if (self.interaction.interactionType == OWSInteractionType_IncomingMessage
-        && previousLayoutItem.interaction.interactionType == OWSInteractionType_IncomingMessage) {
-        TSIncomingMessage *incomingMessage = (TSIncomingMessage *)self.interaction;
-        TSIncomingMessage *previousIncomingMessage = (TSIncomingMessage *)previousLayoutItem.interaction;
-        if ([incomingMessage.authorAddress isEqualToAddress:previousIncomingMessage.authorAddress]) {
-            return 2.f;
-        }
-    } else if (self.interaction.interactionType == OWSInteractionType_OutgoingMessage
-        && previousLayoutItem.interaction.interactionType == OWSInteractionType_OutgoingMessage) {
-        return 2.f;
+- (nullable NSString *)cellReuseIdentifier
+{
+    OWSAssertIsOnMainThread();
+    OWSAssertDebug(self.interaction);
+
+    switch (self.interaction.interactionType) {
+        case OWSInteractionType_Unknown:
+            OWSFailDebug(@"Unknown interaction type.");
+            return nil;
+        case OWSInteractionType_IncomingMessage:
+            return [OWSMessageCell cellReuseIdentifierForMessageCellType:self.messageCellType isOutgoingMessage:NO];
+        case OWSInteractionType_OutgoingMessage:
+            return [OWSMessageCell cellReuseIdentifierForMessageCellType:self.messageCellType isOutgoingMessage:YES];
+        case OWSInteractionType_Error:
+        case OWSInteractionType_Info:
+        case OWSInteractionType_Call:
+            return [OWSSystemMessageCell cellReuseIdentifier];
+
+        case OWSInteractionType_TypingIndicator:
+            return [OWSTypingIndicatorCell cellReuseIdentifier];
+        case OWSInteractionType_ThreadDetails:
+            return [OWSThreadDetailsCell cellReuseIdentifier];
+        case OWSInteractionType_UnreadIndicator:
+            return [OWSUnreadIndicatorCell cellReuseIdentifier];
+        case OWSInteractionType_DateHeader:
+            return [OWSDateHeaderCell cellReuseIdentifier];
     }
-
-    return 12.f;
 }
 
 - (ConversationViewCell *)dequeueCellForCollectionView:(UICollectionView *)collectionView
@@ -607,32 +754,14 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
     OWSAssertIsOnMainThread();
     OWSAssertDebug(collectionView);
     OWSAssertDebug(indexPath);
-    OWSAssertDebug(self.interaction);
 
-    switch (self.interaction.interactionType) {
-        case OWSInteractionType_Unknown:
-            OWSFailDebug(@"Unknown interaction type.");
-            return nil;
-        case OWSInteractionType_IncomingMessage:
-        case OWSInteractionType_OutgoingMessage:
-            return [collectionView dequeueReusableCellWithReuseIdentifier:[OWSMessageCell cellReuseIdentifier]
-                                                             forIndexPath:indexPath];
-        case OWSInteractionType_Error:
-        case OWSInteractionType_Info:
-        case OWSInteractionType_Call:
-            return [collectionView dequeueReusableCellWithReuseIdentifier:[OWSSystemMessageCell cellReuseIdentifier]
-                                                             forIndexPath:indexPath];
-        case OWSInteractionType_Offer:
-            return [collectionView dequeueReusableCellWithReuseIdentifier:[OWSContactOffersCell cellReuseIdentifier]
-                                                             forIndexPath:indexPath];
-
-        case OWSInteractionType_TypingIndicator:
-            return [collectionView dequeueReusableCellWithReuseIdentifier:[OWSTypingIndicatorCell cellReuseIdentifier]
-                                                             forIndexPath:indexPath];
-        case OWSInteractionType_ThreadDetails:
-            return [collectionView dequeueReusableCellWithReuseIdentifier:[OWSThreadDetailsCell cellReuseIdentifier]
-                                                             forIndexPath:indexPath];
+    NSString *_Nullable cellReuseIdentifier = self.cellReuseIdentifier;
+    if (!cellReuseIdentifier) {
+        OWSFailDebug(@"Unknown cell type.");
+        return nil;
     }
+
+    return [collectionView dequeueReusableCellWithReuseIdentifier:cellReuseIdentifier forIndexPath:indexPath];
 }
 
 - (nullable TSAttachmentStream *)firstValidAlbumAttachment
@@ -704,72 +833,100 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
     return cache;
 }
 
-- (DisplayableText *)displayableBodyTextForText:(NSString *)text interactionId:(NSString *)interactionId
+- (DisplayableText *)displayableBodyTextForText:(NSString *)text
+                                         ranges:(nullable MessageBodyRanges *)ranges
+                                  interactionId:(NSString *)interactionId
+                                    transaction:(SDSAnyReadTransaction *)transaction
 {
     OWSAssertDebug(text);
     OWSAssertDebug(interactionId.length > 0);
+    OWSAssertDebug(transaction);
 
     NSString *displayableTextCacheKey = [@"body-" stringByAppendingString:interactionId];
 
-    return [self displayableTextForCacheKey:displayableTextCacheKey
-                                  textBlock:^{
-                                      return text;
-                                  }];
+    return [self
+        displayableTextForCacheKey:displayableTextCacheKey
+                  messageBodyBlock:^{
+                      return [[MessageBody alloc] initWithText:text ranges:ranges ?: MessageBodyRanges.empty];
+                  }
+                      mentionStyle:[self.interaction isKindOfClass:[TSOutgoingMessage class]] ? MentionStyleOutgoing
+                                                                                              : MentionStyleIncoming
+                       transaction:transaction];
 }
 
 - (DisplayableText *)displayableBodyTextForOversizeTextAttachment:(TSAttachmentStream *)attachmentStream
+                                                           ranges:(nullable MessageBodyRanges *)ranges
                                                     interactionId:(NSString *)interactionId
+                                                      transaction:transaction
 {
     OWSAssertDebug(attachmentStream);
     OWSAssertDebug(interactionId.length > 0);
+    OWSAssertDebug(transaction);
 
     NSString *displayableTextCacheKey = [@"oversize-body-" stringByAppendingString:interactionId];
 
-    return [self displayableTextForCacheKey:displayableTextCacheKey
-                                  textBlock:^{
-                                      NSData *textData =
-                                          [NSData dataWithContentsOfURL:attachmentStream.originalMediaURL];
-                                      NSString *text =
-                                          [[NSString alloc] initWithData:textData encoding:NSUTF8StringEncoding];
-                                      return text;
-                                  }];
+    return [self
+        displayableTextForCacheKey:displayableTextCacheKey
+                  messageBodyBlock:^{
+                      NSData *textData = [NSData dataWithContentsOfURL:attachmentStream.originalMediaURL];
+                      NSString *text = [[NSString alloc] initWithData:textData encoding:NSUTF8StringEncoding];
+                      return [[MessageBody alloc] initWithText:text ranges:ranges ?: MessageBodyRanges.empty];
+                  }
+                      mentionStyle:[self.interaction isKindOfClass:[TSOutgoingMessage class]] ? MentionStyleOutgoing
+                                                                                              : MentionStyleIncoming
+                       transaction:transaction];
 }
 
-- (DisplayableText *)displayableQuotedTextForText:(NSString *)text interactionId:(NSString *)interactionId
+- (DisplayableText *)displayableQuotedTextForText:(NSString *)text
+                                           ranges:(nullable MessageBodyRanges *)ranges
+                                    interactionId:(NSString *)interactionId
+                                      transaction:(SDSAnyReadTransaction *)transaction
 {
     OWSAssertDebug(text);
     OWSAssertDebug(interactionId.length > 0);
+    OWSAssertDebug(transaction);
 
     NSString *displayableTextCacheKey = [@"quoted-" stringByAppendingString:interactionId];
 
     return [self displayableTextForCacheKey:displayableTextCacheKey
-                                  textBlock:^{
-                                      return text;
-                                  }];
+                           messageBodyBlock:^{
+                               return [[MessageBody alloc] initWithText:text ranges:ranges ?: MessageBodyRanges.empty];
+                           }
+                               mentionStyle:MentionStyleQuotedReply
+                                transaction:transaction];
 }
 
-- (DisplayableText *)displayableCaptionForText:(NSString *)text attachmentId:(NSString *)attachmentId
+- (DisplayableText *)displayableCaptionForText:(NSString *)text
+                                  attachmentId:(NSString *)attachmentId
+                                   transaction:(SDSAnyReadTransaction *)transaction
 {
     OWSAssertDebug(text);
     OWSAssertDebug(attachmentId.length > 0);
+    OWSAssertDebug(transaction);
 
     NSString *displayableTextCacheKey = [@"attachment-caption-" stringByAppendingString:attachmentId];
 
     return [self displayableTextForCacheKey:displayableTextCacheKey
-                                  textBlock:^{
-                                      return text;
-                                  }];
+                           messageBodyBlock:^{
+                               return [[MessageBody alloc] initWithText:text ranges:MessageBodyRanges.empty];
+                           }
+                               mentionStyle:MentionStyleIncoming
+                                transaction:transaction];
 }
 
 - (DisplayableText *)displayableTextForCacheKey:(NSString *)displayableTextCacheKey
-                                      textBlock:(NSString * (^_Nonnull)(void))textBlock
+                               messageBodyBlock:(MessageBody * (^_Nonnull)(void))messageBodyBlock
+                                   mentionStyle:(MentionStyle)mentionStyle
+                                    transaction:(SDSAnyReadTransaction *)transaction
 {
     OWSAssertDebug(displayableTextCacheKey.length > 0);
 
     DisplayableText *_Nullable displayableText = [[self displayableTextCache] objectForKey:displayableTextCacheKey];
     if (!displayableText) {
-        NSString *text = textBlock();
-        displayableText = [DisplayableText displayableText:text];
+        MessageBody *messageBody = messageBodyBlock();
+        displayableText = [DisplayableText displayableTextWithMessageBody:messageBody
+                                                             mentionStyle:mentionStyle
+                                                              transaction:transaction];
         [[self displayableTextCache] setObject:displayableText forKey:displayableTextCacheKey];
     }
     return displayableText;
@@ -787,10 +944,21 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
         case OWSInteractionType_Unknown:
         case OWSInteractionType_ThreadDetails:
         case OWSInteractionType_TypingIndicator:
-        case OWSInteractionType_Offer:
+        case OWSInteractionType_UnreadIndicator:
+        case OWSInteractionType_DateHeader:
             return;
+        case OWSInteractionType_Info: {
+            TSInfoMessage *infoMessage = (TSInfoMessage *)self.interaction;
+            if (infoMessage.messageType == TSInfoMessageTypeGroupUpdate) {
+                NSArray<GroupUpdateCopyItem *> *_Nullable groupUpdates =
+                    [infoMessage groupUpdateItemsWithTransaction:transaction];
+                if (groupUpdates.count > 0) {
+                    self.systemMessageGroupUpdates = groupUpdates;
+                    return;
+                }
+            }
+        }
         case OWSInteractionType_Error:
-        case OWSInteractionType_Info:
         case OWSInteractionType_Call:
             self.systemMessageText = [self systemMessageTextWithTransaction:transaction];
             OWSAssertDebug(self.systemMessageText.length > 0);
@@ -834,6 +1002,13 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
             TSAttachmentStream *stickerAttachmentStream = (TSAttachmentStream *)stickerAttachment;
             CGSize mediaSize = [stickerAttachmentStream imageSize];
             if (stickerAttachmentStream.isValidImage && mediaSize.width > 0 && mediaSize.height > 0) {
+                StickerType stickerType =
+                    [StickerManager stickerTypeForContentType:stickerAttachmentStream.contentType];
+                NSURL *stickerDataUrl = [NSURL fileURLWithPath:stickerAttachmentStream.originalFilePath];
+                self.stickerMetadata = [[StickerMetadata alloc] initWithStickerInfo:message.messageSticker.info
+                                                                        stickerType:stickerType
+                                                                     stickerDataUrl:stickerDataUrl
+                                                                        emojiString:message.messageSticker.emoji];
                 self.stickerAttachment = stickerAttachmentStream;
             }
         } else if ([stickerAttachment isKindOfClass:[TSAttachmentPointer class]]) {
@@ -852,31 +1027,37 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
             [OWSQuotedReplyModel quotedReplyWithQuotedMessage:message.quotedMessage transaction:transaction];
 
         if (self.quotedReply.body.length > 0) {
-            self.displayableQuotedText =
-                [self displayableQuotedTextForText:self.quotedReply.body interactionId:message.uniqueId];
+            self.displayableQuotedText = [self displayableQuotedTextForText:self.quotedReply.body
+                                                                     ranges:self.quotedReply.bodyRanges
+                                                              interactionId:message.uniqueId
+                                                                transaction:transaction];
         }
     }
 
-    TSAttachment *_Nullable oversizeTextAttachment = [message oversizeTextAttachmentWithTransaction:transaction];
+    TSAttachment *_Nullable oversizeTextAttachment =
+        [message oversizeTextAttachmentWithTransaction:transaction.unwrapGrdbRead];
     if ([oversizeTextAttachment isKindOfClass:[TSAttachmentStream class]]) {
         TSAttachmentStream *oversizeTextAttachmentStream = (TSAttachmentStream *)oversizeTextAttachment;
         self.displayableBodyText = [self displayableBodyTextForOversizeTextAttachment:oversizeTextAttachmentStream
-                                                                        interactionId:message.uniqueId];
+                                                                               ranges:message.bodyRanges
+                                                                        interactionId:message.uniqueId
+                                                                          transaction:transaction];
     } else if ([oversizeTextAttachment isKindOfClass:[TSAttachmentPointer class]]) {
         TSAttachmentPointer *oversizeTextAttachmentPointer = (TSAttachmentPointer *)oversizeTextAttachment;
         // TODO: Handle backup restore.
         self.messageCellType = OWSMessageCellType_OversizeTextDownloading;
         self.attachmentPointer = (TSAttachmentPointer *)oversizeTextAttachmentPointer;
         return;
-    } else {
-        NSString *_Nullable bodyText = [message bodyTextWithTransaction:transaction];
-        if (bodyText) {
-            self.displayableBodyText = [self displayableBodyTextForText:bodyText interactionId:message.uniqueId];
-        }
+    } else if (message.body.length > 0) {
+        self.displayableBodyText = [self displayableBodyTextForText:message.body
+                                                             ranges:message.bodyRanges
+                                                      interactionId:message.uniqueId
+                                                        transaction:transaction];
     }
 
-    NSArray<TSAttachment *> *mediaAttachments = [message mediaAttachmentsWithTransaction:transaction];
-    NSArray<ConversationMediaAlbumItem *> *mediaAlbumItems = [self albumItemsForMediaAttachments:mediaAttachments];
+    NSArray<TSAttachment *> *mediaAttachments = [message mediaAttachmentsWithTransaction:transaction.unwrapGrdbRead];
+    NSArray<ConversationMediaAlbumItem *> *mediaAlbumItems = [self albumItemsForMediaAttachments:mediaAttachments
+                                                                                     transaction:transaction];
     if (mediaAlbumItems.count > 0) {
         if (mediaAlbumItems.count == 1) {
             ConversationMediaAlbumItem *mediaAlbumItem = mediaAlbumItems.firstObject;
@@ -927,30 +1108,42 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
         if (self.messageCellType == OWSMessageCellType_Unknown) {
             OWSAssertDebug(message.attachmentIds.count == 0
                 || (message.attachmentIds.count == 1 &&
-                       [message oversizeTextAttachmentWithTransaction:transaction] != nil));
+                    [message oversizeTextAttachmentWithTransaction:transaction.unwrapGrdbRead] != nil));
             self.messageCellType = OWSMessageCellType_TextOnlyMessage;
         }
         OWSAssertDebug(self.displayableBodyText);
     }
 
     if (self.hasBodyText && message.linkPreview) {
-        self.linkPreview = message.linkPreview;
-        if (message.linkPreview.imageAttachmentId.length > 0) {
-            TSAttachment *_Nullable linkPreviewAttachment =
-                [TSAttachment anyFetchWithUniqueId:message.linkPreview.imageAttachmentId transaction:transaction];
-            if (!linkPreviewAttachment) {
-                OWSFailDebug(@"Could not load link preview image attachment.");
-            } else if (!linkPreviewAttachment.isImage) {
-                OWSFailDebug(@"Link preview attachment isn't an image.");
-            } else if ([linkPreviewAttachment isKindOfClass:[TSAttachmentStream class]]) {
-                TSAttachmentStream *attachmentStream = (TSAttachmentStream *)linkPreviewAttachment;
-                if (!attachmentStream.isValidImage) {
-                    OWSFailDebug(@"Link preview image attachment isn't valid.");
+        NSURL *_Nullable url = [NSURL URLWithString:message.linkPreview.urlString];
+        GroupInviteLinkInfo *_Nullable groupInviteLinkInfo = [GroupManager parseGroupInviteLink:url];
+        if (groupInviteLinkInfo != nil) {
+            self.groupInviteLinkViewModel = [self configureGroupInviteLink:url
+                                                                   message:message
+                                                       groupInviteLinkInfo:groupInviteLinkInfo];
+            if (!self.groupInviteLinkViewModel.isExpired) {
+                self.linkPreview = message.linkPreview;
+            }
+        } else {
+            self.linkPreview = message.linkPreview;
+
+            if (message.linkPreview.imageAttachmentId.length > 0) {
+                TSAttachment *_Nullable linkPreviewAttachment =
+                    [TSAttachment anyFetchWithUniqueId:message.linkPreview.imageAttachmentId transaction:transaction];
+                if (!linkPreviewAttachment) {
+                    OWSFailDebug(@"Could not load link preview image attachment.");
+                } else if (!linkPreviewAttachment.isImage) {
+                    OWSFailDebug(@"Link preview attachment isn't an image.");
+                } else if ([linkPreviewAttachment isKindOfClass:[TSAttachmentStream class]]) {
+                    TSAttachmentStream *attachmentStream = (TSAttachmentStream *)linkPreviewAttachment;
+                    if (!attachmentStream.isValidImage) {
+                        OWSFailDebug(@"Link preview image attachment isn't valid.");
+                    } else {
+                        self.linkPreviewAttachment = linkPreviewAttachment;
+                    }
                 } else {
                     self.linkPreviewAttachment = linkPreviewAttachment;
                 }
-            } else {
-                self.linkPreviewAttachment = linkPreviewAttachment;
             }
         }
     }
@@ -960,7 +1153,7 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
         // are rendered like empty text messages, but without any interactivity.
         OWSLogWarn(@"Treating unknown message as empty text message: %@ %llu", message.class, message.timestamp);
         self.messageCellType = OWSMessageCellType_TextOnlyMessage;
-        self.displayableBodyText = [[DisplayableText alloc] initWithFullText:@"" displayText:@"" isTextTruncated:NO];
+        self.displayableBodyText = DisplayableText.empty;
     }
 }
 
@@ -1004,7 +1197,7 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
         self.viewOnceMessageState = ViewOnceMessageState_IncomingInvalidContent;
         return;
     }
-    NSArray<TSAttachment *> *mediaAttachments = [message mediaAttachmentsWithTransaction:transaction];
+    NSArray<TSAttachment *> *mediaAttachments = [message mediaAttachmentsWithTransaction:transaction.unwrapGrdbRead];
     // TODO: We currently only support single attachments for
     //       view-once messages.
     TSAttachment *_Nullable mediaAttachment = mediaAttachments.firstObject;
@@ -1035,6 +1228,7 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 }
 
 - (NSArray<ConversationMediaAlbumItem *> *)albumItemsForMediaAttachments:(NSArray<TSAttachment *> *)attachments
+                                                             transaction:(SDSAnyReadTransaction *)transaction
 {
     OWSAssertIsOnMainThread();
 
@@ -1047,9 +1241,12 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
             return @[];
         }
 
-        NSString *_Nullable caption = (attachment.caption
-                ? [self displayableCaptionForText:attachment.caption attachmentId:attachment.uniqueId].displayText
-                : nil);
+
+        NSString *_Nullable caption = (attachment.caption ? [self displayableCaptionForText:attachment.caption
+                                                                               attachmentId:attachment.uniqueId
+                                                                                transaction:transaction]
+                                                                .displayAttributedText.string
+                                                          : nil);
 
         if (![attachment isKindOfClass:[TSAttachmentStream class]]) {
             TSAttachmentPointer *attachmentPointer = (TSAttachmentPointer *)attachment;
@@ -1134,8 +1331,16 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
             }
         }
         case OWSInteractionType_Call: {
-            TSCall *call = (TSCall *)self.interaction;
-            return [call previewTextWithTransaction:transaction];
+            if ([self.interaction isKindOfClass:[OWSGroupCallMessage class]]) {
+                OWSGroupCallMessage *groupCallMessage = (OWSGroupCallMessage *)self.interaction;
+                return [groupCallMessage systemTextWithTransaction:transaction];
+            } else if ([self.interaction isKindOfClass:[TSCall class]]) {
+                TSCall *call = (TSCall *)self.interaction;
+                return [call previewTextWithTransaction:transaction];
+            } else {
+                OWSFailDebug(@"Unexpected call type");
+                return nil;
+            }
         }
         default:
             OWSFailDebug(@"not a system message.");
@@ -1166,8 +1371,8 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
     OWSAssertDebug(self.hasViewState);
 
     OWSAssertDebug(_displayableBodyText);
-    OWSAssertDebug(_displayableBodyText.displayText);
-    OWSAssertDebug(_displayableBodyText.fullText);
+    OWSAssertDebug(_displayableBodyText.displayAttributedText);
+    OWSAssertDebug(_displayableBodyText.fullAttributedText);
 
     return _displayableBodyText;
 }
@@ -1194,8 +1399,8 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
     OWSAssertDebug(self.hasViewState);
 
     OWSAssertDebug(_displayableQuotedText);
-    OWSAssertDebug(_displayableQuotedText.displayText);
-    OWSAssertDebug(_displayableQuotedText.fullText);
+    OWSAssertDebug(_displayableQuotedText.displayAttributedText);
+    OWSAssertDebug(_displayableQuotedText.fullAttributedText);
 
     return _displayableQuotedText;
 }
@@ -1213,7 +1418,7 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
         case OWSMessageCellType_MediaMessage:
         case OWSMessageCellType_GenericAttachment: {
             OWSAssertDebug(self.displayableBodyText);
-            [UIPasteboard.generalPasteboard setString:self.displayableBodyText.fullText];
+            [MentionTextView copyAttributedStringToPasteboard:self.displayableBodyText.fullAttributedText];
             break;
         }
         case OWSMessageCellType_Unknown:
@@ -1310,9 +1515,10 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
         case OWSMessageCellType_Unknown:
         case OWSMessageCellType_TextOnlyMessage:
         case OWSMessageCellType_ContactShare:
+            return NO;
         case OWSMessageCellType_Audio:
         case OWSMessageCellType_GenericAttachment:
-            return NO;
+            return self.attachmentStream != nil;
         case OWSMessageCellType_MediaMessage: {
             for (ConversationMediaAlbumItem *mediaAlbumItem in self.mediaAlbumItems) {
                 if (!mediaAlbumItem.attachmentStream) {
@@ -1342,6 +1548,9 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 
 - (BOOL)canForwardMessage
 {
+    if (!self.thread.canSendToThread) {
+        return NO;
+    }
     switch (self.messageCellType) {
         case OWSMessageCellType_Unknown:
             return NO;
@@ -1365,14 +1574,14 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 
 - (void)deleteAction
 {
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageAsyncWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         [self.interaction anyRemoveWithTransaction:transaction];
-    }];
+    });
 }
 
 - (BOOL)hasBodyTextActionContent
 {
-    return self.hasBodyText && self.displayableBodyText.fullText.length > 0;
+    return self.hasBodyText && self.displayableBodyText.fullAttributedText.length > 0;
 }
 
 - (BOOL)hasMediaActionContent
@@ -1408,6 +1617,19 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState cellType)
 
     for (ConversationMediaAlbumItem *mediaAlbumItem in self.mediaAlbumItems) {
         if (mediaAlbumItem.isFailedDownload) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+- (BOOL)mediaAlbumHasPendingMessageRequestAttachment
+{
+    OWSAssertDebug(self.messageCellType == OWSMessageCellType_MediaMessage);
+    OWSAssertDebug(self.mediaAlbumItems.count > 0);
+
+    for (ConversationMediaAlbumItem *mediaAlbumItem in self.mediaAlbumItems) {
+        if (mediaAlbumItem.isPendingMessageRequest) {
             return YES;
         }
     }

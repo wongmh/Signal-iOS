@@ -1,8 +1,9 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
+import PromiseKit
 
 @objc
 class ConversationConfigurationSyncOperation: OWSOperation {
@@ -50,8 +51,7 @@ class ConversationConfigurationSyncOperation: OWSOperation {
     }
 
     private func reportAssertionError(description: String) {
-        let error: NSError = ColorSyncOperationError.assertionError(description: description) as NSError
-        error.isRetryable = false
+        let error = ColorSyncOperationError.assertionError(description: description).asRetryableError
         self.reportError(error)
     }
 
@@ -61,7 +61,11 @@ class ConversationConfigurationSyncOperation: OWSOperation {
             return
         }
 
-        syncManager.syncContacts(forSignalAccounts: [signalAccount]).retainUntilComplete()
+        firstly {
+            syncManager.syncContacts(forSignalAccounts: [signalAccount])
+        }.catch { error in
+            Logger.warn("Error: \(error)")
+        }
     }
 
     private func sync(groupThread: TSGroupThread) {

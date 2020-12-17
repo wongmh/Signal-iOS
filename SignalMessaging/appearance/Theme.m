@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "Theme.h"
@@ -31,11 +31,6 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
     return SDSDatabaseStorage.shared;
 }
 
-- (StorageCoordinator *)storageCoordinator
-{
-    return SSKEnvironment.shared.storageCoordinator;
-}
-
 #pragma mark -
 
 + (SDSKeyValueStore *)keyValueStore
@@ -45,7 +40,7 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
 
 #pragma mark -
 
-+ (instancetype)sharedInstance
++ (instancetype)shared
 {
     static dispatch_once_t onceToken;
     static Theme *instance;
@@ -67,15 +62,26 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
     OWSSingletonAssert();
 
     [AppReadiness runNowOrWhenAppDidBecomeReady:^{
-        [self notifyIfDarkThemeEnabled];
+        // IOS-782: +[Theme shared] re-enterant initialization
+        // AppReadiness will invoke the block synchronously if the app is already ready.
+        // This doesn't work here, because we'll end up reenterantly calling +shared
+        // if the app is in dark mode and the first call to +[Theme shared] happens
+        // after the app is ready.
+        //
+        // It looks like that pattern is only hit in the share extension, but we're better off
+        // asyncing always to ensure the dependency chain is broken. We're okay waiting, since
+        // there's no guarantee that this block in synchronously executed anyway.
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self notifyIfThemeModeIsNotDefault];
+        });
     }];
 
     return self;
 }
 
-- (void)notifyIfDarkThemeEnabled
+- (void)notifyIfThemeModeIsNotDefault
 {
-    if (self.isDarkThemeEnabled) {
+    if (self.isDarkThemeEnabled || self.defaultTheme != self.getOrFetchCurrentTheme) {
         [self themeDidChange];
     }
 }
@@ -84,16 +90,16 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
 
 + (BOOL)isDarkThemeEnabled
 {
-    return [self.sharedInstance isDarkThemeEnabled];
+    return [self.shared isDarkThemeEnabled];
 }
 
 - (BOOL)isDarkThemeEnabled
 {
     OWSAssertIsOnMainThread();
 
-    if (!self.storageCoordinator.isStorageReady) {
+    if (!AppReadiness.isAppReady) {
         // Don't cache this value until it reflects the data store.
-        return NO;
+        return self.isSystemDarkThemeEnabled;
     }
 
     if (self.isDarkThemeEnabledNumber == nil) {
@@ -124,7 +130,7 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
 
 + (ThemeMode)getOrFetchCurrentTheme
 {
-    return [self.sharedInstance getOrFetchCurrentTheme];
+    return [self.shared getOrFetchCurrentTheme];
 }
 
 - (ThemeMode)getOrFetchCurrentTheme
@@ -133,8 +139,8 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
         return self.cachedCurrentThemeNumber.unsignedIntegerValue;
     }
 
-    if (!self.storageCoordinator.isStorageReady) {
-        return ThemeMode_Light;
+    if (!AppReadiness.isAppReady) {
+        return self.defaultTheme;
     }
 
     __block ThemeMode currentMode;
@@ -165,16 +171,16 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
 
 + (void)setCurrentTheme:(ThemeMode)mode
 {
-    [self.sharedInstance setCurrentTheme:mode];
+    [self.shared setCurrentTheme:mode];
 }
 
 - (void)setCurrentTheme:(ThemeMode)mode
 {
     OWSAssertIsOnMainThread();
 
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         [Theme.keyValueStore setUInt:mode key:ThemeKeyCurrentMode transaction:transaction];
-    }];
+    });
 
     NSNumber *previousMode = self.isDarkThemeEnabledNumber;
 
@@ -199,23 +205,27 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
 
 - (BOOL)isSystemDarkThemeEnabled
 {
-    // TODO Xcode 11: Delete this once we're compiling only in Xcode 11
-#ifdef __IPHONE_13_0
     if (@available(iOS 13, *)) {
         return UITraitCollection.currentTraitCollection.userInterfaceStyle == UIUserInterfaceStyleDark;
     } else {
         return NO;
     }
-#else
-    return NO;
-#endif
+}
+
+- (ThemeMode)defaultTheme
+{
+    if (@available(iOS 13, *)) {
+        return ThemeMode_System;
+    }
+
+    return ThemeMode_Light;
 }
 
 #pragma mark -
 
 + (void)systemThemeChanged
 {
-    [self.sharedInstance systemThemeChanged];
+    [self.shared systemThemeChanged];
 }
 
 - (void)systemThemeChanged
@@ -268,7 +278,7 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
 
 + (UIColor *)primaryTextColor
 {
-    return (Theme.isDarkThemeEnabled ? Theme.darkThemePrimaryColor : UIColor.ows_gray90Color);
+    return (Theme.isDarkThemeEnabled ? Theme.darkThemePrimaryColor : Theme.lightThemePrimaryColor);
 }
 
 + (UIColor *)primaryIconColor
@@ -309,11 +319,6 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
 + (UIColor *)outlineColor
 {
     return Theme.isDarkThemeEnabled ? UIColor.ows_gray75Color : UIColor.ows_gray15Color;
-}
-
-+ (UIColor *)reactionBackgroundColor
-{
-    return Theme.isDarkThemeEnabled ? UIColor.ows_gray75Color : UIColor.ows_whiteColor;
 }
 
 + (UIColor *)backdropColor
@@ -375,17 +380,37 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
 
 + (UIColor *)cursorColor
 {
-    return Theme.isDarkThemeEnabled ? UIColor.ows_whiteColor : UIColor.ows_signalBlueColor;
+    return Theme.isDarkThemeEnabled ? UIColor.ows_whiteColor : UIColor.ows_accentBlueColor;
+}
+
++ (UIColor *)accentBlueColor
+{
+    return Theme.isDarkThemeEnabled ? UIColor.ows_accentBlueDarkColor : UIColor.ows_accentBlueColor;
+}
+
++ (UIColor *)tableCellBackgroundColor
+{
+    return Theme.isDarkThemeEnabled ? UIColor.ows_gray95Color : Theme.backgroundColor;
+}
+
++ (UIColor *)tableViewBackgroundColor
+{
+    return (Theme.isDarkThemeEnabled ? UIColor.ows_blackColor : UIColor.ows_gray02Color);
 }
 
 + (UIColor *)darkThemeBackgroundColor
 {
-    return UIColor.ows_gray95Color;
+    return UIColor.ows_blackColor;
 }
 
 + (UIColor *)darkThemePrimaryColor
 {
     return UIColor.ows_gray05Color;
+}
+
++ (UIColor *)lightThemePrimaryColor
+{
+    return UIColor.ows_gray90Color;
 }
 
 + (UIColor *)galleryHighlightColor
@@ -395,8 +420,14 @@ NSString *const ThemeKeyCurrentMode = @"ThemeKeyCurrentMode";
 
 + (UIColor *)conversationButtonBackgroundColor
 {
-    return (Theme.isDarkThemeEnabled ? [UIColor colorWithWhite:0.35f alpha:1.f] : UIColor.ows_gray02Color);
+    return (Theme.isDarkThemeEnabled ? UIColor.ows_gray80Color : UIColor.ows_gray02Color);
 }
+
++ (UIColor *)conversationButtonTextColor
+{
+    return (Theme.isDarkThemeEnabled ? UIColor.ows_gray05Color : UIColor.ows_accentBlueColor);
+}
+
 
 + (UIBlurEffect *)barBlurEffect
 {

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -30,10 +30,15 @@ public class BlurHash: NSObject {
         guard let blurHash = blurHash else {
             return false
         }
-        guard blurHash.count > 0 && blurHash.count < maxLength else {
+        guard blurHash.count >= 6 && blurHash.count < maxLength else {
             return false
         }
         return blurHash.unicodeScalars.allSatisfy { validCharacterSet.contains($0) }
+    }
+
+    public class func isDarkBlurHash(_ blurHash: String?) -> Bool? {
+        guard isValidBlurHash(blurHash) else { return nil }
+        return blurHash?.isDarkBlurHash
     }
 
     @objc(ensureBlurHashForAttachmentStream:)
@@ -56,17 +61,17 @@ public class BlurHash: NSObject {
                 return
             }
             guard attachmentStream.isValidVisualMedia else {
-                resolver.reject(OWSErrorMakeAssertionError("Invalid attachment."))
+                resolver.reject(OWSAssertionError("Invalid attachment."))
                 return
             }
             // Use the smallest available thumbnail; quality doesn't matter.
             // This is important for perf.
             guard let thumbnail: UIImage = attachmentStream.thumbnailImageSmallSync() else {
-                resolver.reject(OWSErrorMakeAssertionError("Could not load small thumbnail."))
+                resolver.reject(OWSAssertionError("Could not load small thumbnail."))
                 return
             }
             guard let normalized = normalize(image: thumbnail, backgroundColor: .white) else {
-                resolver.reject(OWSErrorMakeAssertionError("Could not normalize thumbnail."))
+                resolver.reject(OWSAssertionError("Could not normalize thumbnail."))
                 return
             }
             // blurHash uses a DCT transform, so these are AC and DC components.
@@ -74,11 +79,11 @@ public class BlurHash: NSObject {
             //
             // https://github.com/woltapp/blurhash/blob/master/Algorithm.md
             guard let blurHash = normalized.blurHash(numberOfComponents: (4, 3)) else {
-                resolver.reject(OWSErrorMakeAssertionError("Could not generate blurHash."))
+                resolver.reject(OWSAssertionError("Could not generate blurHash."))
                 return
             }
             guard self.isValidBlurHash(blurHash) else {
-                resolver.reject(OWSErrorMakeAssertionError("Generated invalid blurHash."))
+                resolver.reject(OWSAssertionError("Generated invalid blurHash."))
                 return
             }
             self.databaseStorage.write { transaction in

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -47,6 +47,68 @@ public class AttachmentFinder: NSObject, AttachmentFinderAdapter {
         case .grdbRead(let grdbRead):
             return GRDBAttachmentFinderAdapter.enumerateAttachmentPointersWithLazyRestoreFragments(transaction: grdbRead, block: block)
         }
+    }
+
+    @objc
+    public class func attachments(
+        withAttachmentIds attachmentIds: [String],
+        transaction: GRDBReadTransaction
+    ) -> [TSAttachment] {
+        guard !attachmentIds.isEmpty else {
+            return []
+        }
+        return GRDBAttachmentFinderAdapter.attachments(
+            withAttachmentIds: attachmentIds,
+            transaction: transaction
+        )
+    }
+
+    @objc
+    public class func attachments(
+        withAttachmentIds attachmentIds: [String],
+        matchingContentType: String,
+        transaction: GRDBReadTransaction
+    ) -> [TSAttachment] {
+        guard !attachmentIds.isEmpty else {
+            return []
+        }
+        return GRDBAttachmentFinderAdapter.attachments(
+            withAttachmentIds: attachmentIds,
+            matchingContentType: matchingContentType,
+            transaction: transaction
+        )
+    }
+
+    @objc
+    public class func attachments(
+        withAttachmentIds attachmentIds: [String],
+        ignoringContentType: String,
+        transaction: GRDBReadTransaction
+    ) -> [TSAttachment] {
+        guard !attachmentIds.isEmpty else {
+            return []
+        }
+        return GRDBAttachmentFinderAdapter.attachments(
+            withAttachmentIds: attachmentIds,
+            ignoringContentType: ignoringContentType,
+            transaction: transaction
+        )
+    }
+
+    @objc
+    public class func existsAttachments(
+        withAttachmentIds attachmentIds: [String],
+        ignoringContentType: String,
+        transaction: GRDBReadTransaction
+    ) -> Bool {
+        guard !attachmentIds.isEmpty else {
+            return false
+        }
+        return GRDBAttachmentFinderAdapter.existsAttachments(
+            withAttachmentIds: attachmentIds,
+            ignoringContentType: ignoringContentType,
+            transaction: transaction
+        )
     }
 }
 
@@ -143,8 +205,82 @@ struct GRDBAttachmentFinderAdapter: AttachmentFinderAdapter {
             owsFailDebug("error: \(error)")
         }
     }
-}
 
-private func assertionError(_ description: String) -> Error {
-    return OWSErrorMakeAssertionError(description)
+    static func attachments(
+        withAttachmentIds attachmentIds: [String],
+        ignoringContentType: String? = nil,
+        matchingContentType: String? = nil,
+        transaction: GRDBReadTransaction
+    ) -> [TSAttachment] {
+        guard !attachmentIds.isEmpty else { return [] }
+
+        var sql = """
+            SELECT * FROM \(AttachmentRecord.databaseTableName)
+            WHERE \(attachmentColumn: .uniqueId) IN (\(attachmentIds.map { "\'\($0)'" }.joined(separator: ",")))
+        """
+
+        let arguments: StatementArguments
+
+        if let ignoringContentType = ignoringContentType {
+            sql += " AND \(attachmentColumn: .contentType) != ?"
+            arguments = [ignoringContentType]
+        } else if let matchingContentType = matchingContentType {
+            sql += " AND \(attachmentColumn: .contentType) = ?"
+            arguments = [matchingContentType]
+        } else {
+            arguments = []
+        }
+
+        let cursor = TSAttachment.grdbFetchCursor(sql: sql, arguments: arguments, transaction: transaction)
+
+        var attachments = [TSAttachment]()
+
+        do {
+            while let attachment = try cursor.next() {
+                attachments.append(attachment)
+            }
+        } catch {
+            owsFailDebug("unexpected error \(error)")
+        }
+
+        return attachments.sorted { lhs, rhs -> Bool in
+            guard let lhsIndex = attachmentIds.firstIndex(of: lhs.uniqueId) else {
+                owsFailDebug("unexpected attachment \(lhs.uniqueId)")
+                return false
+            }
+            guard let rhsIndex = attachmentIds.firstIndex(of: rhs.uniqueId) else {
+                owsFailDebug("unexpected attachment \(rhs.uniqueId)")
+                return false
+            }
+            return lhsIndex < rhsIndex
+        }
+    }
+
+    static func existsAttachments(
+        withAttachmentIds attachmentIds: [String],
+        ignoringContentType: String,
+        transaction: GRDBReadTransaction
+    ) -> Bool {
+        guard !attachmentIds.isEmpty else { return false }
+
+        let sql = """
+            SELECT EXISTS(
+                SELECT 1
+                FROM \(AttachmentRecord.databaseTableName)
+                WHERE \(attachmentColumn: .uniqueId) IN (\(attachmentIds.map { "\'\($0)'" }.joined(separator: ",")))
+                AND \(attachmentColumn: .contentType) != ?
+                LIMIT 1
+            )
+        """
+
+        let exists: Bool
+        do {
+            exists = try Bool.fetchOne(transaction.database, sql: sql, arguments: [ignoringContentType]) ?? false
+        } catch {
+            owsFailDebug("Received unexpected error \(error)")
+            exists = false
+        }
+
+        return exists
+    }
 }

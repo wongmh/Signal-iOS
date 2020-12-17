@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -12,7 +12,8 @@ public enum RequestMakerUDAuthError: Int, Error {
 }
 
 public enum RequestMakerError: Error {
-    case websocketRequestError(statusCode : Int, responseData : Data?, underlyingError : Error)
+    case requestCreationFailed
+    case websocketRequestError(statusCode: Int, responseData: Data?, underlyingError: Error)
 }
 
 @objc(OWSRequestMakerResult)
@@ -43,7 +44,7 @@ public class RequestMakerResult: NSObject {
 @objc(OWSRequestMaker)
 public class RequestMaker: NSObject {
 
-    public typealias RequestFactoryBlock = (SMKUDAccessKey?) -> TSRequest
+    public typealias RequestFactoryBlock = (SMKUDAccessKey?) -> TSRequest?
     public typealias UDAuthFailureBlock = () -> Void
     public typealias WebsocketFailureBlock = () -> Void
 
@@ -95,7 +96,7 @@ public class RequestMaker: NSObject {
     @objc
     public func makeRequestObjc() -> AnyPromise {
         let promise = makeRequest()
-            .recover(on: DispatchQueue.global()) { (error: Error) -> Promise<RequestMakerResult> in
+            .recover(on: .global()) { (error: Error) -> Promise<RequestMakerResult> in
                 switch error {
                 case NetworkManagerError.taskError(_, let underlyingError):
                     throw underlyingError
@@ -103,9 +104,7 @@ public class RequestMaker: NSObject {
                     throw error
                 }
             }
-        let anyPromise = AnyPromise(promise)
-        anyPromise.retainUntilComplete()
-        return anyPromise
+        return AnyPromise(promise)
     }
 
     public func makeRequest() -> Promise<RequestMakerResult> {
@@ -118,7 +117,9 @@ public class RequestMaker: NSObject {
             udAccessForRequest = udAccess
         }
         let isUDRequest: Bool = udAccessForRequest != nil
-        let request: TSRequest = requestFactoryBlock(udAccessForRequest?.udAccessKey)
+        guard let request: TSRequest = requestFactoryBlock(udAccessForRequest?.udAccessKey) else {
+            return Promise(error: RequestMakerError.requestCreationFailed)
+        }
         let canMakeWebsocketRequests = (socketManager.canMakeRequests() && !skipWebsocket && !isUDRequest)
 
         if canMakeWebsocketRequests {
@@ -137,17 +138,23 @@ public class RequestMaker: NSObject {
                     resolver.fulfill(RequestMakerResult(responseObject: responseObject,
                                                         wasSentByUD: isUDRequest,
                                                         wasSentByWebsocket: true))
-                }) { (statusCode: Int, responseData: Data?, error: Error) in
-                    resolver.reject(RequestMakerError.websocketRequestError(statusCode: statusCode, responseData: responseData, underlyingError: error))
-                }
-                }.recover { (error: Error) -> Promise<RequestMakerResult> in
+                    },
+                                   failure: { (statusCode: Int, responseData: Data?, error: Error) in
+                                    resolver.reject(RequestMakerError.websocketRequestError(statusCode: statusCode, responseData: responseData, underlyingError: error))
+                    })
+                }.recover(on: .global()) { (error: Error) -> Promise<RequestMakerResult> in
+                    if error.httpStatusCode == 413 {
+                        // We've hit rate limit; don't retry.
+                        throw error
+                    }
+
                     switch error {
                     case RequestMakerError.websocketRequestError(let statusCode, _, _):
                         if isUDRequest && (statusCode == 401 || statusCode == 403) {
                             // If a UD request fails due to service response (as opposed to network
                             // failure), mark address as _not_ in UD mode, then retry.
                             self.udManager.setUnidentifiedAccessMode(.disabled, address: self.address)
-                            self.profileManager.updateProfile(for: self.address)
+                            self.profileManager.fetchProfile(for: self.address)
                             self.udAuthFailureBlock()
 
                             if self.canFailoverUDAuth {
@@ -188,28 +195,28 @@ public class RequestMaker: NSObject {
                     return RequestMakerResult(responseObject: networkManagerResult.responseObject,
                                               wasSentByUD: isUDRequest,
                                               wasSentByWebsocket: false)
-                }.recover { (error: Error) -> Promise<RequestMakerResult> in
-                    switch error {
-                    case NetworkManagerError.taskError(let task, _):
-                        let statusCode = task.statusCode()
-                        if isUDRequest && (statusCode == 401 || statusCode == 403) {
-                            // If a UD request fails due to service response (as opposed to network
-                            // failure), mark recipient as _not_ in UD mode, then retry.
-                            self.udManager.setUnidentifiedAccessMode(.disabled, address: self.address)
-                            self.profileManager.updateProfile(for: self.address)
-                            self.udAuthFailureBlock()
+                }.recover(on: .global()) { (error: Error) -> Promise<RequestMakerResult> in
+                    if error.httpStatusCode == 413 {
+                        // We've hit rate limit; don't retry.
+                        throw error
+                    }
 
-                            if self.canFailoverUDAuth {
-                                Logger.info("UD REST request '\(self.label)' auth failed; failing over to non-UD REST request.")
-                                return self.makeRequestInternal(skipUD: true, skipWebsocket: skipWebsocket)
-                            } else {
-                                Logger.info("UD REST request '\(self.label)' auth failed; aborting.")
-                                throw RequestMakerUDAuthError.udAuthFailure
-                            }
+                    if isUDRequest,
+                        let statusCode = error.httpStatusCode,
+                        statusCode == 401 || statusCode == 403 {
+                        // If a UD request fails due to service response (as opposed to network
+                        // failure), mark recipient as _not_ in UD mode, then retry.
+                        self.udManager.setUnidentifiedAccessMode(.disabled, address: self.address)
+                        self.profileManager.fetchProfile(for: self.address)
+                        self.udAuthFailureBlock()
+
+                        if self.canFailoverUDAuth {
+                            Logger.info("UD REST request '\(self.label)' auth failed; failing over to non-UD REST request.")
+                            return self.makeRequestInternal(skipUD: true, skipWebsocket: skipWebsocket)
+                        } else {
+                            Logger.info("UD REST request '\(self.label)' auth failed; aborting.")
+                            throw RequestMakerUDAuthError.udAuthFailure
                         }
-                        break
-                    default:
-                        break
                     }
 
                     if isUDRequest {
@@ -242,7 +249,7 @@ public class RequestMaker: NSObject {
             udManager.setUnidentifiedAccessMode(.enabled, address: address)
         }
         DispatchQueue.main.async {
-            self.profileManager.updateProfile(for: self.address)
+            self.profileManager.fetchProfile(for: self.address)
         }
     }
 }

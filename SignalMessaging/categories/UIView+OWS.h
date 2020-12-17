@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import <PureLayout/PureLayout.h>
@@ -32,14 +32,12 @@ CGFloat ScaleFromIPhone5(CGFloat iPhone5Value);
 - (NSArray<NSLayoutConstraint *> *)autoPinHeightToSuperview;
 - (NSArray<NSLayoutConstraint *> *)autoPinHeightToSuperviewMargins;
 
-- (NSArray<NSLayoutConstraint *> *)ows_autoPinToSuperviewEdges DEPRECATED_MSG_ATTRIBUTE("use autoPinEdgesToSuperviewEdges instead");
-- (NSArray<NSLayoutConstraint *> *)ows_autoPinToSuperviewMargins DEPRECATED_MSG_ATTRIBUTE("use autoPinEdgesToSuperviewMargins instead");
-
 - (NSLayoutConstraint *)autoHCenterInSuperview;
 - (NSLayoutConstraint *)autoVCenterInSuperview;
 
-- (void)autoPinWidthToWidthOfView:(UIView *)view;
-- (void)autoPinHeightToHeightOfView:(UIView *)view;
+- (void)autoPinEdgesToEdgesOfView:(UIView *)view;
+- (void)autoPinHorizontalEdgesToEdgesOfView:(UIView *)view;
+- (void)autoPinVerticalEdgesToEdgesOfView:(UIView *)view;
 
 - (NSLayoutConstraint *)autoPinToSquareAspectRatio;
 - (NSLayoutConstraint *)autoPinToAspectRatioWithSize:(CGSize)size;
@@ -64,12 +62,12 @@ CGFloat ScaleFromIPhone5(CGFloat iPhone5Value);
 
 #pragma mark - Manual Layout
 
-- (CGFloat)left;
-- (CGFloat)right;
-- (CGFloat)top;
-- (CGFloat)bottom;
-- (CGFloat)width;
-- (CGFloat)height;
+@property (nonatomic, readonly) CGFloat left;
+@property (nonatomic, readonly) CGFloat right;
+@property (nonatomic, readonly) CGFloat top;
+@property (nonatomic, readonly) CGFloat bottom;
+@property (nonatomic, readonly) CGFloat width;
+@property (nonatomic, readonly) CGFloat height;
 
 - (void)centerOnSuperview;
 
@@ -152,8 +150,10 @@ CGFloat ScaleFromIPhone5(CGFloat iPhone5Value);
 
 @interface UIStackView (OWS)
 
-- (UIView *)addBackgroundViewWithBackgroundColor:(UIColor *)backgroundColor;
+- (void)addHairlineWithColor:(UIColor *)color;
+- (void)insertHairlineWithColor:(UIColor *)color atIndex:(NSInteger)index;
 
+- (UIView *)addBackgroundViewWithBackgroundColor:(UIColor *)backgroundColor;
 - (UIView *)addBackgroundViewWithBackgroundColor:(UIColor *)backgroundColor cornerRadius:(CGFloat)cornerRadius;
 
 - (UIView *)addBorderViewWithColor:(UIColor *)color strokeWidth:(CGFloat)strokeWidth cornerRadius:(CGFloat)cornerRadius;

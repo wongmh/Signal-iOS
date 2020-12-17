@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -267,7 +267,7 @@ extension GiphyError: LocalizedError {
 
     // MARK: - Properties
 
-    static let sharedInstance = GiphyAPI()
+    static let shared = GiphyAPI()
 
     // Force usage as a singleton
     override private init() {
@@ -294,29 +294,19 @@ extension GiphyError: LocalizedError {
 
     public func trending() -> Promise<[GiphyImageInfo]> {
         let sessionManager = giphyAPISessionManager()
-
         let urlString = "/v1/gifs/trending?api_key=\(kGiphyApiKey)&limit=\(kGiphyPageSize)"
 
-        return Promise { resolver in
+        return firstly(on: .global()) { () -> Promise<AFHTTPSessionManager.Response> in
             guard ContentProxy.configureSessionManager(sessionManager: sessionManager, forUrl: urlString) else {
-                throw OWSErrorMakeAssertionError("Could not configure trending")
+                throw OWSAssertionError("Could not configure trending")
             }
-
-            sessionManager.get(urlString,
-                               parameters: [:],
-                               progress: nil,
-                               success: { _, value in
-                                Logger.info("pending request succeeded")
-                                guard let imageInfos = self.parseGiphyImages(responseJson: value) else {
-                                    resolver.reject(OWSErrorMakeAssertionError("unable to parse trending images"))
-                                    return
-                                }
-                                resolver.fulfill(imageInfos)
-            },
-                               failure: { _, error in
-                                Logger.error("trending request failed: \(error)")
-                                resolver.reject(error)
-            })
+            return sessionManager.getPromise(urlString)
+        }.map(on: .global()) { (_: URLSessionDataTask, responseObject: Any?) in
+            Logger.info("pending request succeeded")
+            guard let imageInfos = self.parseGiphyImages(responseJson: responseObject) else {
+                throw OWSAssertionError("unable to parse trending images")
+            }
+            return imageInfos
         }
     }
 

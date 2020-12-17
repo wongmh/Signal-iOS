@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -220,15 +220,6 @@ protocol MediaGalleryDelegate: class {
 
 class MediaGallery {
 
-    // MARK: - Dependencies
-
-    // POST GRDB TODO - Remove
-    private var primaryStorage: OWSPrimaryStorage? {
-        return SSKEnvironment.shared.primaryStorage
-    }
-
-    // MARK: -
-
     var deletedAttachments: Set<TSAttachment> = Set()
     var deletedGalleryItems: Set<MediaGalleryItem> = Set()
 
@@ -252,78 +243,14 @@ class MediaGallery {
     }
 
     func setupDatabaseObservation() {
-        if StorageCoordinator.dataStoreForUI == .grdb {
-            guard let mediaGalleryDatabaseObserver = databaseStorage.grdbStorage.mediaGalleryDatabaseObserver else {
-                owsFailDebug("observer was unexpectedly nil")
-                return
-            }
-            mediaGalleryDatabaseObserver.appendSnapshotDelegate(self)
-        } else {
-            guard let primaryStorage = primaryStorage else {
-                owsFail("Missing primaryStorage.")
-            }
-
-            NotificationCenter.default.addObserver(self,
-                                                   selector: #selector(uiDatabaseDidUpdate),
-                                                   name: .OWSUIDatabaseConnectionDidUpdate,
-                                                   object: primaryStorage.dbNotificationObject)
-        }
-    }
-
-    // MARK: - Yap Database Notifications
-
-    @objc
-    func uiDatabaseDidUpdate(notification: Notification) {
-        guard let primaryStorage = primaryStorage else {
-            owsFail("Missing primaryStorage.")
-        }
-
-        guard let notifications = notification.userInfo?[OWSUIDatabaseConnectionNotificationsKey] as? [Notification] else {
-            owsFailDebug("notifications was unexpectedly nil")
+        guard StorageCoordinator.dataStoreForUI == .grdb else {
+            owsFailDebug("Invalid data store.")
             return
         }
-
-        guard mediaGalleryFinder.yapAdapter.hasMediaChanges(in: notifications, dbConnection: primaryStorage.uiDatabaseConnection) else {
-            return
-        }
-
-        let rowChanges = extractRowChanges(notifications: notifications)
-        assert(rowChanges.count > 0)
-
-        process(rowChanges: rowChanges)
+        databaseStorage.appendUIDatabaseSnapshotDelegate(self)
     }
 
-    func extractRowChanges(notifications: [Notification]) -> [YapDatabaseViewRowChange] {
-        return notifications.flatMap { notification -> [YapDatabaseViewRowChange] in
-            guard let userInfo = notification.userInfo else {
-                owsFailDebug("userInfo was unexpectedly nil")
-                return []
-            }
-
-            guard let extensionChanges = userInfo["extensions"] as? [AnyHashable: Any] else {
-                owsFailDebug("extensionChanges was unexpectedly nil")
-                return []
-            }
-
-            guard let galleryData = extensionChanges[YAPDBMediaGalleryFinder.databaseExtensionName()] as? [AnyHashable: Any] else {
-                owsFailDebug("galleryData was unexpectedly nil")
-                return []
-            }
-
-            guard let galleryChanges = galleryData["changes"] as? [Any] else {
-                owsFailDebug("gallerlyChanges was unexpectedly nil")
-                return []
-            }
-
-            return galleryChanges.compactMap { $0 as? YapDatabaseViewRowChange }
-        }
-    }
-
-    func process(rowChanges: [YapDatabaseViewRowChange]) {
-        let deletedIds = rowChanges.filter { $0.type == .delete }.map { $0.collectionKey.key }
-
-        process(deletedAttachmentIds: deletedIds)
-    }
+    // MARK: - 
 
     func process(deletedAttachmentIds: [String]) {
         let deletedItems: [MediaGalleryItem] = deletedAttachmentIds.compactMap { attachmentId in
@@ -574,7 +501,7 @@ class MediaGallery {
     }
 
     func ensureLoadedForMostRecentTileView() -> MediaGalleryItem? {
-        guard let mostRecentItem: MediaGalleryItem = (databaseStorage.uiread { transaction in
+        guard let mostRecentItem: MediaGalleryItem = (databaseStorage.uiRead { transaction in
             guard let attachment = self.mediaGalleryFinder.mostRecentMediaAttachment(transaction: transaction)  else {
                 return nil
             }
@@ -742,30 +669,32 @@ class MediaGallery {
     }
 
     var galleryItemCount: Int {
-        let count: UInt = databaseStorage.uiread { transaction in
+        let count: UInt = databaseStorage.uiRead { transaction in
             return self.mediaGalleryFinder.mediaCount(transaction: transaction)
         }
         return Int(count) - deletedAttachments.count
     }
 }
 
-extension MediaGallery: MediaGalleryDatabaseSnapshotDelegate {
-    func mediaGalleryDatabaseSnapshotWillUpdate() {
+extension MediaGallery: UIDatabaseSnapshotDelegate {
+
+    func uiDatabaseSnapshotWillUpdate() {
         // no-op
     }
 
-    func mediaGalleryDatabaseSnapshotDidUpdate(deletedAttachmentIds: Set<String>) {
+    func uiDatabaseSnapshotDidUpdate(databaseChanges: UIDatabaseChanges) {
+        let deletedAttachmentIds = databaseChanges.attachmentDeletedUniqueIds
         guard deletedAttachmentIds.count > 0 else {
             return
         }
         process(deletedAttachmentIds: Array(deletedAttachmentIds))
     }
 
-    func mediaGalleryDatabaseSnapshotDidUpdateExternally() {
+    func uiDatabaseSnapshotDidUpdateExternally() {
         // no-op
     }
 
-    func mediaGalleryDatabaseSnapshotDidReset() {
+    func uiDatabaseSnapshotDidReset() {
         // no-op
     }
 }

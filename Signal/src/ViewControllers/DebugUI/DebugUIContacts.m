@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "DebugUIContacts.h"
@@ -81,17 +81,17 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)clearSignalAccountCache
 {
     OWSLogWarn(@"Deleting all signal accounts.");
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         [SignalAccount anyRemoveAllWithoutInstantationWithTransaction:transaction];
-    }];
+    });
 }
 
 + (void)clearSignalRecipientCache
 {
     OWSLogWarn(@"Deleting all signal recipients.");
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         [SignalRecipient anyRemoveAllWithoutInstantationWithTransaction:transaction];
-    }];
+    });
 }
 
 + (SignalServiceAddress *)unregisteredRecipient
@@ -121,10 +121,12 @@ NS_ASSUME_NONNULL_BEGIN
         TSAccountManager.localAddress,
     ] mutableCopy];
 
-    [GroupManager createGroupObjcWithMembers:recipientAddresses
+    [GroupManager localCreateNewGroupObjcWithMembers:recipientAddresses
         groupId:nil
         name:groupName
         avatarData:nil
+        newGroupSeed:nil
+        shouldSendMessage:YES
         success:^(TSGroupThread *thread) {
             [SignalApp.sharedApp presentConversationForThread:thread animated:YES];
         }

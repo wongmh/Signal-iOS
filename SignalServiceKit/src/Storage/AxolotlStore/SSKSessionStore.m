@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "SSKSessionStore.h"
@@ -70,7 +70,7 @@ NS_ASSUME_NONNULL_BEGIN
     OWSAssertDebug(deviceId > 0);
     OWSAssertDebug([transaction isKindOfClass:[SDSAnyReadTransaction class]]);
 
-    NSDictionary *_Nullable dictionary = [self.keyValueStore getObject:accountId transaction:transaction];
+    NSDictionary *_Nullable dictionary = [self.keyValueStore getObjectForKey:accountId transaction:transaction];
 
     SessionRecord *record;
 
@@ -115,7 +115,7 @@ NS_ASSUME_NONNULL_BEGIN
     // If we are going to start using it I'd want to re-verify it works as intended.
     OWSFailDebug(@"subDevicesSessions is deprecated");
 
-    NSDictionary *_Nullable dictionary = [self.keyValueStore getObject:accountId transaction:transaction];
+    NSDictionary *_Nullable dictionary = [self.keyValueStore getObjectForKey:accountId transaction:transaction];
 
     return dictionary ? dictionary.allKeys : @[];
 }
@@ -161,7 +161,7 @@ NS_ASSUME_NONNULL_BEGIN
     // NOTE: this may no longer be necessary now that we have a non-caching session db connection.
     [session markAsUnFresh];
 
-    NSDictionary *immutableDictionary = [self.keyValueStore getObject:accountId transaction:transaction];
+    NSDictionary *immutableDictionary = [self.keyValueStore getObjectForKey:accountId transaction:transaction];
 
     NSMutableDictionary *dictionary
         = (immutableDictionary ? [immutableDictionary mutableCopy] : [NSMutableDictionary new]);
@@ -205,13 +205,45 @@ NS_ASSUME_NONNULL_BEGIN
         [self loadSessionForAccountId:accountId deviceId:deviceId transaction:transaction].sessionState.hasSenderChain;
 }
 
+- (nullable NSNumber *)maxSessionSenderChainKeyIndexForAccountId:(NSString *)accountId
+                                                     transaction:(SDSAnyReadTransaction *)transaction
+{
+    OWSAssertDebug(accountId.length > 0);
+    OWSAssertDebug([transaction isKindOfClass:[SDSAnyReadTransaction class]]);
+
+    NSNumber *_Nullable result = nil;
+    NSDictionary *_Nullable dictionary = [self.keyValueStore getObjectForKey:accountId transaction:transaction];
+    for (id value in dictionary.allValues) {
+        if (![value isKindOfClass:[SessionRecord class]]) {
+            OWSLogVerbose(@"Unexpected value: %@", value);
+            OWSFailDebug(@"Unexpected value.");
+            continue;
+        }
+        SessionRecord *record = (SessionRecord *)value;
+        if (SSKDebugFlags.verboseSignalRecipientLogging) {
+            OWSLogInfo(@"Record hasSenderChain: %d.", record.sessionState.hasSenderChain);
+        }
+        if (record.sessionState.hasSenderChain) {
+            int index = record.sessionState.senderChainKey.index;
+            if (SSKDebugFlags.verboseSignalRecipientLogging) {
+                OWSLogInfo(@"Record index: %d.", index);
+            }
+            if (result == nil || result.intValue < index) {
+                result = @(index);
+            }
+        }
+    }
+    return result;
+}
+
 - (void)deleteSessionForContact:(NSString *)contactIdentifier
                        deviceId:(int)deviceId
                 protocolContext:(nullable id<SPKProtocolWriteContext>)protocolContext
 {
-
     OWSAssertDebug([protocolContext isKindOfClass:[SDSAnyWriteTransaction class]]);
     SDSAnyWriteTransaction *transaction = (SDSAnyWriteTransaction *)protocolContext;
+
+    OWSLogInfo(@"deleting session for contact: %@ device: %d", contactIdentifier, deviceId);
 
     [self deleteSessionForAccountId:contactIdentifier deviceId:deviceId transaction:transaction];
 }
@@ -222,6 +254,8 @@ NS_ASSUME_NONNULL_BEGIN
 {
     OWSAssertDebug(address.isValid);
     OWSAssertDebug(deviceId >= 0);
+
+    OWSLogInfo(@"deleting session for address: %@ device: %d", address, deviceId);
 
     NSString *accountId = [self.accountIdFinder ensureAccountIdForAddress:address transaction:transaction];
     OWSAssertDebug(accountId.length > 0);
@@ -236,9 +270,9 @@ NS_ASSUME_NONNULL_BEGIN
     OWSAssertDebug(accountId.length > 0);
     OWSAssertDebug(deviceId >= 0);
 
-    OWSLogInfo(@"deleting session for contact: %@ device: %d", accountId, deviceId);
+    OWSLogInfo(@"deleting session for accountId: %@ device: %d", accountId, deviceId);
 
-    NSDictionary *immutableDictionary = [self.keyValueStore getObject:accountId transaction:transaction];
+    NSDictionary *immutableDictionary = [self.keyValueStore getObjectForKey:accountId transaction:transaction];
 
     NSMutableDictionary *dictionary
         = (immutableDictionary ? [immutableDictionary mutableCopy] : [NSMutableDictionary new]);
@@ -276,6 +310,32 @@ NS_ASSUME_NONNULL_BEGIN
     [self.keyValueStore removeValueForKey:accountId transaction:transaction];
 }
 
+- (void)archiveSessionForAddress:(SignalServiceAddress *)address
+                        deviceId:(int)deviceId
+                     transaction:(SDSAnyWriteTransaction *)transaction
+{
+    OWSAssertDebug(address.isValid);
+    OWSAssertDebug(deviceId >= 0);
+
+    NSString *accountId = [self.accountIdFinder ensureAccountIdForAddress:address transaction:transaction];
+    OWSAssertDebug(accountId.length > 0);
+
+    [self archiveSessionForAccountId:accountId deviceId:deviceId transaction:transaction];
+}
+
+- (void)archiveSessionForAccountId:(NSString *)accountId
+                          deviceId:(int)deviceId
+                       transaction:(SDSAnyWriteTransaction *)transaction
+{
+    OWSAssertDebug(accountId.length > 0);
+
+    OWSLogInfo(@"Archiving session for contact: %@ device: %d", accountId, deviceId);
+
+    SessionRecord *sessionRecord = [self loadSessionForAccountId:accountId deviceId:deviceId transaction:transaction];
+    [sessionRecord archiveCurrentState];
+    [self storeSessionForAccountId:accountId deviceId:deviceId session:sessionRecord transaction:transaction];
+}
+
 - (void)archiveAllSessionsForContact:(NSString *)contactIdentifier
                      protocolContext:(nullable id<SPKProtocolWriteContext>)protocolContext
 {
@@ -301,8 +361,8 @@ NS_ASSUME_NONNULL_BEGIN
 
     OWSLogInfo(@"archiving all sessions for contact: %@", accountId);
 
-    __block NSDictionary<NSNumber *, SessionRecord *> *sessionRecords = [self.keyValueStore getObject:accountId
-                                                                                          transaction:transaction];
+    __block NSDictionary<NSNumber *, SessionRecord *> *sessionRecords =
+        [self.keyValueStore getObjectForKey:accountId transaction:transaction];
 
     for (id deviceId in sessionRecords) {
         id object = sessionRecords[deviceId];

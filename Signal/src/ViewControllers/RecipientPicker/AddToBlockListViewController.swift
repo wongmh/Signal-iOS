@@ -1,8 +1,9 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
+import PromiseKit
 
 @objc
 protocol AddToBlockListDelegate: class {
@@ -14,18 +15,6 @@ class AddToBlockListViewController: OWSViewController {
     @objc weak var delegate: AddToBlockListDelegate?
     let recipientPicker = RecipientPickerViewController()
 
-    var blockingManager: OWSBlockingManager {
-        return .shared()
-    }
-
-    var contactsManager: OWSContactsManager {
-        return Environment.shared.contactsManager
-    }
-
-    var messageSender: MessageSender {
-        return SSKEnvironment.shared.messageSender
-    }
-
     override func viewDidLoad() {
         super.viewDidLoad()
 
@@ -35,6 +24,10 @@ class AddToBlockListViewController: OWSViewController {
         recipientPicker.delegate = self
         addChild(recipientPicker)
         view.addSubview(recipientPicker.view)
+        recipientPicker.view.autoPin(toTopLayoutGuideOf: self, withInset: 0)
+        recipientPicker.view.autoPinEdge(toSuperviewEdge: .leading)
+        recipientPicker.view.autoPinEdge(toSuperviewEdge: .trailing)
+        recipientPicker.view.autoPinEdge(toSuperviewEdge: .bottom)
 
         recipientPicker.findByPhoneNumberButtonTitle = NSLocalizedString(
             "BLOCK_LIST_VIEW_BLOCK_BUTTON",
@@ -46,8 +39,6 @@ class AddToBlockListViewController: OWSViewController {
         BlockListUIUtils.showBlockAddressActionSheet(
             address,
             from: self,
-            blockingManager: blockingManager,
-            contactsManager: contactsManager,
             completionBlock: { [weak self] isBlocked in
                 guard isBlocked else { return }
                 self?.delegate?.addToBlockListComplete()
@@ -59,9 +50,6 @@ class AddToBlockListViewController: OWSViewController {
         BlockListUIUtils.showBlockThreadActionSheet(
             thread,
             from: self,
-            blockingManager: blockingManager,
-            contactsManager: contactsManager,
-            messageSender: messageSender,
             completionBlock: { [weak self] isBlocked in
                 guard isBlocked else { return }
                 self?.delegate?.addToBlockListComplete()
@@ -71,17 +59,22 @@ class AddToBlockListViewController: OWSViewController {
 }
 
 extension AddToBlockListViewController: RecipientPickerDelegate {
+
     func recipientPicker(
         _ recipientPickerViewController: RecipientPickerViewController,
         canSelectRecipient recipient: PickedRecipient
-    ) -> Bool {
+    ) -> RecipientPickerRecipientState {
         switch recipient.identifier {
         case .address(let address):
-            guard !recipientPicker.contactsViewHelper.isSignalServiceAddressBlocked(address) else { return false }
-            return true
+            guard !contactsViewHelper.isSignalServiceAddressBlocked(address) else {
+                return .userAlreadyInBlocklist
+            }
+            return .canBeSelected
         case .group(let thread):
-            guard !recipientPicker.contactsViewHelper.isThreadBlocked(thread) else { return false }
-            return true
+            guard !contactsViewHelper.isThreadBlocked(thread) else {
+                return .conversationAlreadyInBlocklist
+            }
+            return .canBeSelected
         }
     }
 
@@ -97,19 +90,39 @@ extension AddToBlockListViewController: RecipientPickerDelegate {
         }
     }
 
+    func recipientPicker(_ recipientPickerViewController: RecipientPickerViewController,
+                         willRenderRecipient recipient: PickedRecipient) {
+        // Do nothing.
+    }
+
+    func recipientPicker(_ recipientPickerViewController: RecipientPickerViewController,
+                         prepareToSelectRecipient recipient: PickedRecipient) -> AnyPromise {
+        owsFailDebug("This method should not called.")
+        return AnyPromise(Promise.value(()))
+    }
+
+    func recipientPicker(_ recipientPickerViewController: RecipientPickerViewController,
+                         showInvalidRecipientAlert recipient: PickedRecipient) {
+        owsFailDebug("Unexpected error.")
+    }
+
     func recipientPicker(
         _ recipientPickerViewController: RecipientPickerViewController,
         accessoryMessageForRecipient recipient: PickedRecipient
     ) -> String? {
         switch recipient.identifier {
         case .address(let address):
-            guard recipientPicker.contactsViewHelper.isSignalServiceAddressBlocked(address) else { return nil }
+            guard contactsViewHelper.isSignalServiceAddressBlocked(address) else { return nil }
             return MessageStrings.conversationIsBlocked
         case .group(let thread):
-            guard recipientPicker.contactsViewHelper.isThreadBlocked(thread) else { return nil }
+            guard contactsViewHelper.isThreadBlocked(thread) else { return nil }
             return MessageStrings.conversationIsBlocked
         }
     }
 
     func recipientPickerTableViewWillBeginDragging(_ recipientPickerViewController: RecipientPickerViewController) {}
+
+    func recipientPickerNewGroupButtonWasPressed() {}
+
+    func recipientPickerCustomHeaderViews() -> [UIView] { return [] }
 }

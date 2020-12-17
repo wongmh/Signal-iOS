@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSContactShareButtonsView.h"
@@ -116,8 +116,7 @@ NS_ASSUME_NONNULL_BEGIN
     UILabel *label = [UILabel new];
     self.buttonView = label;
     if ([OWSContactShareButtonsView hasSendTextButton:self.contactShare contactsManager:self.contactsManager]) {
-        label.text
-            = NSLocalizedString(@"ACTION_SEND_MESSAGE", @"Label for button that lets you send a message to a contact.");
+        label.text = CommonStrings.sendMessage;
     } else if ([OWSContactShareButtonsView hasInviteButton:self.contactShare contactsManager:self.contactsManager]) {
         label.text = NSLocalizedString(@"ACTION_INVITE", @"Label for 'invite' button in contact view.");
     } else if ([OWSContactShareButtonsView hasAddToContactsButton:self.contactShare]) {
@@ -127,10 +126,10 @@ NS_ASSUME_NONNULL_BEGIN
         OWSFailDebug(@"unexpected button state.");
     }
     label.font = OWSContactShareButtonsView.buttonFont;
-    label.textColor = (Theme.isDarkThemeEnabled ? UIColor.ows_whiteColor : UIColor.ows_signalBlueColor);
+    label.textColor = Theme.conversationButtonTextColor;
     label.textAlignment = NSTextAlignmentCenter;
     [self addSubview:label];
-    [label ows_autoPinToSuperviewEdges];
+    [label autoPinEdgesToSuperviewEdges];
     [label autoSetDimension:ALDimensionHeight toSize:OWSContactShareButtonsView.buttonHeight];
 
     self.userInteractionEnabled = YES;

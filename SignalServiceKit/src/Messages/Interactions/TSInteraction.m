@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSInteraction.h"
@@ -29,18 +29,34 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value)
             return @"OWSInteractionType_ThreadDetails";
         case OWSInteractionType_TypingIndicator:
             return @"OWSInteractionType_TypingIndicator";
-        case OWSInteractionType_Offer:
-            return @"OWSInteractionType_Offer";
+        case OWSInteractionType_UnreadIndicator:
+            return @"OWSInteractionType_UnreadIndicator";
+        case OWSInteractionType_DateHeader:
+            return @"OWSInteractionType_DateHeader";
     }
 }
+
+// MARK: -
 
 @interface TSInteraction ()
 
 @property (nonatomic) uint64_t sortId;
+@property (nonatomic) uint64_t receivedAtTimestamp;
 
 @end
 
+// MARK: -
+
 @implementation TSInteraction
+
+#pragma mark - Dependencies
+
+- (InteractionReadCache *)interactionReadCache
+{
+    return SSKEnvironment.shared.modelReadCaches.interactionReadCache;
+}
+
+#pragma mark -
 
 + (BOOL)shouldBeIndexedForFTS
 {
@@ -69,17 +85,17 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value)
 
     NSMutableArray<TSInteraction *> *interactions = [NSMutableArray new];
 
-    [TSDatabaseSecondaryIndexes
-        enumerateMessagesWithTimestamp:timestamp
-                             withBlock:^(NSString *collection, NSString *key, BOOL *stop) {
-                                 TSInteraction *interaction =
-                                     [TSInteraction anyFetchWithUniqueId:key transaction:transaction.asAnyRead];
-                                 if (!filter(interaction)) {
-                                     return;
-                                 }
-                                 [interactions addObject:interaction];
-                             }
-                      usingTransaction:transaction];
+    [TSDatabaseSecondaryIndexes enumerateMessagesWithTimestamp:timestamp
+                                                     withBlock:^(NSString *collection, NSString *key, BOOL *stop) {
+                                                         TSInteraction *interaction =
+                                                             [TSInteraction anyFetchWithUniqueId:key
+                                                                                     transaction:transaction.asAnyRead];
+                                                         if (!filter(interaction)) {
+                                                             return;
+                                                         }
+                                                         [interactions addObject:interaction];
+                                                     }
+                                              usingTransaction:transaction];
 
     return [interactions copy];
 }
@@ -88,9 +104,12 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value)
     return @"TSInteraction";
 }
 
-- (instancetype)initWithUniqueId:(NSString *)uniqueId
-                                  timestamp:(uint64_t)timestamp
-                                   inThread:(TSThread *)thread
+- (instancetype)initWithUniqueId:(NSString *)uniqueId thread:(TSThread *)thread
+{
+    return [self initWithUniqueId:uniqueId timestamp:NSDate.ows_millisecondTimeStamp thread:thread];
+}
+
+- (instancetype)initWithUniqueId:(NSString *)uniqueId timestamp:(uint64_t)timestamp thread:(TSThread *)thread
 {
     OWSAssertDebug(timestamp > 0);
     OWSAssertDebug(thread);
@@ -107,7 +126,28 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value)
     return self;
 }
 
-- (instancetype)initInteractionWithTimestamp:(uint64_t)timestamp inThread:(TSThread *)thread
+- (instancetype)initWithUniqueId:(NSString *)uniqueId
+                       timestamp:(uint64_t)timestamp
+             receivedAtTimestamp:(uint64_t)receivedAtTimestamp
+                          thread:(TSThread *)thread
+{
+    OWSAssertDebug(timestamp > 0);
+    OWSAssertDebug(thread);
+
+    self = [super initWithUniqueId:uniqueId];
+
+    if (!self) {
+        return self;
+    }
+
+    _timestamp = timestamp;
+    _receivedAtTimestamp = receivedAtTimestamp;
+    _uniqueThreadId = thread.uniqueId;
+
+    return self;
+}
+
+- (instancetype)initInteractionWithTimestamp:(uint64_t)timestamp thread:(TSThread *)thread
 {
     OWSAssertDebug(timestamp > 0);
 
@@ -188,7 +228,7 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value)
 
 #pragma mark Thread
 
-- (TSThread *)threadWithSneakyTransaction
+- (nullable TSThread *)threadWithSneakyTransaction
 {
     if (self.uniqueThreadId == nil) {
         // This might be a true for a few legacy interactions enqueued in
@@ -198,7 +238,7 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value)
         return nil;
     }
 
-    __block TSThread *thread;
+    __block TSThread *_Nullable thread;
     [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
         thread = [TSThread anyFetchWithUniqueId:self.uniqueThreadId transaction:transaction];
         OWSAssertDebug(thread);
@@ -296,6 +336,9 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value)
 
     TSThread *fetchedThread = [self threadWithTransaction:transaction];
     [fetchedThread updateWithInsertedMessage:self transaction:transaction];
+
+    // Don't update interactionReadCache; this instance's sortId isn't
+    // populated yet.
 }
 
 - (void)anyDidUpdateWithTransaction:(SDSAnyWriteTransaction *)transaction
@@ -304,6 +347,8 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value)
 
     TSThread *fetchedThread = [self threadWithTransaction:transaction];
     [fetchedThread updateWithUpdatedMessage:self transaction:transaction];
+
+    [self.interactionReadCache didUpdateInteraction:self transaction:transaction];
 }
 
 - (void)anyDidRemoveWithTransaction:(SDSAnyWriteTransaction *)transaction
@@ -314,6 +359,8 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value)
         TSThread *fetchedThread = [self threadWithTransaction:transaction];
         [fetchedThread updateWithRemovedMessage:self transaction:transaction];
     }
+
+    [self.interactionReadCache didRemoveInteraction:self transaction:transaction];
 }
 
 #pragma mark -
@@ -341,6 +388,21 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value)
 - (void)replaceSortId:(uint64_t)sortId {
     _sortId = sortId;
 }
+
+#if TESTABLE_BUILD
+- (void)replaceReceivedAtTimestamp:(uint64_t)receivedAtTimestamp
+{
+    self.receivedAtTimestamp = receivedAtTimestamp;
+}
+
+- (void)replaceReceivedAtTimestamp:(uint64_t)receivedAtTimestamp transaction:(SDSAnyWriteTransaction *)transaction
+{
+    [self anyUpdateWithTransaction:transaction
+                             block:^(TSInteraction *interaction) {
+                                 interaction.receivedAtTimestamp = receivedAtTimestamp;
+                             }];
+}
+#endif
 
 @end
 

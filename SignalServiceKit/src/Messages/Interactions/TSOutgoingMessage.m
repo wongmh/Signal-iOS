@@ -1,10 +1,11 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSOutgoingMessage.h"
+#import "MessageSender.h"
+#import "NSError+OWSOperation.h"
 #import "OWSContact.h"
-#import "OWSMessageSender.h"
 #import "OWSOutgoingSyncMessage.h"
 #import "ProtoUtils.h"
 #import "SSKEnvironment.h"
@@ -23,10 +24,9 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-BOOL AreRecipientUpdatesEnabled(void)
-{
-    return NO;
-}
+typedef NS_CLOSED_ENUM(NSUInteger, OutgoingGroupProtoResult) { OutgoingGroupProtoResult_AddedWithGroupAvatar,
+    OutgoingGroupProtoResult_AddedWithoutGroupAvatar,
+    OutgoingGroupProtoResult_Error };
 
 NSString *const kTSOutgoingMessageSentRecipientAll = @"kTSOutgoingMessageSentRecipientAll";
 
@@ -75,6 +75,7 @@ NSString *NSStringForOutgoingMessageRecipientState(OWSOutgoingMessageRecipientSt
 @property (atomic) OWSOutgoingMessageRecipientState state;
 @property (atomic, nullable) NSNumber *deliveryTimestamp;
 @property (atomic, nullable) NSNumber *readTimestamp;
+@property (atomic, nullable) NSNumber *errorCode;
 @property (atomic) BOOL wasSentByUD;
 
 @end
@@ -120,6 +121,11 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
     return SDSDatabaseStorage.shared;
 }
 
+- (id<GroupsV2>)groupsV2
+{
+    return SSKEnvironment.shared.groupsV2;
+}
+
 #pragma mark -
 
 // --- CODE GENERATION MARKER
@@ -136,6 +142,7 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                   uniqueThreadId:(NSString *)uniqueThreadId
                    attachmentIds:(NSArray<NSString *> *)attachmentIds
                             body:(nullable NSString *)body
+                      bodyRanges:(nullable MessageBodyRanges *)bodyRanges
                     contactShare:(nullable OWSContact *)contactShare
                  expireStartedAt:(uint64_t)expireStartedAt
                        expiresAt:(uint64_t)expiresAt
@@ -146,6 +153,7 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                   messageSticker:(nullable MessageSticker *)messageSticker
                    quotedMessage:(nullable TSQuotedMessage *)quotedMessage
     storedShouldStartExpireTimer:(BOOL)storedShouldStartExpireTimer
+              wasRemotelyDeleted:(BOOL)wasRemotelyDeleted
                    customMessage:(nullable NSString *)customMessage
                 groupMetaMessage:(TSGroupMetaMessage)groupMetaMessage
            hasLegacyMessageState:(BOOL)hasLegacyMessageState
@@ -166,6 +174,7 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                     uniqueThreadId:uniqueThreadId
                      attachmentIds:attachmentIds
                               body:body
+                        bodyRanges:bodyRanges
                       contactShare:contactShare
                    expireStartedAt:expireStartedAt
                          expiresAt:expiresAt
@@ -175,7 +184,8 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                        linkPreview:linkPreview
                     messageSticker:messageSticker
                      quotedMessage:quotedMessage
-      storedShouldStartExpireTimer:storedShouldStartExpireTimer];
+      storedShouldStartExpireTimer:storedShouldStartExpireTimer
+                wasRemotelyDeleted:wasRemotelyDeleted];
 
     if (!self) {
         return self;
@@ -219,6 +229,10 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
             OWSAssertDebug(legacyStateMap);
             for (NSString *phoneNumber in legacyStateMap) {
                 SignalServiceAddress *address = [[SignalServiceAddress alloc] initWithPhoneNumber:phoneNumber];
+                if (!address.isValid) {
+                    OWSFailDebug(@"Ignoring invalid address.");
+                    continue;
+                }
                 recipientAddressStates[address] = legacyStateMap[phoneNumber];
             }
             _recipientAddressStates = recipientAddressStates;
@@ -391,72 +405,49 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
         [attachmentIds addObject:attachmentId];
     }
 
-    // MJK TODO remove SenderTimestamp?
-    return [[TSOutgoingMessage alloc] initOutgoingMessageWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                              inThread:thread
-                                                           messageBody:body
-                                                         attachmentIds:attachmentIds
-                                                      expiresInSeconds:expiresInSeconds
-                                                       expireStartedAt:0
-                                                        isVoiceMessage:NO
-                                                      groupMetaMessage:TSGroupMetaMessageUnspecified
-                                                         quotedMessage:quotedMessage
-                                                          contactShare:nil
-                                                           linkPreview:linkPreview
-                                                        messageSticker:messageSticker
-                                                     isViewOnceMessage:NO];
+    TSOutgoingMessageBuilder *builder = [TSOutgoingMessageBuilder outgoingMessageBuilderWithThread:thread];
+    builder.messageBody = body;
+    builder.attachmentIds = attachmentIds;
+    builder.expiresInSeconds = expiresInSeconds;
+    builder.quotedMessage = quotedMessage;
+    builder.linkPreview = linkPreview;
+    builder.messageSticker = messageSticker;
+    return [builder build];
 }
 
 + (instancetype)outgoingMessageInThread:(TSThread *)thread
                        groupMetaMessage:(TSGroupMetaMessage)groupMetaMessage
                        expiresInSeconds:(uint32_t)expiresInSeconds
 {
-    // MJK TODO remove SenderTimestamp?
-    return [[TSOutgoingMessage alloc] initOutgoingMessageWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                              inThread:thread
-                                                           messageBody:nil
-                                                         attachmentIds:[NSMutableArray new]
-                                                      expiresInSeconds:expiresInSeconds
-                                                       expireStartedAt:0
-                                                        isVoiceMessage:NO
-                                                      groupMetaMessage:groupMetaMessage
-                                                         quotedMessage:nil
-                                                          contactShare:nil
-                                                           linkPreview:nil
-                                                        messageSticker:nil
-                                                     isViewOnceMessage:NO];
+    TSOutgoingMessageBuilder *builder = [TSOutgoingMessageBuilder outgoingMessageBuilderWithThread:thread];
+    builder.groupMetaMessage = groupMetaMessage;
+    builder.expiresInSeconds = expiresInSeconds;
+    return [builder build];
 }
 
-- (instancetype)initOutgoingMessageWithTimestamp:(uint64_t)timestamp
-                                        inThread:(TSThread *)thread
-                                     messageBody:(nullable NSString *)body
-                                   attachmentIds:(NSMutableArray<NSString *> *)attachmentIds
-                                expiresInSeconds:(uint32_t)expiresInSeconds
-                                 expireStartedAt:(uint64_t)expireStartedAt
-                                  isVoiceMessage:(BOOL)isVoiceMessage
-                                groupMetaMessage:(TSGroupMetaMessage)groupMetaMessage
-                                   quotedMessage:(nullable TSQuotedMessage *)quotedMessage
-                                    contactShare:(nullable OWSContact *)contactShare
-                                     linkPreview:(nullable OWSLinkPreview *)linkPreview
-                                  messageSticker:(nullable MessageSticker *)messageSticker
-                               isViewOnceMessage:(BOOL)isViewOnceMessage
++ (instancetype)outgoingMessageInThread:(TSThread *)thread
+                       groupMetaMessage:(TSGroupMetaMessage)groupMetaMessage
+                       expiresInSeconds:(uint32_t)expiresInSeconds
+                 changeActionsProtoData:(nullable NSData *)changeActionsProtoData
 {
-    self = [super initMessageWithTimestamp:timestamp
-                                  inThread:thread
-                               messageBody:body
-                             attachmentIds:attachmentIds
-                          expiresInSeconds:expiresInSeconds
-                           expireStartedAt:expireStartedAt
-                             quotedMessage:quotedMessage
-                              contactShare:contactShare
-                               linkPreview:linkPreview
-                            messageSticker:messageSticker
-                         isViewOnceMessage:isViewOnceMessage];
+    TSOutgoingMessageBuilder *builder = [TSOutgoingMessageBuilder outgoingMessageBuilderWithThread:thread];
+    builder.groupMetaMessage = groupMetaMessage;
+    builder.expiresInSeconds = expiresInSeconds;
+    builder.changeActionsProtoData = changeActionsProtoData;
+    return [builder build];
+}
+
+- (instancetype)initOutgoingMessageWithBuilder:(TSOutgoingMessageBuilder *)outgoingMessageBuilder
+{
+    self = [super initMessageWithBuilder:outgoingMessageBuilder];
     if (!self) {
         return self;
     }
 
     _hasSyncedTranscript = NO;
+
+    TSThread *thread = outgoingMessageBuilder.thread;
+    TSGroupMetaMessage groupMetaMessage = outgoingMessageBuilder.groupMetaMessage;
 
     if ([thread isKindOfClass:TSGroupThread.class]) {
         // Unless specified, we assume group messages are "Delivery" i.e. normal messages.
@@ -471,27 +462,40 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
         _groupMetaMessage = TSGroupMetaMessageUnspecified;
     }
 
-    _isVoiceMessage = isVoiceMessage;
+    _isVoiceMessage = outgoingMessageBuilder.isVoiceMessage;
 
     // New outgoing messages should immediately determine their
     // recipient list from current thread state.
-    NSArray<SignalServiceAddress *> *recipientAddresses;
+    NSMutableSet<SignalServiceAddress *> *recipientAddresses = [NSMutableSet new];
     if ([self isKindOfClass:[OWSOutgoingSyncMessage class]]) {
+        // 1. Sync messages should only be sent to linked devices.
         OWSAssertDebug(TSAccountManager.localAddress);
-        recipientAddresses = @[ TSAccountManager.localAddress ];
+        [recipientAddresses addObject:TSAccountManager.localAddress];
     } else {
-        recipientAddresses = thread.recipientAddresses;
+        // 2. Most messages should only be sent to the current members of the group.
+        [recipientAddresses addObjectsFromArray:thread.recipientAddresses];
+        // 3. V2 group updates should also be sent to pending members of the group
+        //    whose clients support Groups v2.
+        if (outgoingMessageBuilder.additionalRecipients) {
+            [recipientAddresses addObjectsFromArray:outgoingMessageBuilder.additionalRecipients];
+        }
     }
 
     NSMutableDictionary<SignalServiceAddress *, TSOutgoingMessageRecipientState *> *recipientAddressStates =
         [NSMutableDictionary new];
     for (SignalServiceAddress *recipientAddress in recipientAddresses) {
+        if (!recipientAddress.isValid) {
+            OWSFailDebug(@"Ignoring invalid address.");
+            continue;
+        }
         TSOutgoingMessageRecipientState *recipientState = [TSOutgoingMessageRecipientState new];
         recipientState.state = OWSOutgoingMessageRecipientStateSending;
         recipientAddressStates[recipientAddress] = recipientState;
     }
     self.recipientAddressStates = [recipientAddressStates copy];
     _outgoingMessageSchemaVersion = TSOutgoingMessageSchemaVersion;
+
+    _changeActionsProtoData = outgoingMessageBuilder.changeActionsProtoData;
 
     return self;
 }
@@ -767,6 +771,16 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                                           }];
 }
 
+- (BOOL)hasFailedRecipients
+{
+    for (TSOutgoingMessageRecipientState *recipientState in self.recipientAddressStates.allValues) {
+        if (recipientState.state == OWSOutgoingMessageRecipientStateFailed) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 - (void)updateAllUnsentRecipientsAsSendingWithTransaction:(SDSAnyWriteTransaction *)transaction;
 {
     OWSAssertDebug(transaction);
@@ -774,7 +788,7 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
     [self
         anyUpdateOutgoingMessageWithTransaction:transaction
                                           block:^(TSOutgoingMessage *message) {
-                                              // Mark any "sending" recipients as "failed."
+                                              // Mark any "failed" recipients as "sending."
                                               for (TSOutgoingMessageRecipientState *recipientState in message
                                                        .recipientAddressStates.allValues) {
                                                   if (recipientState.state == OWSOutgoingMessageRecipientStateFailed) {
@@ -790,24 +804,6 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                                             block:^(TSOutgoingMessage *message) {
                                                 [message setHasSyncedTranscript:hasSyncedTranscript];
                                             }];
-}
-
-- (void)updateWithCustomMessage:(NSString *)customMessage transaction:(SDSAnyWriteTransaction *)transaction
-{
-    OWSAssertDebug(customMessage);
-    OWSAssertDebug(transaction);
-
-    [self anyUpdateOutgoingMessageWithTransaction:transaction
-                                            block:^(TSOutgoingMessage *message) {
-                                                [message setCustomMessage:customMessage];
-                                            }];
-}
-
-- (void)updateWithCustomMessage:(NSString *)customMessage
-{
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        [self updateWithCustomMessage:customMessage transaction:transaction];
-    }];
 }
 
 - (void)updateWithSentRecipient:(SignalServiceAddress *)recipientAddress
@@ -828,6 +824,7 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                                                 }
                                                 recipientState.state = OWSOutgoingMessageRecipientStateSent;
                                                 recipientState.wasSentByUD = wasSentByUD;
+                                                recipientState.errorCode = nil;
                                             }];
 }
 
@@ -850,12 +847,45 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                                             }];
 }
 
+- (void)updateWithFailedRecipient:(SignalServiceAddress *)recipientAddress
+                            error:(NSError *)error
+                      transaction:(SDSAnyWriteTransaction *)transaction
+{
+    OWSAssertDebug(recipientAddress.isValid);
+    OWSAssertDebug(transaction);
+
+    OWSLogWarn(@"Send to recipient failed, address: %@, timestamp: %llu, error: %@ (isRetryable: %d)",
+        recipientAddress,
+        self.timestamp,
+        error,
+        error.isRetryable);
+
+    [self anyUpdateOutgoingMessageWithTransaction:transaction
+                                            block:^(TSOutgoingMessage *message) {
+                                                TSOutgoingMessageRecipientState *_Nullable recipientState
+                                                    = message.recipientAddressStates[recipientAddress];
+                                                if (!recipientState) {
+                                                    OWSFailDebug(
+                                                        @"Missing recipient state for recipient: %@", recipientAddress);
+                                                    return;
+                                                }
+                                                recipientState.state = OWSOutgoingMessageRecipientStateFailed;
+                                                recipientState.errorCode = @(error.code);
+                                            }];
+}
+
 - (void)updateWithDeliveredRecipient:(SignalServiceAddress *)recipientAddress
                    deliveryTimestamp:(NSNumber *_Nullable)deliveryTimestamp
                          transaction:(SDSAnyWriteTransaction *)transaction
 {
     OWSAssertDebug(recipientAddress.isValid);
     OWSAssertDebug(transaction);
+
+    // Ignore receipts for messages that have been deleted.
+    // They are no longer relevant to this message.
+    if (self.wasRemotelyDeleted) {
+        return;
+    }
 
     // If delivery notification doesn't include timestamp, use "now" as an estimate.
     if (!deliveryTimestamp) {
@@ -876,6 +906,7 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                                                 }
                                                 recipientState.state = OWSOutgoingMessageRecipientStateSent;
                                                 recipientState.deliveryTimestamp = deliveryTimestamp;
+                                                recipientState.errorCode = nil;
                                             }];
 }
 
@@ -885,6 +916,12 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
 {
     OWSAssertDebug(recipientAddress.isValid);
     OWSAssertDebug(transaction);
+
+    // Ignore receipts for messages that have been deleted.
+    // They are no longer relevant to this message.
+    if (self.wasRemotelyDeleted) {
+        return;
+    }
 
     [self anyUpdateOutgoingMessageWithTransaction:transaction
                                             block:^(TSOutgoingMessage *message) {
@@ -900,6 +937,7 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                                                 }
                                                 recipientState.state = OWSOutgoingMessageRecipientStateSent;
                                                 recipientState.readTimestamp = @(readTimestamp);
+                                                recipientState.errorCode = nil;
                                             }];
 }
 
@@ -922,6 +960,10 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                                                       TSOutgoingMessageRecipientState *> *recipientAddressStates
                                                       = [NSMutableDictionary new];
                                                   for (SignalServiceAddress *recipientAddress in udRecipientAddresses) {
+                                                      if (!recipientAddress.isValid) {
+                                                          OWSFailDebug(@"Ignoring invalid address.");
+                                                          continue;
+                                                      }
                                                       if (recipientAddressStates[recipientAddress]) {
                                                           OWSFailDebug(@"recipient appears more than once in recipient "
                                                                        @"lists: %@",
@@ -936,6 +978,10 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                                                   }
                                                   for (SignalServiceAddress
                                                            *recipientAddress in nonUdRecipientAddresses) {
+                                                      if (!recipientAddress.isValid) {
+                                                          OWSFailDebug(@"Ignoring invalid address.");
+                                                          continue;
+                                                      }
                                                       if (recipientAddressStates[recipientAddress]) {
                                                           OWSFailDebug(@"recipient appears more than once in recipient "
                                                                        @"lists: %@",
@@ -994,6 +1040,10 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
 
     [self anyUpdateOutgoingMessageWithTransaction:transaction
                                             block:^(TSOutgoingMessage *message) {
+                                                if (!singleGroupRecipient.isValid) {
+                                                    OWSFailDebug(@"Ignoring invalid address.");
+                                                    return;
+                                                }
                                                 TSOutgoingMessageRecipientState *recipientState =
                                                     [TSOutgoingMessageRecipientState new];
                                                 recipientState.state = OWSOutgoingMessageRecipientStateSending;
@@ -1015,6 +1065,16 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
         }
     }
     return result;
+}
+
+- (void)updateWithRecipientAddressStates:
+            (nullable NSDictionary<SignalServiceAddress *, TSOutgoingMessageRecipientState *> *)recipientAddressStates
+                             transaction:(SDSAnyWriteTransaction *)transaction
+{
+    [self anyUpdateOutgoingMessageWithTransaction:transaction
+                                            block:^(TSOutgoingMessage *message) {
+                                                message.recipientAddressStates = [recipientAddressStates copy];
+                                            }];
 }
 
 #ifdef TESTABLE_BUILD
@@ -1060,15 +1120,9 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
     NSUInteger requiredProtocolVersion = SSKProtoDataMessageProtocolVersionInitial;
 
     if (self.isViewOnceMessage) {
-        if (SSKFeatureFlags.viewOnceSending) {
-            [builder setIsViewOnce:YES];
-            requiredProtocolVersion = SSKProtoDataMessageProtocolVersionViewOnceVideo;
-        } else {
-            OWSFailDebug(@"Feature flag not set.");
-        }
+        [builder setIsViewOnce:YES];
+        requiredProtocolVersion = SSKProtoDataMessageProtocolVersionViewOnceVideo;
     }
-
-    [builder setRequiredProtocolVersion:(uint32_t)requiredProtocolVersion];
 
     if ([self.body lengthOfBytesUsingEncoding:NSUTF8StringEncoding] <= kOversizeTextMessageSizeThreshold) {
         [builder setBody:self.body];
@@ -1082,81 +1136,46 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
         }
         [builder setBody:truncatedBody];
     }
+
+    NSArray<SSKProtoDataMessageBodyRange *> *bodyRanges = [self bodyRangeProtosWithBodyText:self.body
+                                                                              andBodyRanges:self.bodyRanges];
+    if (bodyRanges.count > 0) {
+        [builder setBodyRanges:bodyRanges];
+
+        if (requiredProtocolVersion < SSKProtoDataMessageProtocolVersionMentions) {
+            requiredProtocolVersion = SSKProtoDataMessageProtocolVersionMentions;
+        }
+    }
+
     [builder setExpireTimer:self.expiresInSeconds];
     
     // Group Messages
     BOOL attachmentWasGroupAvatar = NO;
     if ([thread isKindOfClass:[TSGroupThread class]]) {
-        TSGroupThread *gThread = (TSGroupThread *)thread;
-        SSKProtoGroupContextType groupMessageType;
-        switch (self.groupMetaMessage) {
-            case TSGroupMetaMessageQuit:
-                groupMessageType = SSKProtoGroupContextTypeQuit;
+        TSGroupThread *groupThread = (TSGroupThread *)thread;
+        OutgoingGroupProtoResult result;
+        switch (groupThread.groupModel.groupsVersion) {
+            case GroupsVersionV1:
+                result = [self addGroupsV1ToDataMessageBuilder:builder groupThread:groupThread transaction:transaction];
                 break;
-            case TSGroupMetaMessageUpdate:
-            case TSGroupMetaMessageNew:
-                groupMessageType = SSKProtoGroupContextTypeUpdate;
-                break;
-            default:
-                groupMessageType = SSKProtoGroupContextTypeDeliver;
+            case GroupsVersionV2:
+                result = [self addGroupsV2ToDataMessageBuilder:builder groupThread:groupThread transaction:transaction];
                 break;
         }
-        SSKProtoGroupContextBuilder *groupBuilder = [SSKProtoGroupContext builderWithId:gThread.groupModel.groupId];
-        [groupBuilder setType:groupMessageType];
-        if (groupMessageType == SSKProtoGroupContextTypeUpdate) {
-            if (gThread.groupModel.groupAvatarData != nil && self.attachmentIds.count == 1) {
+        switch (result) {
+            case OutgoingGroupProtoResult_Error:
+                return nil;
+            case OutgoingGroupProtoResult_AddedWithGroupAvatar:
                 attachmentWasGroupAvatar = YES;
-                SSKProtoAttachmentPointer *_Nullable attachmentProto =
-                    [TSAttachmentStream buildProtoForAttachmentId:self.attachmentIds.firstObject
-                                                      transaction:transaction];
-                if (!attachmentProto) {
-                    OWSFailDebug(@"could not build protobuf.");
-                    return nil;
-                }
-                [groupBuilder setAvatar:attachmentProto];
-            }
-
-            NSMutableArray<NSString *> *membersE164 = [NSMutableArray new];
-            NSMutableArray<SSKProtoGroupContextMember *> *members = [NSMutableArray new];
-
-            for (SignalServiceAddress *address in gThread.groupModel.groupMembers) {
-                // We currently include an independent group member list
-                // of just the phone numbers to support older pre-UUID
-                // clients. Eventually we probably want to remove this.
-                if (address.phoneNumber) {
-                    [membersE164 addObject:address.phoneNumber];
-                }
-
-                SSKProtoGroupContextMemberBuilder *memberBuilder = [SSKProtoGroupContextMember builder];
-                memberBuilder.uuid = address.uuidString;
-                memberBuilder.e164 = address.phoneNumber;
-
-                NSError *error;
-                SSKProtoGroupContextMember *_Nullable member = [memberBuilder buildAndReturnError:&error];
-                if (error || !member) {
-                    OWSFailDebug(@"could not build members protobuf: %@", error);
-                } else {
-                    [members addObject:member];
-                }
-            }
-
-            [groupBuilder setMembersE164:membersE164];
-            [groupBuilder setMembers:members];
-
-            [groupBuilder setName:gThread.groupModel.groupName];
+                break;
+            case OutgoingGroupProtoResult_AddedWithoutGroupAvatar:
+                break;
         }
-        NSError *error;
-        SSKProtoGroupContext *_Nullable groupContextProto = [groupBuilder buildAndReturnError:&error];
-        if (error || !groupContextProto) {
-            OWSFailDebug(@"could not build protobuf: %@.", error);
-            return nil;
-        }
-        [builder setGroup:groupContextProto];
     }
     
     // Message Attachments
     if (!attachmentWasGroupAvatar) {
-        NSMutableArray *attachments = [NSMutableArray new];
+        NSMutableArray<SSKProtoAttachmentPointer *> *attachments = [NSMutableArray new];
         for (NSString *attachmentId in self.attachmentIds) {
             SSKProtoAttachmentPointer *_Nullable attachmentProto =
                 [TSAttachmentStream buildProtoForAttachmentId:attachmentId transaction:transaction];
@@ -1165,6 +1184,10 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                 return nil;
             }
             [attachments addObject:attachmentProto];
+            if (requiredProtocolVersion < SSKProtoDataMessageProtocolVersionCdnSelectorAttachments
+                && (attachmentProto.cdnKey.length > 0 || attachmentProto.cdnNumber > 0)) {
+                requiredProtocolVersion = SSKProtoDataMessageProtocolVersionCdnSelectorAttachments;
+            }
         }
         [builder setAttachments:attachments];
     }
@@ -1180,6 +1203,12 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
             return nil;
         }
         [builder setQuote:quoteProto];
+
+        if (quoteProto.bodyRanges.count > 0) {
+            if (requiredProtocolVersion < SSKProtoDataMessageProtocolVersionMentions) {
+                requiredProtocolVersion = SSKProtoDataMessageProtocolVersionMentions;
+            }
+        }
     }
 
     // Contact Share
@@ -1210,6 +1239,13 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                 [previewBuilder setImage:attachmentProto];
             }
         }
+        if (self.linkPreview.date) {
+            uint64_t interval = [self.linkPreview.date ows_millisecondsSince1970];
+            [previewBuilder setDate:interval];
+        }
+        if (self.linkPreview.previewDescription) {
+            [previewBuilder setPreviewDescription:self.linkPreview.previewDescription];
+        }
 
         NSError *error;
         SSKProtoDataMessagePreview *_Nullable previewProto = [previewBuilder buildAndReturnError:&error];
@@ -1232,6 +1268,9 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
                                                       packKey:self.messageSticker.packKey
                                                     stickerID:self.messageSticker.stickerId
                                                          data:attachmentProto];
+            if (self.messageSticker.emoji.length > 0) {
+                [stickerBuilder setEmoji:self.messageSticker.emoji];
+            }
 
             NSError *error;
             SSKProtoDataMessageSticker *_Nullable stickerProto = [stickerBuilder buildAndReturnError:&error];
@@ -1243,7 +1282,156 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
         }
     }
 
+    [builder setRequiredProtocolVersion:(uint32_t)requiredProtocolVersion];
     return builder;
+}
+
+- (OutgoingGroupProtoResult)addGroupsV1ToDataMessageBuilder:(SSKProtoDataMessageBuilder *)builder
+                                                groupThread:(TSGroupThread *)groupThread
+                                                transaction:(SDSAnyReadTransaction *)transaction
+{
+    OWSAssertDebug(builder);
+    OWSAssertDebug(groupThread);
+    OWSAssertDebug(transaction);
+
+    TSGroupModel *groupModel = groupThread.groupModel;
+    OWSAssertDebug(groupModel.groupsVersion == GroupsVersionV1);
+
+    SSKProtoGroupContextType groupMessageType;
+    switch (self.groupMetaMessage) {
+        case TSGroupMetaMessageQuit:
+            groupMessageType = SSKProtoGroupContextTypeQuit;
+            break;
+        case TSGroupMetaMessageUpdate:
+        case TSGroupMetaMessageNew:
+            groupMessageType = SSKProtoGroupContextTypeUpdate;
+            break;
+        default:
+            groupMessageType = SSKProtoGroupContextTypeDeliver;
+            break;
+    }
+    BOOL attachmentWasGroupAvatar = NO;
+    SSKProtoGroupContextBuilder *groupBuilder = [SSKProtoGroupContext builderWithId:groupModel.groupId];
+    [groupBuilder setType:groupMessageType];
+    if (groupMessageType == SSKProtoGroupContextTypeUpdate) {
+        if (groupModel.groupAvatarData != nil && self.attachmentIds.count == 1) {
+            attachmentWasGroupAvatar = YES;
+            SSKProtoAttachmentPointer *_Nullable attachmentProto =
+                [TSAttachmentStream buildProtoForAttachmentId:self.attachmentIds.firstObject transaction:transaction];
+            if (!attachmentProto) {
+                OWSFailDebug(@"could not build protobuf.");
+                return OutgoingGroupProtoResult_Error;
+            }
+            [groupBuilder setAvatar:attachmentProto];
+        }
+
+        NSMutableArray<NSString *> *membersE164 = [NSMutableArray new];
+        NSMutableArray<SSKProtoGroupContextMember *> *members = [NSMutableArray new];
+
+        for (SignalServiceAddress *address in groupModel.groupMembers) {
+            if (address.phoneNumber) {
+                [membersE164 addObject:address.phoneNumber];
+
+                // Newer desktops only know how to handle the "pairing"
+                // fields that we rolled back when implementing UUID
+                // trust. We need to continue populating them with
+                // phone number only to make sure desktop can see
+                // group membership.
+                SSKProtoGroupContextMemberBuilder *memberBuilder = [SSKProtoGroupContextMember builder];
+                memberBuilder.e164 = address.phoneNumber;
+
+                NSError *error;
+                SSKProtoGroupContextMember *_Nullable member = [memberBuilder buildAndReturnError:&error];
+                if (error || !member) {
+                    OWSFailDebug(@"could not build members protobuf: %@", error);
+                } else {
+                    [members addObject:member];
+                }
+            } else {
+                OWSFailDebug(@"Unexpectedly have a UUID only member in a v1 group, ignoring %@", address);
+            }
+        }
+
+        if (!SSKFeatureFlags.phoneNumberSharing || SSKDebugFlags.allowV1GroupsUpdates) {
+            [groupBuilder setMembersE164:membersE164];
+            [groupBuilder setMembers:members];
+        } else {
+            OWSFailDebug(@"Groups v1 must be discontinued before we roll out phone number sharing settings");
+        }
+
+        [groupBuilder setName:groupModel.groupName];
+    }
+    NSError *error;
+    SSKProtoGroupContext *_Nullable groupContextProto = [groupBuilder buildAndReturnError:&error];
+    if (error || !groupContextProto) {
+        OWSFailDebug(@"could not build protobuf: %@.", error);
+        return OutgoingGroupProtoResult_Error;
+    }
+    [builder setGroup:groupContextProto];
+
+    return (attachmentWasGroupAvatar ? OutgoingGroupProtoResult_AddedWithGroupAvatar
+                                     : OutgoingGroupProtoResult_AddedWithoutGroupAvatar);
+}
+
+- (OutgoingGroupProtoResult)addGroupsV2ToDataMessageBuilder:(SSKProtoDataMessageBuilder *)builder
+                                                groupThread:(TSGroupThread *)groupThread
+                                                transaction:(SDSAnyReadTransaction *)transaction
+{
+    OWSAssertDebug(builder);
+    OWSAssertDebug(groupThread);
+    OWSAssertDebug(transaction);
+
+    if (![groupThread.groupModel isKindOfClass:[TSGroupModelV2 class]]) {
+        OWSFailDebug(@"Invalid group model.");
+        return OutgoingGroupProtoResult_Error;
+    }
+    TSGroupModelV2 *groupModel = (TSGroupModelV2 *)groupThread.groupModel;
+
+    NSError *error;
+    SSKProtoGroupContextV2 *_Nullable groupContextV2 =
+        [self.groupsV2 buildGroupContextV2ProtoWithGroupModel:groupModel
+                                       changeActionsProtoData:self.changeActionsProtoData
+                                                        error:&error];
+    if (groupContextV2 == nil || error != nil) {
+        OWSFailDebug(@"Error: %@", error);
+        return OutgoingGroupProtoResult_Error;
+    }
+    [builder setGroupV2:groupContextV2];
+    return OutgoingGroupProtoResult_AddedWithoutGroupAvatar;
+}
+
+- (NSArray<SSKProtoDataMessageBodyRange *> *)bodyRangeProtosWithBodyText:(NSString *)bodyText
+                                                           andBodyRanges:(nullable MessageBodyRanges *)bodyRanges
+{
+    if (bodyText.length == 0 || bodyRanges == nil) {
+        return @[];
+    }
+
+    NSMutableArray<SSKProtoDataMessageBodyRange *> *bodyRangeProtos = [NSMutableArray new];
+    for (NSValue *rangeValue in bodyRanges.mentions) {
+        NSRange range = [rangeValue rangeValue];
+        NSUUID *uuid = bodyRanges.mentions[rangeValue];
+
+        if (range.location + range.length > bodyText.length) {
+            OWSFailDebug(@"Skipping invalid range in body ranges.");
+            continue;
+        }
+
+        SSKProtoDataMessageBodyRangeBuilder *bodyRangeBuilder = [SSKProtoDataMessageBodyRange builder];
+        [bodyRangeBuilder setStart:(uint32_t)range.location];
+        [bodyRangeBuilder setLength:(uint32_t)range.length];
+        [bodyRangeBuilder setMentionUuid:uuid.UUIDString];
+
+        NSError *error;
+        SSKProtoDataMessageBodyRange *_Nullable bodyRange = [bodyRangeBuilder buildAndReturnError:&error];
+        if (!bodyRange || error) {
+            OWSFailDebug(@"could not build protobuf: %@", error);
+            return nil;
+        }
+
+        [bodyRangeProtos addObject:bodyRange];
+    }
+    return [bodyRangeProtos copy];
 }
 
 - (nullable SSKProtoDataMessageQuoteBuilder *)quotedMessageBuilderWithTransaction:(SDSAnyReadTransaction *)transaction
@@ -1255,14 +1443,27 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
 
     SSKProtoDataMessageQuoteBuilder *quoteBuilder = [SSKProtoDataMessageQuote builderWithId:quotedMessage.timestamp];
 
-    quoteBuilder.authorE164 = quotedMessage.authorAddress.phoneNumber;
-    quoteBuilder.authorUuid = quotedMessage.authorAddress.uuidString;
+    if (quotedMessage.authorAddress.phoneNumber && !SSKFeatureFlags.phoneNumberSharing) {
+        quoteBuilder.authorE164 = quotedMessage.authorAddress.phoneNumber;
+    }
+
+    if (quotedMessage.authorAddress.uuidString) {
+        quoteBuilder.authorUuid = quotedMessage.authorAddress.uuidString;
+    } else {
+        OWSAssertDebug(!SSKFeatureFlags.phoneNumberSharing);
+    }
 
     BOOL hasQuotedText = NO;
     BOOL hasQuotedAttachment = NO;
     if (self.quotedMessage.body.length > 0) {
         hasQuotedText = YES;
         [quoteBuilder setText:quotedMessage.body];
+
+        NSArray<SSKProtoDataMessageBodyRange *> *bodyRanges =
+            [self bodyRangeProtosWithBodyText:self.quotedMessage.body andBodyRanges:self.quotedMessage.bodyRanges];
+        if (bodyRanges.count > 0) {
+            [quoteBuilder setBodyRanges:bodyRanges];
+        }
     }
 
     if (quotedMessage.quotedAttachments) {
@@ -1358,10 +1559,10 @@ NSUInteger const TSOutgoingMessageSchemaVersion = 1;
 - (NSString *)statusDescription
 {
     NSMutableString *result = [NSMutableString new];
-    [result appendFormat:@"[status: %@", NSStringForOutgoingMessageState(self.messageState)];
+    [result appendFormat:@"[status: %@\n", NSStringForOutgoingMessageState(self.messageState)];
     for (SignalServiceAddress *address in self.recipientAddressStates) {
         TSOutgoingMessageRecipientState *recipientState = self.recipientAddressStates[address];
-        [result appendFormat:@", %@: %@", address, NSStringForOutgoingMessageRecipientState(recipientState.state)];
+        [result appendFormat:@", %@: %@\n", address, NSStringForOutgoingMessageRecipientState(recipientState.state)];
     }
     [result appendString:@"]"];
     return [result copy];

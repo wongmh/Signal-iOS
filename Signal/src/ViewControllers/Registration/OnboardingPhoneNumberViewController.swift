@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import UIKit
@@ -7,14 +7,6 @@ import PromiseKit
 
 @objc
 public class OnboardingPhoneNumberViewController: OnboardingBaseViewController {
-
-    // MARK: - Dependencies
-
-    private var tsAccountManager: TSAccountManager {
-        return TSAccountManager.sharedInstance()
-    }
-
-    // MARK: -
 
     private let countryNameLabel = UILabel()
     private let callingCodeLabel = UILabel()

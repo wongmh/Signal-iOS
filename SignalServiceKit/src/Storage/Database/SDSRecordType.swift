@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -13,6 +13,7 @@ import SignalCoreKit
 public enum SDSRecordType: UInt {
     case baseModel = 56
     case experienceUpgrade = 55
+    case incomingGroupsV2MessageJob = 63
     case installedSticker = 24
     case knownStickerPack = 29
     case _100RemoveTSRecipientsMigration = 40
@@ -34,11 +35,13 @@ public enum SDSRecordType: UInt {
     case device = 33
     case disappearingConfigurationUpdateInfoMessage = 28
     case disappearingMessagesConfiguration = 39
+    case groupCallMessage = 65
     case incomingContactSyncJobRecord = 61
     case incomingGroupSyncJobRecord = 60
     case linkedDeviceReadReceipt = 36
     case messageContentJob = 15
     case messageDecryptJob = 8
+    case reaction = 62
     case recipientIdentity = 38
     case resaveCollectionDBMigration = 49
     case sessionResetJobRecord = 52
@@ -66,9 +69,9 @@ public enum SDSRecordType: UInt {
     case invalidIdentityKeyErrorMessage = 17
     case invalidIdentityKeyReceivingErrorMessage = 1
     case invalidIdentityKeySendingErrorMessage = 23
+    case mention = 64
     case message = 11
     case outgoingMessage = 21
-    case reaction = 62
     case recipientReadReceipt = 12
     case thread = 2
     case unreadIndicatorInteraction = 4

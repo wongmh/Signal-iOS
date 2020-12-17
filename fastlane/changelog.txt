@@ -1,0 +1,1 @@
+Your Legacy Signal Groups will be automatically upgraded to New Groups so they can get in on the new features we recently released, like admins, @mentions, group links, and more. Upgrades don’t happen all at once or instantly, and some groups may not upgrade for a while.

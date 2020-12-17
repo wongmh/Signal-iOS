@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -31,6 +31,16 @@ class DebugUIProfile: DebugUIPage {
             OWSTableItem(title: "Clear Profile Whitelist") {
                 profileManager.clearProfileWhitelist()
             },
+            { () -> OWSTableItem? in
+                guard let thread = aThread else {
+                    owsFailDebug("thread was unexpectedly nil")
+                    return nil
+                }
+                let name = Environment.shared.contactsManager.displayNameWithSneakyTransaction(thread: thread)
+                return OWSTableItem(title: "Remove “\(name)” from Profile Whitelist") {
+                    profileManager.removeThread(fromProfileWhitelist: thread)
+                }
+            }(),
             OWSTableItem(title: "Log Profile Whitelist") {
                 profileManager.logProfileWhitelist()
             },
@@ -52,15 +62,14 @@ class DebugUIProfile: DebugUIPage {
                     return
                 }
 
-                // MJK TODO - should be safe to remove this senderTimestamp
-                let message = OWSProfileKeyMessage(timestamp: NSDate.ows_millisecondTimeStamp(), in: aThread)
+                let message = OWSProfileKeyMessage(thread: aThread)
                 strongSelf.messageSender.sendMessage(.promise, message.asPreparer).done {
                     Logger.info("Successfully sent profile key message to thread: \(String(describing: aThread))")
                 }.catch { _ in
                     owsFailDebug("Failed to send profile key message to thread: \(String(describing: aThread))")
-                }.retainUntilComplete()
+                }
             }
-        ]
+        ].compactMap { $0 }
 
         return OWSTableSection(title: "Profile", items: sectionItems)
     }

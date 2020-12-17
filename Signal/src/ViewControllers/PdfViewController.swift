@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -19,27 +19,13 @@ public class PdfViewController: OWSViewController {
 
     // MARK: Initializers
 
-    @available(*, unavailable, message:"use other constructor instead.")
-    required public init?(coder aDecoder: NSCoder) {
-        notImplemented()
-    }
-
     @objc
     public required init(viewItem: ConversationViewItem,
                          attachmentStream: TSAttachmentStream) {
         self.viewItem = viewItem
         self.attachmentStream = attachmentStream
 
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    @objc
-    public class var canRenderPdf: Bool {
-        if #available(iOS 11.0, *) {
-            return true
-        } else {
-            return false
-        }
+        super.init()
     }
 
     // MARK: - View Lifecycle
@@ -55,8 +41,7 @@ public class PdfViewController: OWSViewController {
         let contentView: UIView
 
         // Setup the PDFView as the contentView if supported
-        if #available(iOS 11.0, *),
-            let url = attachmentStream.originalMediaURL,
+        if let url = attachmentStream.originalMediaURL,
             let pdfDocument = PDFDocument(url: url) {
             let pdfView = PDFView()
             self.pdfView = pdfView
@@ -80,7 +65,7 @@ public class PdfViewController: OWSViewController {
         }
 
         view.addSubview(contentView)
-        contentView.ows_autoPinToSuperviewEdges()
+        contentView.autoPinEdgesToSuperviewEdges()
 
         // Setup top + bottom bars
 
@@ -120,8 +105,7 @@ public class PdfViewController: OWSViewController {
     public override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
 
-        if #available(iOS 11.0, *),
-            !viewHasEverAppeared,
+        if !viewHasEverAppeared,
             let pdfView = pdfView as? PDFView {
             pdfView.scaleFactor = pdfView.scaleFactorForSizeToFit
             pdfView.goToFirstPage(nil)
@@ -158,7 +142,7 @@ public class PdfViewController: OWSViewController {
 
     private var shouldHideToolbars: Bool = false {
         didSet {
-            if (oldValue == shouldHideToolbars) {
+            if oldValue == shouldHideToolbars {
                 return
             }
 

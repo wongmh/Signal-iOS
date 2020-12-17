@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSCensorshipConfiguration.h"
@@ -79,18 +79,6 @@ NSString *const OWSFrontingHost_Default = @"www.google.com";
     return self;
 }
 
-// MARK: Public Getters
-
-- (NSString *)signalServiceReflectorHost
-{
-    return TSConstants.textSecureServiceReflectorHost;
-}
-
-- (NSString *)CDNReflectorHost
-{
-    return TSConstants.textSecureCDNReflectorHost;
-}
-
 // MARK: Util
 
 + (NSDictionary<NSString *, NSString *> *)censoredCountryCodes
@@ -148,7 +136,12 @@ NSString *const OWSFrontingHost_Default = @"www.google.com";
     } else if ([domain isEqualToString:OWSFrontingHost_GoogleUAE]) {
         return self.googlePinningPolicy;
     } else {
-        OWSFailDebug(@"unknown pinning domain.");
+        OWSLogVerbose(@"domain: %@", domain);
+        if ([domain containsString:@".google."]) {
+            OWSLogWarn(@"Unknown pinning domain.");
+        } else {
+            OWSFailDebug(@"Unknown pinning domain.");
+        }
         return self.googlePinningPolicy;
     }
 }

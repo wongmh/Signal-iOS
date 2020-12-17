@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -30,6 +30,7 @@ public struct InstalledStickerRecord: SDSRecord {
     // Properties
     public let emojiString: String?
     public let info: Data
+    public let contentType: String?
 
     public enum CodingKeys: String, CodingKey, ColumnExpression, CaseIterable {
         case id
@@ -37,6 +38,7 @@ public struct InstalledStickerRecord: SDSRecord {
         case uniqueId
         case emojiString
         case info
+        case contentType
     }
 
     public static func columnName(_ column: InstalledStickerRecord.CodingKeys, fullyQualified: Bool = false) -> String {
@@ -65,6 +67,7 @@ public extension InstalledStickerRecord {
         uniqueId = row[2]
         emojiString = row[3]
         info = row[4]
+        contentType = row[5]
     }
 }
 
@@ -96,12 +99,14 @@ extension InstalledSticker {
         case .installedSticker:
 
             let uniqueId: String = record.uniqueId
+            let contentType: String? = record.contentType
             let emojiString: String? = record.emojiString
             let infoSerialized: Data = record.info
             let info: StickerInfo = try SDSDeserialization.unarchive(infoSerialized, name: "info")
 
             return InstalledSticker(grdbId: recordId,
                                     uniqueId: uniqueId,
+                                    contentType: contentType,
                                     emojiString: emojiString,
                                     info: info)
 
@@ -138,18 +143,51 @@ extension InstalledSticker: SDSModel {
     }
 }
 
+// MARK: - DeepCopyable
+
+extension InstalledSticker: DeepCopyable {
+
+    public func deepCopy() throws -> AnyObject {
+        // Any subclass can be cast to it's superclass,
+        // so the order of this switch statement matters.
+        // We need to do a "depth first" search by type.
+        guard let id = self.grdbId?.int64Value else {
+            throw OWSAssertionError("Model missing grdbId.")
+        }
+
+        do {
+            let modelToCopy = self
+            assert(type(of: modelToCopy) == InstalledSticker.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let contentType: String? = modelToCopy.contentType
+            let emojiString: String? = modelToCopy.emojiString
+            // NOTE: If this generates build errors, you made need to
+            // implement DeepCopyable for this type in DeepCopy.swift.
+            let info: StickerInfo = try DeepCopies.deepCopy(modelToCopy.info)
+
+            return InstalledSticker(grdbId: id,
+                                    uniqueId: uniqueId,
+                                    contentType: contentType,
+                                    emojiString: emojiString,
+                                    info: info)
+        }
+
+    }
+}
+
 // MARK: - Table Metadata
 
 extension InstalledStickerSerializer {
 
     // This defines all of the columns used in the table
     // where this model (and any subclasses) are persisted.
-    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey, columnIndex: 0)
-    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64, columnIndex: 1)
-    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true, columnIndex: 2)
+    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey)
+    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64)
+    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true)
     // Properties
-    static let emojiStringColumn = SDSColumnMetadata(columnName: "emojiString", columnType: .unicodeString, isOptional: true, columnIndex: 3)
-    static let infoColumn = SDSColumnMetadata(columnName: "info", columnType: .blob, columnIndex: 4)
+    static let emojiStringColumn = SDSColumnMetadata(columnName: "emojiString", columnType: .unicodeString, isOptional: true)
+    static let infoColumn = SDSColumnMetadata(columnName: "info", columnType: .blob)
+    static let contentTypeColumn = SDSColumnMetadata(columnName: "contentType", columnType: .unicodeString, isOptional: true)
 
     // TODO: We should decide on a naming convention for
     //       tables that store models.
@@ -160,7 +198,8 @@ extension InstalledStickerSerializer {
         recordTypeColumn,
         uniqueIdColumn,
         emojiStringColumn,
-        infoColumn
+        infoColumn,
+        contentTypeColumn
         ])
 }
 
@@ -270,9 +309,11 @@ public extension InstalledSticker {
 
 @objc
 public class InstalledStickerCursor: NSObject {
+    private let transaction: GRDBReadTransaction
     private let cursor: RecordCursor<InstalledStickerRecord>?
 
-    init(cursor: RecordCursor<InstalledStickerRecord>?) {
+    init(transaction: GRDBReadTransaction, cursor: RecordCursor<InstalledStickerRecord>?) {
+        self.transaction = transaction
         self.cursor = cursor
     }
 
@@ -283,7 +324,9 @@ public class InstalledStickerCursor: NSObject {
         guard let record = try cursor.next() else {
             return nil
         }
-        return try InstalledSticker.fromRecord(record)
+        let value = try InstalledSticker.fromRecord(record)
+        SSKEnvironment.shared.modelReadCaches.installedStickerCache.didReadInstalledSticker(value, transaction: transaction.asAnyRead)
+        return value
     }
 
     public func all() throws -> [InstalledSticker] {
@@ -314,10 +357,10 @@ public extension InstalledSticker {
         let database = transaction.database
         do {
             let cursor = try InstalledStickerRecord.fetchCursor(database)
-            return InstalledStickerCursor(cursor: cursor)
+            return InstalledStickerCursor(transaction: transaction, cursor: cursor)
         } catch {
             owsFailDebug("Read failed: \(error)")
-            return InstalledStickerCursor(cursor: nil)
+            return InstalledStickerCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -325,6 +368,20 @@ public extension InstalledSticker {
     class func anyFetch(uniqueId: String,
                         transaction: SDSAnyReadTransaction) -> InstalledSticker? {
         assert(uniqueId.count > 0)
+
+        return anyFetch(uniqueId: uniqueId, transaction: transaction, ignoreCache: false)
+    }
+
+    // Fetches a single model by "unique id".
+    class func anyFetch(uniqueId: String,
+                        transaction: SDSAnyReadTransaction,
+                        ignoreCache: Bool) -> InstalledSticker? {
+        assert(uniqueId.count > 0)
+
+        if !ignoreCache,
+            let cachedCopy = SSKEnvironment.shared.modelReadCaches.installedStickerCache.getInstalledSticker(uniqueId: uniqueId, transaction: transaction) {
+            return cachedCopy
+        }
 
         switch transaction.readTransaction {
         case .yapRead(let ydbTransaction):
@@ -523,11 +580,11 @@ public extension InstalledSticker {
         do {
             let sqlRequest = SQLRequest<Void>(sql: sql, arguments: arguments, cached: true)
             let cursor = try InstalledStickerRecord.fetchCursor(transaction.database, sqlRequest)
-            return InstalledStickerCursor(cursor: cursor)
+            return InstalledStickerCursor(transaction: transaction, cursor: cursor)
         } catch {
             Logger.error("sql: \(sql)")
             owsFailDebug("Read failed: \(error)")
-            return InstalledStickerCursor(cursor: nil)
+            return InstalledStickerCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -542,7 +599,9 @@ public extension InstalledSticker {
                 return nil
             }
 
-            return try InstalledSticker.fromRecord(record)
+            let value = try InstalledSticker.fromRecord(record)
+            SSKEnvironment.shared.modelReadCaches.installedStickerCache.didReadInstalledSticker(value, transaction: transaction.asAnyRead)
+            return value
         } catch {
             owsFailDebug("error: \(error)")
             return nil
@@ -572,7 +631,25 @@ class InstalledStickerSerializer: SDSSerializer {
         // Properties
         let emojiString: String? = model.emojiString
         let info: Data = requiredArchive(model.info)
+        let contentType: String? = model.contentType
 
-        return InstalledStickerRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, emojiString: emojiString, info: info)
+        return InstalledStickerRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, emojiString: emojiString, info: info, contentType: contentType)
     }
 }
+
+// MARK: - Deep Copy
+
+#if TESTABLE_BUILD
+@objc
+public extension InstalledSticker {
+    // We're not using this method at the moment,
+    // but we might use it for validation of
+    // other deep copy methods.
+    func deepCopyUsingRecord() throws -> InstalledSticker {
+        guard let record = try asRecord() as? InstalledStickerRecord else {
+            throw OWSAssertionError("Could not convert to record.")
+        }
+        return try InstalledSticker.fromRecord(record)
+    }
+}
+#endif

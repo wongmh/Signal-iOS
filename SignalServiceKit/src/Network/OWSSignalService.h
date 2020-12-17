@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 NS_ASSUME_NONNULL_BEGIN
@@ -7,6 +7,8 @@ NS_ASSUME_NONNULL_BEGIN
 extern NSString *const kNSNotificationName_IsCensorshipCircumventionActiveDidChange;
 
 @class AFHTTPSessionManager;
+@class OWSCensorshipConfiguration;
+@class OWSURLSession;
 @class SDSKeyValueStore;
 @class TSAccountManager;
 
@@ -14,14 +16,9 @@ extern NSString *const kNSNotificationName_IsCensorshipCircumventionActiveDidCha
 
 - (SDSKeyValueStore *)keyValueStore;
 
-/// For uploading and downloading avatar assets and attachments
-@property (nonatomic, readonly) AFHTTPSessionManager *CDNSessionManager;
++ (instancetype)shared;
 
-/// For backing up and restoring signal account information
-@property (nonatomic, readonly) AFHTTPSessionManager *storageServiceSessionManager;
-
-+ (instancetype)sharedInstance;
-
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
 
 #pragma mark - Censorship Circumvention
@@ -35,8 +32,7 @@ extern NSString *const kNSNotificationName_IsCensorshipCircumventionActiveDidCha
 /// should only be accessed if censorship circumvention is active.
 @property (nonatomic, readonly) NSURL *domainFrontBaseURL;
 
-/// For interacting with the Signal Service
-- (AFHTTPSessionManager *)buildSignalServiceSessionManager;
+- (OWSCensorshipConfiguration *)buildCensorshipConfiguration;
 
 @end
 

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSQuotedMessageView.h"
@@ -62,7 +62,16 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
 
     DisplayableText *_Nullable displayableQuotedText = nil;
     if (quotedMessage.body.length > 0) {
-        displayableQuotedText = [DisplayableText displayableText:quotedMessage.body];
+        __block DisplayableText *displayableText;
+        [SDSDatabaseStorage.shared uiReadWithBlock:^(SDSAnyReadTransaction *transaction) {
+            displayableText = [DisplayableText
+                displayableTextWithMessageBody:[[MessageBody alloc]
+                                                   initWithText:quotedMessage.body
+                                                         ranges:quotedMessage.bodyRanges ?: MessageBodyRanges.empty]
+                                  mentionStyle:MentionStyleQuotedReply
+                                   transaction:transaction];
+        }];
+        displayableQuotedText = displayableText;
     }
 
     OWSQuotedMessageView *instance = [[OWSQuotedMessageView alloc]
@@ -147,11 +156,6 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
     return 4.f;
 }
 
-- (UIColor *)quoteBubbleBackgroundColor
-{
-    return [self.conversationStyle quotedReplyBubbleColorWithIsIncoming:!self.isOutgoing];
-}
-
 - (void)createContents
 {
     // Ensure only called once.
@@ -188,11 +192,7 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
             maskLayer.path = bezierPath.CGPath;
         }];
     innerBubbleView.layer.mask = maskLayer;
-    if (self.isForPreview) {
-        innerBubbleView.backgroundColor = [UIColor.ows_signalBlueColor colorWithAlphaComponent:0.4f];
-    } else {
-        innerBubbleView.backgroundColor = self.quoteBubbleBackgroundColor;
-    }
+    innerBubbleView.backgroundColor = self.conversationStyle.quotedReplyBubbleColor;
     [self addSubview:innerBubbleView];
     [innerBubbleView autoPinLeadingToSuperviewMarginWithInset:self.bubbleHMargin];
     [innerBubbleView autoPinTrailingToSuperviewMarginWithInset:self.bubbleHMargin];
@@ -207,7 +207,7 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
 
     UIView *stripeView = [UIView new];
     if (self.isForPreview) {
-        stripeView.backgroundColor = UIColor.ows_signalBlueColor;
+        stripeView.backgroundColor = [self.conversationStyle quotedReplyStripeColorWithIsIncoming:YES];
     } else {
         stripeView.backgroundColor = [self.conversationStyle quotedReplyStripeColorWithIsIncoming:!self.isOutgoing];
     }
@@ -244,7 +244,6 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
         if (thumbnailImage) {
             quotedAttachmentView = [self imageViewForImage:thumbnailImage];
             quotedAttachmentView.clipsToBounds = YES;
-            quotedAttachmentView.backgroundColor = [UIColor whiteColor];
 
             if (self.isVideoAttachment) {
                 UIImage *contentIcon = [UIImage imageNamed:@"attachment_play_button"];
@@ -349,7 +348,7 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
     }
 
     [innerBubbleView addSubview:contentView];
-    [contentView ows_autoPinToSuperviewEdges];
+    [contentView autoPinEdgesToSuperviewEdges];
 }
 
 - (UIView *)buildRemoteContentSourceView
@@ -360,7 +359,7 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
     OWSAssertDebug(CGSizeEqualToSize(
         CGSizeMake(kRemotelySourcedContentGlyphLength, kRemotelySourcedContentGlyphLength), glyphImage.size));
     UIImageView *glyphView = [[UIImageView alloc] initWithImage:glyphImage];
-    glyphView.tintColor = Theme.secondaryTextAndIconColor;
+    glyphView.tintColor = Theme.lightThemePrimaryColor;
     [glyphView
         autoSetDimensionsToSize:CGSizeMake(kRemotelySourcedContentGlyphLength, kRemotelySourcedContentGlyphLength)];
 
@@ -434,40 +433,45 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
 {
     OWSAssertDebug(self.quotedTextLabel);
 
-    UIColor *textColor = self.quotedTextColor;
-    SUPPRESS_DEADSTORE_WARNING(textColor);
-    UIFont *font = self.quotedTextFont;
-    SUPPRESS_DEADSTORE_WARNING(font);
-    NSString *text = @"";
+    NSAttributedString *attributedText;
 
     NSString *_Nullable fileTypeForSnippet = [self fileTypeForSnippet];
     NSString *_Nullable sourceFilename = [self.quotedMessage.sourceFilename filterStringForDisplay];
 
-    if (self.displayableQuotedText.displayText.length > 0) {
-        text = self.displayableQuotedText.displayText;
-        textColor = self.quotedTextColor;
-        font = self.quotedTextFont;
+    if (self.displayableQuotedText.displayAttributedText.length > 0) {
+        NSMutableAttributedString *mutableText = [self.displayableQuotedText.displayAttributedText mutableCopy];
+        [mutableText addAttributes:@{
+            NSFontAttributeName : self.quotedTextFont,
+            NSForegroundColorAttributeName : self.quotedTextColor
+        }
+                             range:NSMakeRange(0, mutableText.length)];
+        attributedText = mutableText;
     } else if (fileTypeForSnippet) {
-        text = fileTypeForSnippet;
-        textColor = self.fileTypeTextColor;
-        font = self.fileTypeFont;
+        attributedText = [[NSAttributedString alloc] initWithString:fileTypeForSnippet
+                                                         attributes:@{
+                                                             NSFontAttributeName : self.fileTypeFont,
+                                                             NSForegroundColorAttributeName : self.fileTypeTextColor,
+                                                         }];
     } else if (sourceFilename) {
-        text = sourceFilename;
-        textColor = self.filenameTextColor;
-        font = self.filenameFont;
+        attributedText = [[NSAttributedString alloc] initWithString:sourceFilename
+                                                         attributes:@{
+                                                             NSFontAttributeName : self.filenameFont,
+                                                             NSForegroundColorAttributeName : self.filenameTextColor,
+                                                         }];
     } else {
-        text = NSLocalizedString(
-                                 @"QUOTED_REPLY_TYPE_ATTACHMENT", @"Indicates this message is a quoted reply to an attachment of unknown type.");
-        textColor = self.fileTypeTextColor;
-        font = self.fileTypeFont;
+        attributedText = [[NSAttributedString alloc]
+            initWithString:NSLocalizedString(@"QUOTED_REPLY_TYPE_ATTACHMENT",
+                               @"Indicates this message is a quoted reply to an attachment of unknown type.")
+                attributes:@{
+                    NSFontAttributeName : self.fileTypeFont,
+                    NSForegroundColorAttributeName : self.fileTypeTextColor,
+                }];
     }
 
     self.quotedTextLabel.numberOfLines = self.isForPreview ? 1 : 2;
     self.quotedTextLabel.lineBreakMode = NSLineBreakByTruncatingTail;
-    self.quotedTextLabel.text = text;
     self.quotedTextLabel.textAlignment = self.displayableQuotedText.displayTextNaturalAlignment;
-    self.quotedTextLabel.textColor = textColor;
-    self.quotedTextLabel.font = font;
+    self.quotedTextLabel.attributedText = attributedText;
 
     return self.quotedTextLabel;
 }
@@ -477,7 +481,7 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
     OWSAssertDebug(self.quoteContentSourceLabel);
 
     self.quoteContentSourceLabel.font = UIFont.ows_dynamicTypeFootnoteFont;
-    self.quoteContentSourceLabel.textColor = Theme.primaryTextColor;
+    self.quoteContentSourceLabel.textColor = Theme.lightThemePrimaryColor;
     self.quoteContentSourceLabel.text = NSLocalizedString(@"QUOTED_REPLY_CONTENT_FROM_REMOTE_SOURCE",
         @"Footer label that appears below quoted messages when the quoted content was not derived locally. When the "
         @"local user doesn't have a copy of the message being quoted, e.g. if it had since been deleted, we instead "
@@ -504,8 +508,13 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
         return NSLocalizedString(
             @"QUOTED_REPLY_TYPE_IMAGE", @"Indicates this message is a quoted reply to an image file.");
     } else if ([MIMETypeUtil isAnimated:contentType]) {
-        return NSLocalizedString(
-            @"QUOTED_REPLY_TYPE_GIF", @"Indicates this message is a quoted reply to animated GIF file.");
+        if ([contentType caseInsensitiveCompare:OWSMimeTypeImageGif] == NSOrderedSame) {
+            return NSLocalizedString(
+                @"QUOTED_REPLY_TYPE_GIF", @"Indicates this message is a quoted reply to animated GIF file.");
+        } else {
+            return NSLocalizedString(
+                @"QUOTED_REPLY_TYPE_IMAGE", @"Indicates this message is a quoted reply to an image file.");
+        }
     }
     return nil;
 }
@@ -538,22 +547,11 @@ const CGFloat kRemotelySourcedContentRowSpacing = 3;
 
     NSString *quotedAuthorText;
     if (self.quotedMessage.authorAddress.isLocalAddress) {
-
-        if (self.isOutgoing) {
-            quotedAuthorText = NSLocalizedString(
-                @"QUOTED_REPLY_AUTHOR_INDICATOR_YOURSELF", @"message header label when quoting yourself");
-        } else {
-            quotedAuthorText = NSLocalizedString(
-                @"QUOTED_REPLY_AUTHOR_INDICATOR_YOU", @"message header label when someone else is quoting you");
-        }
+        quotedAuthorText = NSLocalizedString(
+            @"QUOTED_REPLY_AUTHOR_INDICATOR_YOU", @"message header label when someone else is quoting you");
     } else {
         OWSContactsManager *contactsManager = Environment.shared.contactsManager;
-        NSString *quotedAuthor;
-        if (SSKFeatureFlags.profileDisplayChanges) {
-            quotedAuthor = [contactsManager displayNameForAddress:self.quotedMessage.authorAddress];
-        } else {
-            quotedAuthor = [contactsManager legacyDisplayNameForAddress:self.quotedMessage.authorAddress];
-        }
+        NSString *quotedAuthor = [contactsManager displayNameForAddress:self.quotedMessage.authorAddress];
         quotedAuthorText = [NSString
             stringWithFormat:
                 NSLocalizedString(@"QUOTED_REPLY_AUTHOR_INDICATOR_FORMAT",

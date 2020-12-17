@@ -1,13 +1,13 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSBlockingManager.h"
 #import "AppContext.h"
 #import "AppReadiness.h"
+#import "MessageSender.h"
 #import "NSNotificationCenter+OWS.h"
 #import "OWSBlockedPhoneNumbersMessage.h"
-#import "OWSMessageSender.h"
 #import "SSKEnvironment.h"
 #import "TSContactThread.h"
 #import "TSGroupThread.h"
@@ -55,6 +55,11 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
     return SSKEnvironment.shared.storageServiceManager;
 }
 
+- (id<GroupsV2>)groupsV2
+{
+    return SSKEnvironment.shared.groupsV2;
+}
+
 #pragma mark -
 
 + (SDSKeyValueStore *)keyValueStore
@@ -65,7 +70,7 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
 
 #pragma mark -
 
-+ (instancetype)sharedManager
++ (instancetype)shared
 {
     OWSAssertDebug(SSKEnvironment.shared.blockingManager);
 
@@ -102,7 +107,7 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
                                                object:nil];
 }
 
-- (OWSMessageSender *)messageSender
+- (MessageSender *)messageSender
 {
     OWSAssertDebug(SSKEnvironment.shared.messageSender);
 
@@ -118,8 +123,17 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
 {
     @synchronized(self)
     {
+        // Clear out so we re-initialize if we ever re-run the "on launch" logic,
+        // such as after a completed database transfer.
+        _blockedPhoneNumberSet = nil;
+
         [self ensureLazyInitialization];
     }
+}
+
+- (BOOL)wasLocallyInitiatedWithBlockMode:(BlockMode)blockMode
+{
+    return blockMode != BlockMode_Remote;
 }
 
 #pragma mark -
@@ -154,66 +168,78 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
     return blockedAddresses;
 }
 
-- (void)addBlockedAddressLocally:(SignalServiceAddress *)address wasLocallyInitiated:(BOOL)wasLocallyInitiated;
+- (BOOL)addBlockedAddressLocally:(SignalServiceAddress *)address blockMode:(BlockMode)blockMode;
 {
     OWSAssertDebug(address.isValid);
 
     OWSLogInfo(@"addBlockedAddress: %@", address);
 
     BOOL wasBlocked = [self isAddressBlocked:address];
+    BOOL didChange = NO;
 
     @synchronized(self)
     {
         [self ensureLazyInitialization];
 
         if (address.phoneNumber && ![_blockedPhoneNumberSet containsObject:address.phoneNumber]) {
+            didChange = YES;
             [_blockedPhoneNumberSet addObject:address.phoneNumber];
         }
 
         if (address.uuidString && ![_blockedUUIDSet containsObject:address.uuidString]) {
+            didChange = YES;
             [_blockedUUIDSet addObject:address.uuidString];
         }
     }
 
+    BOOL wasLocallyInitiated = [self wasLocallyInitiatedWithBlockMode:blockMode];
     if (wasLocallyInitiated && wasBlocked != [self isAddressBlocked:address]) {
         [self.storageServiceManager recordPendingUpdatesWithUpdatedAddresses:@[ address ]];
     }
+
+    return didChange;
 }
 
-- (void)addBlockedAddress:(SignalServiceAddress *)address wasLocallyInitiated:(BOOL)wasLocallyInitiated;
+- (void)addBlockedAddress:(SignalServiceAddress *)address blockMode:(BlockMode)blockMode;
 {
-    [self addBlockedAddressLocally:address wasLocallyInitiated:wasLocallyInitiated];
-    [self handleUpdateWithSneakyTransactionAndSendSyncMessage:wasLocallyInitiated];
+    if ([self addBlockedAddressLocally:address blockMode:blockMode]) {
+        BOOL wasLocallyInitiated = [self wasLocallyInitiatedWithBlockMode:blockMode];
+        [self handleUpdateWithSneakyTransactionAndSendSyncMessage:wasLocallyInitiated];
+    }
 }
 
 - (void)addBlockedAddress:(SignalServiceAddress *)address
-      wasLocallyInitiated:(BOOL)wasLocallyInitiated
+                blockMode:(BlockMode)blockMode
               transaction:(SDSAnyWriteTransaction *)transaction
 {
     OWSAssertDebug(transaction);
 
-    [self addBlockedAddressLocally:address wasLocallyInitiated:wasLocallyInitiated];
-
-    [self handleUpdateAndSendSyncMessage:wasLocallyInitiated transaction:transaction];
+    if ([self addBlockedAddressLocally:address blockMode:blockMode]) {
+        BOOL wasLocallyInitiated = [self wasLocallyInitiatedWithBlockMode:blockMode];
+        [self handleUpdateAndSendSyncMessage:wasLocallyInitiated transaction:transaction];
+    }
 }
 
-- (void)removeBlockedAddressLocally:(SignalServiceAddress *)address wasLocallyInitiated:(BOOL)wasLocallyInitiated
+- (BOOL)removeBlockedAddressLocally:(SignalServiceAddress *)address wasLocallyInitiated:(BOOL)wasLocallyInitiated
 {
     OWSAssertDebug(address.isValid);
 
     OWSLogInfo(@"removeBlockedAddress: %@", address);
 
     BOOL wasBlocked = [self isAddressBlocked:address];
+    BOOL didChange = NO;
 
     @synchronized(self)
     {
         [self ensureLazyInitialization];
 
         if (address.phoneNumber && [_blockedPhoneNumberSet containsObject:address.phoneNumber]) {
+            didChange = YES;
             [_blockedPhoneNumberSet removeObject:address.phoneNumber];
         }
 
         if (address.uuidString && [_blockedUUIDSet containsObject:address.uuidString]) {
+            didChange = YES;
             [_blockedUUIDSet removeObject:address.uuidString];
         }
     }
@@ -222,12 +248,15 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
     if (wasLocallyInitiated && wasBlocked != [self isAddressBlocked:address]) {
         [self.storageServiceManager recordPendingUpdatesWithUpdatedAddresses:@[ address ]];
     }
+
+    return didChange;
 }
 
 - (void)removeBlockedAddress:(SignalServiceAddress *)address wasLocallyInitiated:(BOOL)wasLocallyInitiated
 {
-    [self removeBlockedAddressLocally:address wasLocallyInitiated:wasLocallyInitiated];
-    [self handleUpdateWithSneakyTransactionAndSendSyncMessage:wasLocallyInitiated];
+    if ([self removeBlockedAddressLocally:address wasLocallyInitiated:wasLocallyInitiated]) {
+        [self handleUpdateWithSneakyTransactionAndSendSyncMessage:wasLocallyInitiated];
+    }
 }
 
 - (void)removeBlockedAddress:(SignalServiceAddress *)address
@@ -236,9 +265,9 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
 {
     OWSAssertDebug(transaction);
 
-    [self removeBlockedAddressLocally:address wasLocallyInitiated:wasLocallyInitiated];
-
-    [self handleUpdateAndSendSyncMessage:wasLocallyInitiated transaction:transaction];
+    if ([self removeBlockedAddressLocally:address wasLocallyInitiated:wasLocallyInitiated]) {
+        [self handleUpdateAndSendSyncMessage:wasLocallyInitiated transaction:transaction];
+    }
 }
 
 - (void)processIncomingSyncWithBlockedPhoneNumbers:(nullable NSSet<NSString *> *)blockedPhoneNumbers
@@ -250,11 +279,12 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
 
     OWSLogInfo(@"");
 
-    [transaction addCompletionWithBlock:^{
+    [transaction addAsyncCompletion:^{
         [[NSNotificationCenter defaultCenter] postNotificationName:OWSBlockingManagerBlockedSyncDidComplete object:nil];
     }];
 
     BOOL hasGroupChanges = NO;
+    NSDictionary<NSData *, TSGroupModel *> *oldGroupMap;
 
     @synchronized(self)
     {
@@ -291,6 +321,8 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
         if (!hasChanges) {
             return;
         }
+
+        oldGroupMap = [self.blockedGroupMap copy];
     }
 
     // Re-generate the group map only if the groupIds have changed.
@@ -298,8 +330,33 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
         NSMutableDictionary<NSData *, TSGroupModel *> *newGroupMap = [NSMutableDictionary new];
 
         for (NSData *groupId in blockedGroupIds) {
-            TSGroupThread *groupThread = [TSGroupThread getOrCreateThreadWithGroupId:groupId transaction:transaction];
-            newGroupMap[groupId] = groupThread.groupModel;
+            // We store the list of blocked groups as GroupModels (not group ids)
+            // so that we can display the group names in the block list UI, if
+            // possible.
+            //
+            // * If we have an existing group model, we use it to preserve the group name.
+            // * If we can find the group thread, we use it to preserve the group name.
+            // * If we only know the group id, we use a "fake" group model with only the group id.
+            TSGroupModel *_Nullable oldGroupModel = oldGroupMap[groupId];
+            if (oldGroupModel != nil) {
+                newGroupMap[groupId] = oldGroupModel;
+                continue;
+            }
+
+            [TSGroupThread ensureGroupIdMappingForGroupId:groupId transaction:transaction];
+            TSGroupThread *_Nullable groupThread = [TSGroupThread fetchWithGroupId:groupId transaction:transaction];
+            if (groupThread != nil) {
+                newGroupMap[groupId] = groupThread.groupModel;
+                continue;
+            }
+
+            TSGroupModel *_Nullable groupModel = [GroupManager fakeGroupModelWithGroupId:groupId
+                                                                             transaction:transaction];
+            if (groupModel != nil) {
+                newGroupMap[groupId] = groupModel;
+            } else {
+                OWSFailDebug(@"Couldn't block group: %@", groupId);
+            }
         }
 
         @synchronized(self) {
@@ -369,7 +426,7 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
     }
 }
 
-- (void)addBlockedGroup:(TSGroupModel *)groupModel wasLocallyInitiated:(BOOL)wasLocallyInitiated
+- (void)addBlockedGroup:(TSGroupModel *)groupModel blockMode:(BlockMode)blockMode
 {
     NSData *groupId = groupModel.groupId;
     OWSAssertDebug(groupId.length > 0);
@@ -383,20 +440,42 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
             // Ignore redundant changes.
             return;
         }
+
         self.blockedGroupMap[groupId] = groupModel;
     }
 
+    // Open a sneaky transaction and quit the group if we're a member
+    if ([groupModel.groupMembers containsObject:TSAccountManager.localAddress]) {
+        DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
+            [TSGroupThread ensureGroupIdMappingForGroupId:groupId transaction:transaction];
+            TSGroupThread *groupThread = [TSGroupThread fetchWithGroupId:groupId transaction:transaction];
+            [GroupManager leaveGroupOrDeclineInviteAsyncWithoutUIWithGroupThread:groupThread
+                                                                     transaction:transaction
+                                                                         success:nil];
+        });
+    }
+
+    BOOL wasLocallyInitiated = [self wasLocallyInitiatedWithBlockMode:blockMode];
     [self handleUpdateWithSneakyTransactionAndSendSyncMessage:wasLocallyInitiated];
 }
 
 - (void)addBlockedGroup:(TSGroupModel *)groupModel
-    wasLocallyInitiated:(BOOL)wasLocallyInitiated
+              blockMode:(BlockMode)blockMode
             transaction:(SDSAnyWriteTransaction *)transaction
 {
-    NSData *groupId = groupModel.groupId;
+    OWSAssertDebug(groupModel);
+    [self addBlockedGroupId:groupModel.groupId blockMode:blockMode transaction:transaction];
+}
+
+- (void)addBlockedGroupId:(NSData *)groupId
+                blockMode:(BlockMode)blockMode
+              transaction:(SDSAnyWriteTransaction *)transaction
+{
     OWSAssertDebug(groupId.length > 0);
 
     OWSLogInfo(@"groupId: %@", groupId);
+
+    BOOL wasLocallyInitiated = [self wasLocallyInitiatedWithBlockMode:blockMode];
 
     @synchronized(self) {
         [self ensureLazyInitialization];
@@ -405,7 +484,27 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
             // Ignore redundant changes.
             return;
         }
-        self.blockedGroupMap[groupId] = groupModel;
+
+        [TSGroupThread ensureGroupIdMappingForGroupId:groupId transaction:transaction];
+        TSGroupThread *_Nullable groupThread = [TSGroupThread fetchWithGroupId:groupId transaction:transaction];
+
+        // Quit the group if we're a member
+        BOOL isInGroup = groupThread.isLocalUserMemberOfAnyKind;
+        if (blockMode == BlockMode_LocalShouldLeaveGroups && isInGroup) {
+            [GroupManager leaveGroupOrDeclineInviteAsyncWithoutUIWithGroupThread:groupThread
+                                                                     transaction:transaction
+                                                                         success:nil];
+        }
+
+        if (groupThread != nil) {
+            self.blockedGroupMap[groupId] = groupThread.groupModel;
+        } else {
+            OWSFailDebug(@"missing group thread");
+        }
+
+        if (wasLocallyInitiated) {
+            [self.storageServiceManager recordPendingUpdatesWithGroupModel:groupThread.groupModel];
+        }
     }
 
     [self handleUpdateAndSendSyncMessage:wasLocallyInitiated transaction:transaction];
@@ -425,7 +524,13 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
             return;
         }
 
+        TSGroupModel *_Nullable groupModel = self.blockedGroupMap[groupId];
+
         [self.blockedGroupMap removeObjectForKey:groupId];
+
+        if (wasLocallyInitiated && groupModel != nil) {
+            [self.storageServiceManager recordPendingUpdatesWithGroupModel:groupModel];
+        }
     }
 
     [self handleUpdateWithSneakyTransactionAndSendSyncMessage:wasLocallyInitiated];
@@ -456,30 +561,58 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
 
 #pragma mark - Thread Blocking
 
-- (void)addBlockedThread:(TSThread *)thread wasLocallyInitiated:(BOOL)wasLocallyInitiated
+- (void)addBlockedThread:(TSThread *)thread
+               blockMode:(BlockMode)blockMode
+             transaction:(SDSAnyWriteTransaction *)transaction
 {
     if (thread.isGroupThread) {
         OWSAssertDebug([thread isKindOfClass:[TSGroupThread class]]);
         TSGroupThread *groupThread = (TSGroupThread *)thread;
-        [self addBlockedGroup:groupThread.groupModel wasLocallyInitiated:wasLocallyInitiated];
+        [self addBlockedGroup:groupThread.groupModel blockMode:blockMode transaction:transaction];
     } else {
         OWSAssertDebug([thread isKindOfClass:[TSContactThread class]]);
         TSContactThread *contactThread = (TSContactThread *)thread;
-        [self addBlockedAddress:contactThread.contactAddress wasLocallyInitiated:wasLocallyInitiated];
+        [self addBlockedAddress:contactThread.contactAddress blockMode:blockMode transaction:transaction];
+    }
+}
+
+- (void)addBlockedThread:(TSThread *)thread blockMode:(BlockMode)blockMode
+{
+    if ([self isThreadBlocked:thread]) {
+        return;
+    }
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
+        [self addBlockedThread:thread blockMode:blockMode transaction:transaction];
+    });
+}
+
+- (void)removeBlockedThread:(TSThread *)thread
+        wasLocallyInitiated:(BOOL)wasLocallyInitiated
+                transaction:(SDSAnyWriteTransaction *)transaction
+{
+    if (thread.isGroupThread) {
+        OWSAssertDebug([thread isKindOfClass:[TSGroupThread class]]);
+        TSGroupThread *groupThread = (TSGroupThread *)thread;
+        [self removeBlockedGroupId:groupThread.groupModel.groupId
+               wasLocallyInitiated:wasLocallyInitiated
+                       transaction:transaction];
+    } else {
+        OWSAssertDebug([thread isKindOfClass:[TSContactThread class]]);
+        TSContactThread *contactThread = (TSContactThread *)thread;
+        [self removeBlockedAddress:contactThread.contactAddress
+               wasLocallyInitiated:wasLocallyInitiated
+                       transaction:transaction];
     }
 }
 
 - (void)removeBlockedThread:(TSThread *)thread wasLocallyInitiated:(BOOL)wasLocallyInitiated
 {
-    if (thread.isGroupThread) {
-        OWSAssertDebug([thread isKindOfClass:[TSGroupThread class]]);
-        TSGroupThread *groupThread = (TSGroupThread *)thread;
-        [self removeBlockedGroupId:groupThread.groupModel.groupId wasLocallyInitiated:wasLocallyInitiated];
-    } else {
-        OWSAssertDebug([thread isKindOfClass:[TSContactThread class]]);
-        TSContactThread *contactThread = (TSContactThread *)thread;
-        [self removeBlockedAddress:contactThread.contactAddress wasLocallyInitiated:wasLocallyInitiated];
+    if (![self isThreadBlocked:thread]) {
+        return;
     }
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
+        [self removeBlockedThread:thread wasLocallyInitiated:wasLocallyInitiated transaction:transaction];
+    });
 }
 
 #pragma mark - Updates
@@ -488,9 +621,9 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
 
 - (void)handleUpdateWithSneakyTransactionAndSendSyncMessage:(BOOL)sendSyncMessage
 {
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         [self handleUpdateAndSendSyncMessage:sendSyncMessage transaction:transaction];
-    }];
+    });
 }
 
 - (void)handleUpdateAndSendSyncMessage:(BOOL)sendSyncMessage transaction:(SDSAnyWriteTransaction *)transaction
@@ -498,7 +631,7 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
     NSArray<NSString *> *blockedPhoneNumbers = [self blockedPhoneNumbers];
     NSArray<NSString *> *blockedUUIDs = [self blockedUUIDs];
 
-    NSDictionary *blockedGroupMap;
+    NSDictionary<NSData *, TSGroupModel *> *blockedGroupMap;
     @synchronized(self) {
         blockedGroupMap = [self.blockedGroupMap copy];
     }
@@ -565,12 +698,13 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
     __block NSArray<NSString *> *blockedUUIDs;
     __block NSDictionary<NSData *, TSGroupModel *> *storedBlockedGroupMap;
     [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        blockedPhoneNumbers = [OWSBlockingManager.keyValueStore getObject:kOWSBlockingManager_BlockedPhoneNumbersKey
-                                                              transaction:transaction];
-        blockedUUIDs =
-            [OWSBlockingManager.keyValueStore getObject:kOWSBlockingManager_BlockedUUIDsKey transaction:transaction];
-        storedBlockedGroupMap =
-            [OWSBlockingManager.keyValueStore getObject:kOWSBlockingManager_BlockedGroupMapKey transaction:transaction];
+        blockedPhoneNumbers =
+            [OWSBlockingManager.keyValueStore getObjectForKey:kOWSBlockingManager_BlockedPhoneNumbersKey
+                                                  transaction:transaction];
+        blockedUUIDs = [OWSBlockingManager.keyValueStore getObjectForKey:kOWSBlockingManager_BlockedUUIDsKey
+                                                             transaction:transaction];
+        storedBlockedGroupMap = [OWSBlockingManager.keyValueStore getObjectForKey:kOWSBlockingManager_BlockedGroupMapKey
+                                                                      transaction:transaction];
     }];
     _blockedPhoneNumberSet = [[NSMutableSet alloc] initWithArray:(blockedPhoneNumbers ?: @[])];
     _blockedUUIDSet = [[NSMutableSet alloc] initWithArray:(blockedUUIDs ?: @[])];
@@ -608,12 +742,13 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
     __block NSArray<NSData *> *syncedBlockedGroupIds;
     [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
         syncedBlockedPhoneNumbers =
-            [OWSBlockingManager.keyValueStore getObject:kOWSBlockingManager_SyncedBlockedPhoneNumbersKey
-                                            transaction:transaction];
-        syncedBlockedUUIDs = [OWSBlockingManager.keyValueStore getObject:kOWSBlockingManager_SyncedBlockedUUIDsKey
-                                                             transaction:transaction];
-        syncedBlockedGroupIds = [OWSBlockingManager.keyValueStore getObject:kOWSBlockingManager_SyncedBlockedGroupIdsKey
-                                                                transaction:transaction];
+            [OWSBlockingManager.keyValueStore getObjectForKey:kOWSBlockingManager_SyncedBlockedPhoneNumbersKey
+                                                  transaction:transaction];
+        syncedBlockedUUIDs = [OWSBlockingManager.keyValueStore getObjectForKey:kOWSBlockingManager_SyncedBlockedUUIDsKey
+                                                                   transaction:transaction];
+        syncedBlockedGroupIds =
+            [OWSBlockingManager.keyValueStore getObjectForKey:kOWSBlockingManager_SyncedBlockedGroupIdsKey
+                                                  transaction:transaction];
     }];
 
     NSSet<NSString *> *syncedBlockedPhoneNumberSet = [[NSSet alloc] initWithArray:(syncedBlockedPhoneNumbers ?: @[])];
@@ -645,9 +780,9 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
     OWSAssertDebug(blockedGroupIds);
 
     __block TSThread *_Nullable thread;
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         thread = [TSAccountManager getOrCreateLocalThreadWithTransaction:transaction];
-    }];
+    });
     if (thread == nil) {
         OWSFailDebug(@"Missing thread.");
         return;
@@ -680,7 +815,7 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
     OWSAssertDebug(blockedUUIDs);
     OWSAssertDebug(blockedGroupIds);
 
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         [OWSBlockingManager.keyValueStore setObject:blockedPhoneNumbers
                                                 key:kOWSBlockingManager_SyncedBlockedPhoneNumbersKey
                                         transaction:transaction];
@@ -690,7 +825,7 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
         [OWSBlockingManager.keyValueStore setObject:blockedGroupIds
                                                 key:kOWSBlockingManager_SyncedBlockedGroupIdsKey
                                         transaction:transaction];
-    }];
+    });
 }
 
 #pragma mark - Notifications
@@ -699,7 +834,7 @@ NSString *const kOWSBlockingManager_SyncedBlockedGroupIdsKey = @"kOWSBlockingMan
 {
     OWSAssertIsOnMainThread();
 
-    [AppReadiness runNowOrWhenAppDidBecomeReady:^{
+    [AppReadiness runNowOrWhenAppDidBecomeReadyPolite:^{
         @synchronized(self)
         {
             [self syncBlockListIfNecessary];

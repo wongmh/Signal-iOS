@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -7,6 +7,8 @@ import PromiseKit
 
 @objc(SSKCreatePreKeysOperation)
 public class CreatePreKeysOperation: OWSOperation {
+
+    // MARK: - Dependencies
 
     private var accountServiceClient: AccountServiceClient {
         return SSKEnvironment.shared.accountServiceClient
@@ -24,6 +26,20 @@ public class CreatePreKeysOperation: OWSOperation {
         return OWSIdentityManager.shared()
     }
 
+    private var databaseStorage: SDSDatabaseStorage {
+        return SDSDatabaseStorage.shared
+    }
+
+    private var messageProcessing: MessageProcessing {
+        return SSKEnvironment.shared.messageProcessing
+    }
+
+    private var tsAccountManager: TSAccountManager {
+        return .shared()
+    }
+
+    // MARK: -
+
     public override func run() {
         Logger.debug("")
 
@@ -34,20 +50,35 @@ public class CreatePreKeysOperation: OWSOperation {
         let signedPreKeyRecord: SignedPreKeyRecord = self.signedPreKeyStore.generateRandomSignedRecord()
         let preKeyRecords: [PreKeyRecord] = self.preKeyStore.generatePreKeyRecords()
 
-        self.signedPreKeyStore.storeSignedPreKey(signedPreKeyRecord.id, signedPreKeyRecord: signedPreKeyRecord)
+        self.databaseStorage.write { transaction in
+            self.signedPreKeyStore.storeSignedPreKey(signedPreKeyRecord.id,
+                                                     signedPreKeyRecord: signedPreKeyRecord,
+                                                     transaction: transaction)
+        }
         self.preKeyStore.storePreKeyRecords(preKeyRecords)
 
-        firstly {
-            self.accountServiceClient.setPreKeys(identityKey: identityKey, signedPreKeyRecord: signedPreKeyRecord, preKeyRecords: preKeyRecords)
+        firstly(on: .global()) { () -> Promise<Void> in
+            guard self.tsAccountManager.isRegisteredAndReady else {
+                return Promise.value(())
+            }
+            return self.messageProcessing.flushMessageFetchingAndDecryptionPromise()
+        }.then(on: .global()) { () -> Promise<Void> in
+            self.accountServiceClient.setPreKeys(identityKey: identityKey,
+                                                 signedPreKeyRecord: signedPreKeyRecord,
+                                                 preKeyRecords: preKeyRecords)
         }.done {
             signedPreKeyRecord.markAsAcceptedByService()
-            self.signedPreKeyStore.storeSignedPreKey(signedPreKeyRecord.id, signedPreKeyRecord: signedPreKeyRecord)
+            self.databaseStorage.write { transaction in
+                self.signedPreKeyStore.storeSignedPreKey(signedPreKeyRecord.id,
+                                                         signedPreKeyRecord: signedPreKeyRecord,
+                                                         transaction: transaction)
+            }
             self.signedPreKeyStore.setCurrentSignedPrekeyId(signedPreKeyRecord.id)
 
             Logger.debug("done")
             self.reportSuccess()
         }.catch { error in
             self.reportError(withUndefinedRetry: error)
-        }.retainUntilComplete()
+        }
     }
 }

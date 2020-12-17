@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -27,10 +27,18 @@ public struct ExperienceUpgradeRecord: SDSRecord {
     public let recordType: SDSRecordType
     public let uniqueId: String
 
+    // Properties
+    public let firstViewedTimestamp: Double
+    public let lastSnoozedTimestamp: Double
+    public let isComplete: Bool
+
     public enum CodingKeys: String, CodingKey, ColumnExpression, CaseIterable {
         case id
         case recordType
         case uniqueId
+        case firstViewedTimestamp
+        case lastSnoozedTimestamp
+        case isComplete
     }
 
     public static func columnName(_ column: ExperienceUpgradeRecord.CodingKeys, fullyQualified: Bool = false) -> String {
@@ -57,6 +65,9 @@ public extension ExperienceUpgradeRecord {
         id = row[0]
         recordType = row[1]
         uniqueId = row[2]
+        firstViewedTimestamp = row[3]
+        lastSnoozedTimestamp = row[4]
+        isComplete = row[5]
     }
 }
 
@@ -88,9 +99,15 @@ extension ExperienceUpgrade {
         case .experienceUpgrade:
 
             let uniqueId: String = record.uniqueId
+            let firstViewedTimestamp: Double = record.firstViewedTimestamp
+            let isComplete: Bool = record.isComplete
+            let lastSnoozedTimestamp: Double = record.lastSnoozedTimestamp
 
             return ExperienceUpgrade(grdbId: recordId,
-                                     uniqueId: uniqueId)
+                                     uniqueId: uniqueId,
+                                     firstViewedTimestamp: firstViewedTimestamp,
+                                     isComplete: isComplete,
+                                     lastSnoozedTimestamp: lastSnoozedTimestamp)
 
         default:
             owsFailDebug("Unexpected record type: \(record.recordType)")
@@ -125,15 +142,49 @@ extension ExperienceUpgrade: SDSModel {
     }
 }
 
+// MARK: - DeepCopyable
+
+extension ExperienceUpgrade: DeepCopyable {
+
+    public func deepCopy() throws -> AnyObject {
+        // Any subclass can be cast to it's superclass,
+        // so the order of this switch statement matters.
+        // We need to do a "depth first" search by type.
+        guard let id = self.grdbId?.int64Value else {
+            throw OWSAssertionError("Model missing grdbId.")
+        }
+
+        do {
+            let modelToCopy = self
+            assert(type(of: modelToCopy) == ExperienceUpgrade.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let firstViewedTimestamp: Double = modelToCopy.firstViewedTimestamp
+            let isComplete: Bool = modelToCopy.isComplete
+            let lastSnoozedTimestamp: Double = modelToCopy.lastSnoozedTimestamp
+
+            return ExperienceUpgrade(grdbId: id,
+                                     uniqueId: uniqueId,
+                                     firstViewedTimestamp: firstViewedTimestamp,
+                                     isComplete: isComplete,
+                                     lastSnoozedTimestamp: lastSnoozedTimestamp)
+        }
+
+    }
+}
+
 // MARK: - Table Metadata
 
 extension ExperienceUpgradeSerializer {
 
     // This defines all of the columns used in the table
     // where this model (and any subclasses) are persisted.
-    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey, columnIndex: 0)
-    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64, columnIndex: 1)
-    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true, columnIndex: 2)
+    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey)
+    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64)
+    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true)
+    // Properties
+    static let firstViewedTimestampColumn = SDSColumnMetadata(columnName: "firstViewedTimestamp", columnType: .double)
+    static let lastSnoozedTimestampColumn = SDSColumnMetadata(columnName: "lastSnoozedTimestamp", columnType: .double)
+    static let isCompleteColumn = SDSColumnMetadata(columnName: "isComplete", columnType: .int)
 
     // TODO: We should decide on a naming convention for
     //       tables that store models.
@@ -142,7 +193,10 @@ extension ExperienceUpgradeSerializer {
                                                columns: [
         idColumn,
         recordTypeColumn,
-        uniqueIdColumn
+        uniqueIdColumn,
+        firstViewedTimestampColumn,
+        lastSnoozedTimestampColumn,
+        isCompleteColumn
         ])
 }
 
@@ -252,9 +306,11 @@ public extension ExperienceUpgrade {
 
 @objc
 public class ExperienceUpgradeCursor: NSObject {
+    private let transaction: GRDBReadTransaction
     private let cursor: RecordCursor<ExperienceUpgradeRecord>?
 
-    init(cursor: RecordCursor<ExperienceUpgradeRecord>?) {
+    init(transaction: GRDBReadTransaction, cursor: RecordCursor<ExperienceUpgradeRecord>?) {
+        self.transaction = transaction
         self.cursor = cursor
     }
 
@@ -296,10 +352,10 @@ public extension ExperienceUpgrade {
         let database = transaction.database
         do {
             let cursor = try ExperienceUpgradeRecord.fetchCursor(database)
-            return ExperienceUpgradeCursor(cursor: cursor)
+            return ExperienceUpgradeCursor(transaction: transaction, cursor: cursor)
         } catch {
             owsFailDebug("Read failed: \(error)")
-            return ExperienceUpgradeCursor(cursor: nil)
+            return ExperienceUpgradeCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -505,11 +561,11 @@ public extension ExperienceUpgrade {
         do {
             let sqlRequest = SQLRequest<Void>(sql: sql, arguments: arguments, cached: true)
             let cursor = try ExperienceUpgradeRecord.fetchCursor(transaction.database, sqlRequest)
-            return ExperienceUpgradeCursor(cursor: cursor)
+            return ExperienceUpgradeCursor(transaction: transaction, cursor: cursor)
         } catch {
             Logger.error("sql: \(sql)")
             owsFailDebug("Read failed: \(error)")
-            return ExperienceUpgradeCursor(cursor: nil)
+            return ExperienceUpgradeCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -551,6 +607,28 @@ class ExperienceUpgradeSerializer: SDSSerializer {
         let recordType: SDSRecordType = .experienceUpgrade
         let uniqueId: String = model.uniqueId
 
-        return ExperienceUpgradeRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId)
+        // Properties
+        let firstViewedTimestamp: Double = model.firstViewedTimestamp
+        let lastSnoozedTimestamp: Double = model.lastSnoozedTimestamp
+        let isComplete: Bool = model.isComplete
+
+        return ExperienceUpgradeRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, firstViewedTimestamp: firstViewedTimestamp, lastSnoozedTimestamp: lastSnoozedTimestamp, isComplete: isComplete)
     }
 }
+
+// MARK: - Deep Copy
+
+#if TESTABLE_BUILD
+@objc
+public extension ExperienceUpgrade {
+    // We're not using this method at the moment,
+    // but we might use it for validation of
+    // other deep copy methods.
+    func deepCopyUsingRecord() throws -> ExperienceUpgrade {
+        guard let record = try asRecord() as? ExperienceUpgradeRecord else {
+            throw OWSAssertionError("Could not convert to record.")
+        }
+        return try ExperienceUpgrade.fromRecord(record)
+    }
+}
+#endif

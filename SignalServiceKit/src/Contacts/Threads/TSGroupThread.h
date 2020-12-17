@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSGroupModel.h"
@@ -7,14 +7,36 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class MessageBodyRanges;
 @class SDSAnyReadTransaction;
 @class SDSAnyWriteTransaction;
 @class TSAttachmentStream;
+@class TSGroupModelV2;
 
 extern NSString *const TSGroupThreadAvatarChangedNotification;
 extern NSString *const TSGroupThread_NotificationKey_UniqueId;
 
 @interface TSGroupThread : TSThread
+
+- (instancetype)initWithGrdbId:(int64_t)grdbId
+                      uniqueId:(NSString *)uniqueId
+         conversationColorName:(ConversationColorName)conversationColorName
+                  creationDate:(nullable NSDate *)creationDate
+                    isArchived:(BOOL)isArchived
+          lastInteractionRowId:(int64_t)lastInteractionRowId
+                  messageDraft:(nullable NSString *)messageDraft
+                mutedUntilDate:(nullable NSDate *)mutedUntilDate
+         shouldThreadBeVisible:(BOOL)shouldThreadBeVisible NS_UNAVAILABLE;
+
++ (instancetype)new NS_UNAVAILABLE;
+- (instancetype)init NS_UNAVAILABLE;
+- (instancetype)initWithUniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
+
+- (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
+
+// This method should only be called by GroupManager.
+- (instancetype)initWithGroupModelPrivate:(TSGroupModel *)groupModel
+                              transaction:(SDSAnyReadTransaction *)transaction NS_DESIGNATED_INITIALIZER;
 
 // --- CODE GENERATION MARKER
 
@@ -27,50 +49,41 @@ extern NSString *const TSGroupThread_NotificationKey_UniqueId;
            conversationColorName:(ConversationColorName)conversationColorName
                     creationDate:(nullable NSDate *)creationDate
                       isArchived:(BOOL)isArchived
+                  isMarkedUnread:(BOOL)isMarkedUnread
             lastInteractionRowId:(int64_t)lastInteractionRowId
+               lastVisibleSortId:(uint64_t)lastVisibleSortId
+lastVisibleSortIdOnScreenPercentage:(double)lastVisibleSortIdOnScreenPercentage
+         mentionNotificationMode:(TSThreadMentionNotificationMode)mentionNotificationMode
                     messageDraft:(nullable NSString *)messageDraft
+          messageDraftBodyRanges:(nullable MessageBodyRanges *)messageDraftBodyRanges
                   mutedUntilDate:(nullable NSDate *)mutedUntilDate
            shouldThreadBeVisible:(BOOL)shouldThreadBeVisible
                       groupModel:(TSGroupModel *)groupModel
-NS_SWIFT_NAME(init(grdbId:uniqueId:conversationColorName:creationDate:isArchived:lastInteractionRowId:messageDraft:mutedUntilDate:shouldThreadBeVisible:groupModel:));
+NS_DESIGNATED_INITIALIZER NS_SWIFT_NAME(init(grdbId:uniqueId:conversationColorName:creationDate:isArchived:isMarkedUnread:lastInteractionRowId:lastVisibleSortId:lastVisibleSortIdOnScreenPercentage:mentionNotificationMode:messageDraft:messageDraftBodyRanges:mutedUntilDate:shouldThreadBeVisible:groupModel:));
 
 // clang-format on
 
 // --- CODE GENERATION MARKER
 
-@property (nonatomic, strong) TSGroupModel *groupModel;
+@property (nonatomic, readonly) TSGroupModel *groupModel;
 
-// TODO: We might want to make this initializer private once we
-//       convert getOrCreateThreadWithContactId to take "any" transaction.
-- (instancetype)initWithGroupModel:(TSGroupModel *)groupModel;
-
-+ (nullable instancetype)getThreadWithGroupId:(NSData *)groupId transaction:(SDSAnyReadTransaction *)transaction;
-+ (instancetype)getOrCreateThreadWithGroupModel:(TSGroupModel *)groupModel
-                                    transaction:(SDSAnyWriteTransaction *)transaction;
-
-+ (instancetype)getOrCreateThreadWithGroupId:(NSData *)groupId transaction:(SDSAnyWriteTransaction *)transaction;
-
-+ (NSString *)threadIdFromGroupId:(NSData *)groupId;
++ (nullable instancetype)fetchWithGroupId:(NSData *)groupId
+                              transaction:(SDSAnyReadTransaction *)transaction
+    NS_SWIFT_NAME(fetch(groupId:transaction:));
 
 @property (nonatomic, readonly) NSString *groupNameOrDefault;
-@property (class, nonatomic, readonly) NSString *defaultGroupName;
-
-- (BOOL)isLocalUserInGroup;
+@property (nonatomic, readonly, class) NSString *defaultGroupName;
 
 // all group threads containing recipient as a member
 + (NSArray<TSGroupThread *> *)groupThreadsWithAddress:(SignalServiceAddress *)address
                                           transaction:(SDSAnyReadTransaction *)transaction;
 
-- (void)leaveGroupWithSneakyTransaction;
-- (void)leaveGroupWithTransaction:(SDSAnyWriteTransaction *)transaction;
+#pragma mark - Update With...
 
-#pragma mark - Avatar
+// This method should only be called by GroupManager.
+- (void)updateWithGroupModel:(TSGroupModel *)groupModel transaction:(SDSAnyWriteTransaction *)transaction;
 
-- (void)updateAvatarWithAttachmentStream:(TSAttachmentStream *)attachmentStream;
-- (void)updateAvatarWithAttachmentStream:(TSAttachmentStream *)attachmentStream
-                             transaction:(SDSAnyWriteTransaction *)transaction;
-
-- (void)fireAvatarChangedNotification;
+#pragma mark -
 
 + (ConversationColorName)defaultConversationColorNameForGroupId:(NSData *)groupId;
 

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -155,6 +155,20 @@ public class SDSKeyValueStore: NSObject {
         write(NSNumber(booleanLiteral: value), forKey: key, transaction: transaction)
     }
 
+    @objc
+    public func setBoolIfChanged(_ value: Bool,
+                                 defaultValue: Bool,
+                                 key: String,
+                                 transaction: SDSAnyWriteTransaction) {
+        let didChange = value != getBool(key,
+                                         defaultValue: defaultValue,
+                                         transaction: transaction)
+        guard didChange else {
+            return
+        }
+        setBool(value, key: key, transaction: transaction)
+    }
+
     // MARK: - UInt
 
     public func getUInt(_ key: String, transaction: SDSAnyReadTransaction) -> UInt? {
@@ -274,7 +288,7 @@ public class SDSKeyValueStore: NSObject {
     // MARK: - Object
 
     @objc
-    public func getObject(_ key: String, transaction: SDSAnyReadTransaction) -> Any? {
+    public func getObject(forKey key: String, transaction: SDSAnyReadTransaction) -> Any? {
         return read(key, transaction: transaction)
     }
 
@@ -370,6 +384,84 @@ public class SDSKeyValueStore: NSObject {
     }
 
     @objc
+    public func allDataValues(transaction: SDSAnyReadTransaction) -> [Data] {
+        return allKeys(transaction: transaction).compactMap { key in
+            return self.getData(key, transaction: transaction)
+        }
+    }
+
+    private struct PairRecord: Codable, FetchableRecord, PersistableRecord {
+        public let key: String?
+        public let value: Data?
+    }
+
+    private func allPairs(transaction: SDSAnyReadTransaction) -> [PairRecord] {
+
+        switch transaction.readTransaction {
+        case .yapRead:
+            owsFail("Invalid transaction")
+        case .grdbRead(let grdbTransaction):
+
+            let sql = """
+            SELECT
+                \(SDSKeyValueStore.keyColumn.columnName),
+                \(SDSKeyValueStore.valueColumn.columnName)
+            FROM \(SDSKeyValueStore.table.tableName)
+            WHERE \(SDSKeyValueStore.collectionColumn.columnName) == ?
+            """
+
+            do {
+                return try PairRecord.fetchAll(grdbTransaction.database,
+                                               sql: sql,
+                                               arguments: [collection])
+            } catch {
+                owsFailDebug("Error: \(error)")
+                return []
+            }
+        }
+    }
+
+    @objc
+    public func allBoolValuesMap(transaction: SDSAnyReadTransaction) -> [String: Bool] {
+        let pairs = allPairs(transaction: transaction)
+        var result = [String: Bool]()
+        for pair in pairs {
+            guard let key = pair.key else {
+                owsFailDebug("missing key.")
+                continue
+            }
+            guard let value = pair.value else {
+                owsFailDebug("missing value.")
+                continue
+            }
+            guard let rawObject = parseArchivedValue(value) else {
+                owsFailDebug("Could not parse value.")
+                continue
+            }
+            guard let number: NSNumber = parseValueAs(key: key,
+                                                      rawObject: rawObject) else {
+                                                        owsFailDebug("Invalid value.")
+                                                        continue
+            }
+            result[key] = number.boolValue
+        }
+        return result
+    }
+
+    @objc
+    public func anyDataValue(transaction: SDSAnyReadTransaction) -> Data? {
+        let keys = allKeys(transaction: transaction).shuffled()
+        guard let firstKey = keys.first else {
+            return nil
+        }
+        guard let data = self.getData(firstKey, transaction: transaction) else {
+            owsFailDebug("Missing data for key: \(firstKey)")
+            return nil
+        }
+        return data
+    }
+
+    @objc
     public func allKeys(transaction: SDSAnyReadTransaction) -> [String] {
         switch transaction.readTransaction {
         case .yapRead(let ydbTransaction):
@@ -394,7 +486,7 @@ public class SDSKeyValueStore: NSObject {
                 guard let numberOfKeys = try UInt.fetchOne(grdbRead.database,
                                                            sql: sql,
                                                            arguments: [collection]) else {
-                                                            throw OWSErrorMakeAssertionError("numberOfKeys was unexpectedly nil")
+                                                            throw OWSAssertionError("numberOfKeys was unexpectedly nil")
                 }
                 return numberOfKeys
             } catch {
@@ -408,17 +500,50 @@ public class SDSKeyValueStore: NSObject {
         return SDSKeyValueStoreObjC(sdsKeyValueStore: self)
     }
 
+    // MARK: -
+
+    public func setCodable<T: Encodable>(_ value: T, key: String, transaction: SDSAnyWriteTransaction) throws {
+        do {
+            let data = try JSONEncoder().encode(value)
+            setData(data, key: key, transaction: transaction)
+        } catch {
+            owsFailDebug("Failed to encode: \(error).")
+            throw error
+        }
+    }
+
+    public func getCodableValue<T: Decodable>(forKey key: String, transaction: SDSAnyReadTransaction) throws -> T? {
+        guard let data = getData(key, transaction: transaction) else {
+            return nil
+        }
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            owsFailDebug("Failed to decode: \(error).")
+            throw error
+        }
+    }
+
+    public func allCodableValues<T: Decodable>(transaction: SDSAnyReadTransaction) throws -> [T] {
+        var result = [T]()
+        for data in allDataValues(transaction: transaction) {
+            do {
+                result.append(try JSONDecoder().decode(T.self, from: data))
+            } catch {
+                owsFailDebug("Failed to decode: \(error).")
+                throw error
+            }
+        }
+        return result
+    }
+
     // MARK: - Internal Methods
 
     private func read<T>(_ key: String, transaction: SDSAnyReadTransaction) -> T? {
         guard let rawObject = readRawObject(key, transaction: transaction) else {
             return nil
         }
-        guard let object = rawObject as? T else {
-            owsFailDebug("Value for key: \(key) has unexpected type: \(type(of: rawObject)).")
-            return nil
-        }
-        return object
+        return parseValueAs(key: key, rawObject: rawObject)
     }
 
     private func readRawObject(_ key: String, transaction: SDSAnyReadTransaction) -> Any? {
@@ -431,18 +556,32 @@ public class SDSKeyValueStore: NSObject {
             guard let encoded = readData(key, transaction: transaction) else {
                 return nil
             }
+            return parseArchivedValue(encoded)
+        }
+    }
 
-            do {
-                guard let rawObject = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(encoded) else {
-                    owsFailDebug("Could not decode value.")
-                    return nil
-                }
-                return rawObject
-            } catch {
-                owsFailDebug("Decode failed.")
+    private func parseArchivedValue(_ encoded: Data) -> Any? {
+        do {
+            guard let rawObject = try NSKeyedUnarchiver.unarchiveTopLevelObjectWithData(encoded) else {
+                owsFailDebug("Could not decode value.")
                 return nil
             }
+            return rawObject
+        } catch {
+            owsFailDebug("Decode failed.")
+            return nil
         }
+    }
+
+    private func parseValueAs<T>(key: String, rawObject: Any?) -> T? {
+        guard let rawObject = rawObject else {
+            return nil
+        }
+        guard let object = rawObject as? T else {
+            owsFailDebug("Value for key: \(key) has unexpected type: \(type(of: rawObject)).")
+            return nil
+        }
+        return object
     }
 
     private func readData(_ key: String, transaction: SDSAnyReadTransaction) -> Data? {
@@ -453,11 +592,7 @@ public class SDSKeyValueStore: NSObject {
             guard let rawObject = ydbTransaction.object(forKey: key, inCollection: collection) else {
                 return nil
             }
-            guard let object = rawObject as? Data else {
-                owsFailDebug("Value has unexpected type: \(type(of: rawObject)).")
-                return nil
-            }
-            return object
+            return parseValueAs(key: key, rawObject: rawObject)
         case .grdbRead(let grdbTransaction):
             return SDSKeyValueStore.readData(transaction: grdbTransaction, key: key, collection: collection)
         }

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -43,22 +43,27 @@ public extension String {
 
         guard size > 0 else { return nil }
 
-        var value = Array<CChar>(repeating: 0, count: size)
+        var value = [CChar](repeating: 0, count: size)
         sysctlbyname(key, &value, &size, nil, 0)
 
         self.init(cString: value)
     }
 }
 
+// MARK: -
+
+@objc
 public extension NSString {
-    @objc
     var ensureArabicNumerals: String {
         return (self as String).ensureArabicNumerals
     }
 
-    @objc
     class func stringFromSysctlKey(_ key: String) -> String? {
         return String(sysctlKey: key)
+    }
+
+    var asAttributedString: NSAttributedString {
+        return NSAttributedString(string: self as String)
     }
 }
 
@@ -84,6 +89,166 @@ public extension NSAttributedString {
     static func + (lhs: NSAttributedString, rhs: String) -> NSAttributedString {
         return lhs.stringByAppendingString(rhs)
     }
+
+    @objc
+    func ows_stripped() -> NSAttributedString {
+        guard length > 0 else { return self }
+        guard !string.ows_stripped().isEmpty else { return NSAttributedString() }
+
+        let mutableString = NSMutableAttributedString(attributedString: self)
+        mutableString.ows_strip()
+        return NSAttributedString(attributedString: mutableString)
+    }
+}
+
+// MARK: -
+
+@objc
+public enum ImageAttachmentHeightReference: Int {
+    case pointSize
+    case lineHeight
+
+    func height(for font: UIFont) -> CGFloat {
+        switch self {
+        case .pointSize: return ceil(font.pointSize)
+        case .lineHeight: return ceil(font.lineHeight)
+        }
+    }
+}
+
+public extension NSMutableAttributedString {
+    @objc
+    func append(_ string: String, attributes: [NSAttributedString.Key: Any] = [:]) {
+        append(NSAttributedString(string: string, attributes: attributes))
+    }
+
+    @objc(appendTemplatedImageNamed:font:)
+    func appendTemplatedImage(named imageName: String, font: UIFont) {
+        appendTemplatedImage(named: imageName, font: font, attributes: nil)
+    }
+
+    @objc(appendTemplatedImageNamed:font:heightReference:)
+    func appendTemplatedImage(named imageName: String, font: UIFont, heightReference: ImageAttachmentHeightReference) {
+        appendTemplatedImage(named: imageName, font: font, attributes: nil, heightReference: heightReference)
+    }
+
+    @objc(appendTemplatedImageNamed:font:attributes:)
+    func appendTemplatedImage(named imageName: String, font: UIFont, attributes: [NSAttributedString.Key: Any]?) {
+        appendTemplatedImage(named: imageName, font: font, attributes: attributes, heightReference: .pointSize)
+    }
+
+    @objc(appendTemplatedImageNamed:font:attributes:heightReference:)
+    func appendTemplatedImage(named imageName: String, font: UIFont, attributes: [NSAttributedString.Key: Any]?, heightReference: ImageAttachmentHeightReference) {
+        guard let image = UIImage(named: imageName) else {
+            return owsFailDebug("missing image named \(imageName)")
+        }
+        appendImage(image.withRenderingMode(.alwaysTemplate), font: font, attributes: attributes, heightReference: heightReference)
+    }
+
+    @objc(appendImageNamed:font:)
+    func appendImage(named imageName: String, font: UIFont) {
+        appendImage(named: imageName, font: font, attributes: nil)
+    }
+
+    @objc(appendImageNamed:font:heightReference:)
+    func appendImage(named imageName: String, font: UIFont, heightReference: ImageAttachmentHeightReference) {
+        appendImage(named: imageName, font: font, attributes: nil, heightReference: heightReference)
+    }
+
+    @objc(appendImageNamed:font:attributes:)
+    func appendImage(named imageName: String, font: UIFont, attributes: [NSAttributedString.Key: Any]?) {
+        appendImage(named: imageName, font: font, attributes: attributes, heightReference: .pointSize)
+    }
+
+    @objc(appendImageNamed:font:attributes:heightReference:)
+    func appendImage(named imageName: String, font: UIFont, attributes: [NSAttributedString.Key: Any]?, heightReference: ImageAttachmentHeightReference) {
+        guard let image = UIImage(named: imageName) else {
+            return owsFailDebug("missing image named \(imageName)")
+        }
+        appendImage(image, font: font, attributes: attributes, heightReference: heightReference)
+    }
+
+    @objc(appendImage:font:)
+    func appendImage(_ image: UIImage, font: UIFont) {
+        appendImage(image, font: font, attributes: nil)
+    }
+
+    @objc(appendImage:font:heightReference:)
+    func appendImage(_ image: UIImage, font: UIFont, heightReference: ImageAttachmentHeightReference) {
+        appendImage(image, font: font, attributes: nil, heightReference: heightReference)
+    }
+
+    @objc(appendImage:font:attributes:)
+    func appendImage(_ image: UIImage, font: UIFont, attributes: [NSAttributedString.Key: Any]?) {
+        appendImage(image, font: font, attributes: attributes, heightReference: .pointSize)
+    }
+
+    @objc(appendImage:font:attributes:heightReference:)
+    func appendImage(_ image: UIImage, font: UIFont, attributes: [NSAttributedString.Key: Any]?, heightReference: ImageAttachmentHeightReference) {
+        // Tinting of templated images doesn't work correctly at the start
+        // of a string on iOS 11+12, so we need to append a character before
+        // the icon. We use a thin space. Zero-width space doesn't work.
+        if #available(iOS 13, *) {
+            // Do nothing.
+        } else if image.renderingMode == .alwaysTemplate && length == 0 {
+            append("\u{200a}", attributes: attributes ?? [:])
+        }
+
+        let attachment = NSTextAttachment()
+        attachment.image = image
+
+        // Match the image's height to the font's height while preserving
+        // the image's aspect ratio, and vertically center.
+        let imageHeight = heightReference.height(for: font)
+        let imageWidth = (imageHeight / image.size.height) * image.size.width
+        attachment.bounds = CGRect(x: 0, y: (font.capHeight - imageHeight) / 2, width: imageWidth, height: imageHeight)
+
+        let attachmentString = NSAttributedString(attachment: attachment)
+
+        if let attributes = attributes {
+            let mutableString = NSMutableAttributedString(attributedString: attachmentString)
+            mutableString.addAttributes(attributes, range: NSRange(location: 0, length: mutableString.length))
+            append(mutableString)
+        } else {
+            append(attachmentString)
+        }
+    }
+
+    @objc
+    func ows_strip() {
+        guard length > 0 else { return }
+
+        let nsString = string as NSString
+        let strippedString = string.ows_stripped()
+
+        func replaceWithEmptyString() {
+            replaceCharacters(in: NSRange(location: 0, length: length), with: "")
+        }
+
+        guard !strippedString.isEmpty else { return replaceWithEmptyString() }
+
+        let remainingRange = nsString.range(of: strippedString)
+        guard remainingRange.location != NSNotFound else {
+            owsFailDebug("Unexpectedly missing substring after strip")
+            return replaceWithEmptyString()
+        }
+
+        let newEndOfString = remainingRange.location + remainingRange.length
+        if newEndOfString < mutableString.length {
+            mutableString.replaceCharacters(
+                in: NSRange(location: newEndOfString, length: mutableString.length - newEndOfString),
+                with: ""
+            )
+        }
+
+        let newStartOfString = remainingRange.location
+        if newStartOfString > 0 {
+            mutableString.replaceCharacters(
+                in: NSRange(location: 0, length: newStartOfString),
+                with: ""
+            )
+        }
+    }
 }
 
 // MARK: - Natural Text Alignment
@@ -92,11 +257,8 @@ public extension String {
     private var dominantLanguage: String? {
         if #available(iOS 12, *) {
             return NLLanguageRecognizer.dominantLanguage(for: self)?.rawValue
-        } else if #available(iOS 11, *) {
-            return NSLinguisticTagger.dominantLanguage(for: self)
         } else {
-            let nsstring = self as NSString
-            return nsstring.dominantLanguageWithLegacyLinguisticTagger
+            return NSLinguisticTagger.dominantLanguage(for: self)
         }
     }
 
@@ -314,7 +476,32 @@ extension UnicodeScalar {
 
 public extension String {
     var glyphCount: Int {
-        let richText = NSAttributedString(string: self)
+        let richText: NSAttributedString
+        if #available(iOS 11.2, *) {
+            richText = NSAttributedString(string: self)
+        } else {
+            // We must manually bridge the string to an NSString
+            // *before* creating it to workaround a bug on iOS
+            // versions prior to 11.2 where we would encounter
+            // a swift precondition while the bridging recurses
+            // backward through the UTF16. We can bypass this check
+            // by bridging ourselves before initializing the attributed
+            // string. Even though we have to do `as String` to initialize
+            // the NSAttributedString, Swift is smart enough to skip the
+            // bridging in that case as it moves to ObjC. It's possible
+            // doing this is unsafe and something in NSString may be
+            // accessing out-of-bounds memory that the precondition
+            // was catching.
+            //
+            // The precondition is only encountered when the string
+            // contains U+FE0F following U+FEOF ZWJ U+anything which
+            // has become a pattern in newer emoji sequences.
+            //
+            // The swift code in question:
+            // https://github.com/apple/swift/blob/b0eafeed9fcf5c37d8c4996a4e91dee7a00dc592/stdlib/public/core/StringUTF16View.swift#L161
+            let string = NSString(string: self)
+            richText = NSAttributedString(string: string as String)
+        }
         let line = CTLineCreateWithAttributedString(richText)
         return CTLineGetGlyphCount(line)
     }
@@ -352,5 +539,124 @@ public extension NSString {
 
     var containsOnlyEmoji: Bool {
         return (self as String).containsOnlyEmoji
+    }
+}
+
+// MARK: - encodeURIComponent
+
+public extension String {
+    var encodeURIComponent: String? {
+        return (self as NSString).encodeURIComponent
+    }
+}
+
+@objc
+public extension NSString {
+    var encodeURIComponent: String? {
+        // Match behavior of encodeURIComponent used by desktop.
+        //
+        // Removes any "/" in the base64. All other base64 chars are URL safe.
+        // Apple's built-in `stringByAddingPercentEncodingWithAllowedCharacters:[NSCharacterSet URL*]]`
+        // doesn't offer a flavor for encoding "/".
+        var characterSet = CharacterSet.alphanumerics
+        characterSet.insert(charactersIn: "-_.!~*'()")
+        return addingPercentEncoding(withAllowedCharacters: characterSet)
+    }
+}
+
+// MARK: -
+
+public extension String {
+    static func formatDurationLossless(durationSeconds: UInt32) -> String {
+        return NSString.formatDurationLossless(durationSeconds: durationSeconds)
+    }
+}
+
+// MARK: -
+
+@objc
+public extension NSString {
+    static func formatDurationLossless(durationSeconds: UInt32) -> String {
+        let secondsPerMinute: UInt32 = 60
+        let secondsPerHour: UInt32 = secondsPerMinute * 60
+        let secondsPerDay: UInt32 = secondsPerHour * 24
+        let secondsPerWeek: UInt32 = secondsPerDay * 7
+        let secondsPerYear: UInt32 = secondsPerDay * 365
+
+        struct Unit {
+            let secondsPerUnit: UInt32
+            let singleUnitFormat: String
+            let multipleUnitsFormat: String
+        }
+
+        // Listed in descending order.
+        let units: [Unit] = [
+            // Years
+            Unit(secondsPerUnit: secondsPerYear,
+                 singleUnitFormat: NSLocalizedString("TIME_AMOUNT_SINGLE_YEAR",
+                                                     comment: "{{1 year}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{1 year}}'. See other *_TIME_AMOUNT strings"),
+                 multipleUnitsFormat: NSLocalizedString("TIME_AMOUNT_YEARS_FORMAT",
+                                                        comment: "{{N years}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{5 years}}'. Embeds: {{ the number of years }}.  See other *_TIME_AMOUNT strings")),
+
+            // Weeks
+            Unit(secondsPerUnit: secondsPerWeek,
+                 singleUnitFormat: NSLocalizedString("TIME_AMOUNT_SINGLE_WEEK",
+                                                     comment:
+                    "{{1 week}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{1 week}}'. See other *_TIME_AMOUNT strings"),
+                 multipleUnitsFormat: NSLocalizedString("TIME_AMOUNT_WEEKS",
+                                                        comment: "{{number of weeks}}, embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{5 weeks}}'. See other *_TIME_AMOUNT strings")),
+            // Days
+            Unit(secondsPerUnit: secondsPerDay,
+                 singleUnitFormat: NSLocalizedString("TIME_AMOUNT_SINGLE_DAY",
+                                                     comment:
+                    "{{1 day}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{1 day}}'. See other *_TIME_AMOUNT strings"),
+                 multipleUnitsFormat: NSLocalizedString("TIME_AMOUNT_DAYS",
+                                                        comment: "{{number of days}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{5 days}}'. See other *_TIME_AMOUNT strings")),
+            // Hours
+            Unit(secondsPerUnit: secondsPerHour,
+                 singleUnitFormat: NSLocalizedString("TIME_AMOUNT_SINGLE_HOUR",
+                                                     comment:
+                    "{{1 hour}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{1 hour}}'. See other *_TIME_AMOUNT strings"),
+                 multipleUnitsFormat: NSLocalizedString("TIME_AMOUNT_HOURS",
+                                                        comment: "{{number of hours}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{5 hours}}'. See other *_TIME_AMOUNT strings")),
+            // Minutes
+            Unit(secondsPerUnit: secondsPerMinute,
+                 singleUnitFormat: NSLocalizedString("TIME_AMOUNT_SINGLE_MINUTE",
+                                                     comment: "{{1 minute}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{1 minute}}'. See other *_TIME_AMOUNT strings"),
+                 multipleUnitsFormat: NSLocalizedString("TIME_AMOUNT_MINUTES",
+                                                        comment:
+                    "{{number of minutes}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{5 minutes}}'. See other *_TIME_AMOUNT strings")),
+            // Seconds
+            Unit(secondsPerUnit: 1,
+                 singleUnitFormat: NSLocalizedString("TIME_AMOUNT_SINGLE_SECOND",
+                                                     comment:
+                    "{{1 second}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{1 second}}'. See other *_TIME_AMOUNT strings"),
+                 multipleUnitsFormat: NSLocalizedString("TIME_AMOUNT_SECONDS",
+                                                        comment: "{{number of seconds}} embedded in strings, e.g. 'Alice updated disappearing messages expiration to {{5 seconds}}'. See other *_TIME_AMOUNT strings"))
+        ]
+
+        var components = [String]()
+        var remainder = durationSeconds
+        for unit in units {
+            let secondsPerUnit = unit.secondsPerUnit
+            if remainder >= secondsPerUnit {
+                let units = remainder / secondsPerUnit
+                remainder -= units * secondsPerUnit
+                assert(units > 0)
+                let formattedUnits = String(format: "%ld", Int(units))
+                let format = (units > 1
+                    ? unit.multipleUnitsFormat
+                    : unit.singleUnitFormat)
+                components.append(String(format: format, formattedUnits))
+            }
+        }
+
+        if components.isEmpty {
+            return NSLocalizedString("TIME_AMOUNT_ZERO_SECONDS",
+                                     comment: "Indicates that a duration of time is zero seconds. See other *_TIME_AMOUNT strings")
+        } else {
+            // TODO: Can we localize this join?
+            return components.joined(separator: ", ")
+        }
     }
 }

@@ -1,11 +1,12 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "BaseModel.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class SDSAnyWriteTransaction;
 @class SignalServiceAddress;
 
 @interface OWSReaction : BaseModel
@@ -15,8 +16,13 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) SignalServiceAddress *reactor;
 @property (nonatomic, readonly) uint64_t sentAtTimestamp;
 @property (nonatomic, readonly) uint64_t receivedAtTimestamp;
+@property (nonatomic, readonly) BOOL read;
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
+- (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithUniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
+- (instancetype)initWithGrdbId:(int64_t)grdbId uniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
 
 - (instancetype)initWithUniqueMessageId:(NSString *)uniqueMessageId emoji:(NSString *)emoji reactor:(SignalServiceAddress *)reactor sentAtTimestamp:(uint64_t)sentAtTimestamp receivedAtTimestamp:(uint64_t)receivedAtTimestamp NS_DESIGNATED_INITIALIZER;
 
@@ -31,14 +37,17 @@ NS_ASSUME_NONNULL_BEGIN
                            emoji:(NSString *)emoji
                      reactorE164:(nullable NSString *)reactorE164
                      reactorUUID:(nullable NSString *)reactorUUID
+                            read:(BOOL)read
              receivedAtTimestamp:(uint64_t)receivedAtTimestamp
                  sentAtTimestamp:(uint64_t)sentAtTimestamp
                  uniqueMessageId:(NSString *)uniqueMessageId
-NS_SWIFT_NAME(init(grdbId:uniqueId:emoji:reactorE164:reactorUUID:receivedAtTimestamp:sentAtTimestamp:uniqueMessageId:));
+NS_DESIGNATED_INITIALIZER NS_SWIFT_NAME(init(grdbId:uniqueId:emoji:reactorE164:reactorUUID:read:receivedAtTimestamp:sentAtTimestamp:uniqueMessageId:));
 
 // clang-format on
 
 // --- CODE GENERATION MARKER
+
+- (void)markAsReadWithTransaction:(SDSAnyWriteTransaction *)transaction NS_SWIFT_NAME(markAsRead(transaction:));
 
 @end
 

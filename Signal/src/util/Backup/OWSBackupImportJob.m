@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSBackupImportJob.h"
@@ -39,7 +39,7 @@ NSString *const kOWSBackup_ImportDatabaseKeySpec = @"kOWSBackup_ImportDatabaseKe
 
 - (OWSProfileManager *)profileManager
 {
-    return [OWSProfileManager sharedManager];
+    return [OWSProfileManager shared];
 }
 
 - (TSAccountManager *)tsAccountManager
@@ -92,39 +92,38 @@ NSString *const kOWSBackup_ImportDatabaseKeySpec = @"kOWSBackup_ImportDatabaseKe
 
     [self updateProgressWithDescription:nil progress:nil];
 
-    [[self.backup ensureCloudKitAccess]
-            .thenInBackground(^{
-                [self updateProgressWithDescription:NSLocalizedString(@"BACKUP_IMPORT_PHASE_CONFIGURATION",
-                                                        @"Indicates that the backup import is being configured.")
-                                           progress:nil];
+    [self.backup ensureCloudKitAccess]
+        .thenInBackground(^{
+            [self updateProgressWithDescription:NSLocalizedString(@"BACKUP_IMPORT_PHASE_CONFIGURATION",
+                                                    @"Indicates that the backup import is being configured.")
+                                       progress:nil];
 
-                return [self configureImport];
-            })
-            .thenInBackground(^{
-                if (self.isComplete) {
-                    return
-                        [AnyPromise promiseWithValue:OWSBackupErrorWithDescription(@"Backup import no longer active.")];
-                }
+            return [self configureImport];
+        })
+        .thenInBackground(^{
+            if (self.isComplete) {
+                return [AnyPromise promiseWithValue:OWSBackupErrorWithDescription(@"Backup import no longer active.")];
+            }
 
-                [self updateProgressWithDescription:NSLocalizedString(@"BACKUP_IMPORT_PHASE_IMPORT",
-                                                        @"Indicates that the backup import data is being imported.")
-                                           progress:nil];
+            [self updateProgressWithDescription:NSLocalizedString(@"BACKUP_IMPORT_PHASE_IMPORT",
+                                                    @"Indicates that the backup import data is being imported.")
+                                       progress:nil];
 
-                return [self downloadAndProcessManifestWithBackupIO:self.backupIO];
-            })
-            .thenInBackground(^(OWSBackupManifestContents *manifest) {
-                OWSCAssertDebug(manifest.databaseItems.count > 0);
-                OWSCAssertDebug(manifest.attachmentsItems);
+            return [self downloadAndProcessManifestWithBackupIO:self.backupIO];
+        })
+        .thenInBackground(^(OWSBackupManifestContents *manifest) {
+            OWSCAssertDebug(manifest.databaseItems.count > 0);
+            OWSCAssertDebug(manifest.attachmentsItems);
 
-                self.manifest = manifest;
+            self.manifest = manifest;
 
-                return [self downloadAndProcessImport];
-            })
-            .catch(^(NSError *error) {
-                [self failWithErrorDescription:
-                          NSLocalizedString(@"BACKUP_IMPORT_ERROR_COULD_NOT_IMPORT",
-                              @"Error indicating the backup import could not import the user's data.")];
-            }) retainUntilComplete];
+            return [self downloadAndProcessImport];
+        })
+        .catch(^(NSError *error) {
+            [self
+                failWithErrorDescription:NSLocalizedString(@"BACKUP_IMPORT_ERROR_COULD_NOT_IMPORT",
+                                             @"Error indicating the backup import could not import the user's data.")];
+        });
 }
 
 - (AnyPromise *)downloadAndProcessImport
@@ -151,11 +150,11 @@ NSString *const kOWSBackup_ImportDatabaseKeySpec = @"kOWSBackup_ImportDatabaseKe
     [allItems addObjectsFromArray:self.attachmentsItems];
 
     // Record metadata for all items, so that we can re-use them in incremental backups after the restore.
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         for (OWSBackupFragment *item in allItems) {
             [item anyUpsertWithTransaction:transaction];
         }
-    }];
+    });
 
     return [self downloadFilesFromCloud:blockingItems]
         .thenInBackground(^{
@@ -174,11 +173,11 @@ NSString *const kOWSBackup_ImportDatabaseKeySpec = @"kOWSBackup_ImportDatabaseKe
             // Kick off lazy restore on main thread.
             [self.backupLazyRestore clearCompleteAndRunIfNecessary];
 
-            [self.profileManager fetchAndUpdateLocalUsersProfile];
+            [self.profileManager fetchLocalUsersProfile];
 
             // Make sure backup is enabled once we complete
             // a backup restore.
-            [OWSBackup.sharedManager setIsBackupEnabled:YES];
+            [OWSBackup.shared setIsBackupEnabled:YES];
         })
         .thenInBackground(^{
             return [self.tsAccountManager updateAccountAttributes];
@@ -315,29 +314,29 @@ NSString *const kOWSBackup_ImportDatabaseKeySpec = @"kOWSBackup_ImportDatabaseKe
         return [AnyPromise promiseWithValue:OWSBackupErrorWithDescription(@"Backup import no longer active.")];
     }
 
-    NSString *_Nullable localProfileName = self.manifest.localProfileName;
-    UIImage *_Nullable localProfileAvatar = [self tryToLoadLocalProfileAvatar];
+    NSString *_Nullable localProfileGivenName = self.manifest.localProfileGivenName;
+    NSString *_Nullable localProfileFamilyName = self.manifest.localProfileFamilyName;
+    NSData *_Nullable localProfileAvatarData = [self tryToLoadLocalProfileAvatarData];
 
-    OWSLogVerbose(@"local profile name: %@, avatar: %d", localProfileName, localProfileAvatar != nil);
+    OWSLogVerbose(@"local profile given name: %@, family name: %@, avatar: %d",
+        localProfileGivenName,
+        localProfileFamilyName,
+        localProfileAvatarData != nil);
 
-    if (localProfileName.length < 1 && !localProfileAvatar) {
+    if (localProfileGivenName.length < 1 && !localProfileAvatarData) {
         return [AnyPromise promiseWithValue:@(1)];
     }
 
-    return [AnyPromise promiseWithResolverBlock:^(PMKResolver resolve) {
-        [self.profileManager updateLocalProfileName:localProfileName
-            avatarImage:localProfileAvatar
-            success:^{
-                resolve(@(1));
-            }
-            failure:^{
-                // Ignore errors related to local profile.
-                resolve(@(1));
-            }];
-    }];
+    return [OWSProfileManager updateLocalProfilePromiseObjWithProfileGivenName:localProfileGivenName
+                                                             profileFamilyName:localProfileFamilyName
+                                                             profileAvatarData:localProfileAvatarData]
+        .catch(^(NSError *error) {
+            OWSFailDebug(@"Error: %@", error);
+            // Ignore errors related to local profile.
+        });
 }
 
-- (nullable UIImage *)tryToLoadLocalProfileAvatar
+- (nullable NSData *)tryToLoadLocalProfileAvatarData
 {
     if (!self.manifest.localProfileAvatarItem) {
         return nil;
@@ -362,14 +361,7 @@ NSString *const kOWSBackup_ImportDatabaseKeySpec = @"kOWSBackup_ImportDatabaseKe
             // Ignore errors related to local profile.
             return nil;
         }
-        // TODO: Verify that we're not compressing the profile avatar data.
-        UIImage *_Nullable image = [UIImage imageWithData:data];
-        if (!image) {
-            OWSLogError(@"could not decrypt local profile avatar.");
-            // Ignore errors related to local profile.
-            return nil;
-        }
-        return image;
+        return data;
     }
 }
 
@@ -383,7 +375,7 @@ NSString *const kOWSBackup_ImportDatabaseKeySpec = @"kOWSBackup_ImportDatabaseKe
     }
 
     __block NSUInteger count = 0;
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         for (OWSBackupFragment *item in self.attachmentsItems) {
             if (self.isComplete) {
                 return;
@@ -422,7 +414,7 @@ NSString *const kOWSBackup_ImportDatabaseKeySpec = @"kOWSBackup_ImportDatabaseKe
                                                     @"Indicates that the backup import data is being restored.")
                                        progress:@(count / (CGFloat)self.attachmentsItems.count)];
         }
-    }];
+    });
 
     OWSLogError(@"enqueued lazy restore of %zd files.", count);
 
@@ -441,7 +433,7 @@ NSString *const kOWSBackup_ImportDatabaseKeySpec = @"kOWSBackup_ImportDatabaseKe
     NSMutableDictionary<NSString *, NSNumber *> *restoredEntityCounts = [NSMutableDictionary new];
     __block unsigned long long copiedEntities = 0;
     __block BOOL aborted = NO;
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
     // POST GRDB TODO: We need to totally rework this, post GRDB.
 
 #ifdef GRDB_BACKUP
@@ -584,7 +576,7 @@ NSString *const kOWSBackup_ImportDatabaseKeySpec = @"kOWSBackup_ImportDatabaseKe
             }
         }
 #endif
-    }];
+    });
 
     if (aborted) {
         return [AnyPromise promiseWithValue:OWSBackupErrorWithDescription(@"Backup import failed.")];

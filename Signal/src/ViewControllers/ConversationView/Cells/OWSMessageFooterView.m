@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSMessageFooterView.h"
@@ -17,22 +17,24 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) UIImageView *statusIndicatorImageView;
 @property (nonatomic) OWSMessageTimerView *messageTimerView;
 @property (nonatomic) UIStackView *contentStack;
+@property (nonatomic) UIView *leadingSpacer;
+@property (nonatomic) UIView *trailingSpacer;
 
 @end
 
 @implementation OWSMessageFooterView
 
 // `[UIView init]` invokes `[self initWithFrame:...]`.
-- (instancetype)initWithFrame:(CGRect)frame
+- (instancetype)init
 {
-    if (self = [super initWithFrame:frame]) {
-        [self commontInit];
+    if (self = [super initWithFrame:CGRectZero]) {
+        [self commonInit];
     }
 
     return self;
 }
 
-- (void)commontInit
+- (void)commonInit
 {
     // Ensure only called once.
     OWSAssertDebug(!self.timestampLabel);
@@ -49,8 +51,12 @@ NS_ASSUME_NONNULL_BEGIN
     contentStack.alignment = UIStackViewAlignmentCenter;
     contentStack.spacing = self.hSpacing;
 
-    [self addArrangedSubview:[UIView hStretchingSpacer]];
+    self.leadingSpacer = [UIView hStretchingSpacer];
+    self.trailingSpacer = [UIView hStretchingSpacer];
+
+    [self addArrangedSubview:self.leadingSpacer];
     [self addArrangedSubview:self.contentStack];
+    [self addArrangedSubview:self.trailingSpacer];
 
     self.userInteractionEnabled = NO;
 }
@@ -86,6 +92,9 @@ NS_ASSUME_NONNULL_BEGIN
     OWSAssertDebug(viewItem);
     OWSAssertDebug(conversationStyle);
 
+    self.leadingSpacer.hidden = isIncoming;
+    self.trailingSpacer.hidden = !isIncoming;
+
     [self configureLabelsWithConversationViewItem:viewItem];
 
     UIColor *textColor;
@@ -118,6 +127,9 @@ NS_ASSUME_NONNULL_BEGIN
         MessageReceiptStatus messageStatus =
             [MessageRecipientStatusUtils recipientStatusWithOutgoingMessage:outgoingMessage];
         accessibilityLabel = [MessageRecipientStatusUtils receiptMessageWithOutgoingMessage:outgoingMessage];
+
+        BOOL shouldHideStatusIndicator = NO;
+
         switch (messageStatus) {
             case MessageReceiptStatusUploading:
             case MessageReceiptStatusSending:
@@ -127,19 +139,22 @@ NS_ASSUME_NONNULL_BEGIN
             case MessageReceiptStatusSent:
             case MessageReceiptStatusSkipped:
                 statusIndicatorImage = [UIImage imageNamed:@"message_status_sent"];
+                shouldHideStatusIndicator = outgoingMessage.wasRemotelyDeleted;
                 break;
             case MessageReceiptStatusDelivered:
                 statusIndicatorImage = [UIImage imageNamed:@"message_status_delivered"];
+                shouldHideStatusIndicator = outgoingMessage.wasRemotelyDeleted;
                 break;
             case MessageReceiptStatusRead:
                 statusIndicatorImage = [UIImage imageNamed:@"message_status_read"];
+                shouldHideStatusIndicator = outgoingMessage.wasRemotelyDeleted;
                 break;
             case MessageReceiptStatusFailed:
                 // No status indicator icon.
                 break;
         }
 
-        if (statusIndicatorImage == nil) {
+        if (statusIndicatorImage == nil || shouldHideStatusIndicator) {
             [self hideStatusIndicator];
         } else {
             [self showStatusIndicatorWithIcon:statusIndicatorImage textColor:textColor];
@@ -176,6 +191,18 @@ NS_ASSUME_NONNULL_BEGIN
     [self.statusIndicatorImageView.layer addAnimation:animation forKey:@"animation"];
 }
 
+- (BOOL)wasSentToAnyRecipient:(id<ConversationViewItem>)viewItem
+{
+    OWSAssertDebug(viewItem);
+
+    if (viewItem.interaction.interactionType != OWSInteractionType_OutgoingMessage) {
+        return NO;
+    }
+
+    TSOutgoingMessage *outgoingMessage = (TSOutgoingMessage *)viewItem.interaction;
+    return outgoingMessage.wasSentToAnyRecipient;
+}
+
 - (BOOL)isFailedOutgoingMessage:(id<ConversationViewItem>)viewItem
 {
     OWSAssertDebug(viewItem);
@@ -198,13 +225,15 @@ NS_ASSUME_NONNULL_BEGIN
 
     NSString *timestampLabelText;
     if ([self isFailedOutgoingMessage:viewItem]) {
-        timestampLabelText
-            = NSLocalizedString(@"MESSAGE_STATUS_SEND_FAILED", @"Label indicating that a message failed to send.");
+        timestampLabelText = [self wasSentToAnyRecipient:viewItem]
+            ? NSLocalizedString(
+                @"MESSAGE_STATUS_PARTIALLY_SENT", @"Label indicating that a message was only sent to some recipients.")
+            : NSLocalizedString(@"MESSAGE_STATUS_SEND_FAILED", @"Label indicating that a message failed to send.");
     } else {
         timestampLabelText = [DateUtil formatMessageTimestamp:viewItem.interaction.timestamp];
     }
 
-    self.timestampLabel.text = timestampLabelText.localizedUppercaseString;
+    self.timestampLabel.text = timestampLabelText;
 }
 
 - (CGSize)measureWithConversationViewItem:(id<ConversationViewItem>)viewItem

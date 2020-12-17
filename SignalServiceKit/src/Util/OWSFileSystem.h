@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 NS_ASSUME_NONNULL_BEGIN
@@ -13,9 +13,8 @@ void ClearOldTemporaryDirectories(void);
 
 @interface OWSFileSystem : NSObject
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
-
-+ (BOOL)fileOrFolderExistsAtPath:(NSString *)path;
 
 + (BOOL)protectFileOrFolderAtPath:(NSString *)path;
 + (BOOL)protectFileOrFolderAtPath:(NSString *)path fileProtectionType:(NSFileProtectionType)fileProtectionType;
@@ -41,20 +40,7 @@ void ClearOldTemporaryDirectories(void);
 
 + (BOOL)ensureFileExists:(NSString *)filePath;
 
-+ (BOOL)deleteFile:(NSString *)filePath;
-
-+ (BOOL)deleteFileIfExists:(NSString *)filePath;
-
 + (void)deleteContentsOfDirectory:(NSString *)dirPath;
-
-+ (NSArray<NSString *> *_Nullable)allFilesInDirectoryRecursive:(NSString *)dirPath error:(NSError **)error;
-
-+ (NSString *)temporaryFilePath;
-+ (NSURL *)temporaryFileURLWithFileExtension:(NSString *_Nullable)fileExtension NS_SWIFT_NAME(temporaryFileUrl(fileExtension:));
-+ (NSString *)temporaryFilePathWithFileExtension:(NSString *_Nullable)fileExtension;
-
-// Returns nil on failure.
-+ (nullable NSString *)writeDataToTemporaryFile:(NSData *)data fileExtension:(NSString *_Nullable)fileExtension;
 
 + (nullable NSNumber *)fileSizeOfPath:(NSString *)filePath;
 

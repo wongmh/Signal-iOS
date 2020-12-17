@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -22,7 +22,7 @@ public class OWS106EnsureProfileComplete: YDBDatabaseMigration {
     override public func runUp(completion:@escaping () -> Void) {
         let job = CompleteRegistrationFixerJob(completionHandler: { (didSucceed) in
 
-            if (didSucceed) {
+            if didSucceed {
                 Logger.info("Completed. Saving.")
 
                 self.markAsCompleteWithSneakyTransaction()
@@ -48,7 +48,7 @@ public class OWS106EnsureProfileComplete: YDBDatabaseMigration {
         // MARK: - Dependencies
 
         private var tsAccountManager: TSAccountManager {
-            return TSAccountManager.sharedInstance()
+            return TSAccountManager.shared()
         }
 
         // MARK: -
@@ -86,7 +86,7 @@ public class OWS106EnsureProfileComplete: YDBDatabaseMigration {
 
                 Logger.error("failed with \(error).")
                 self.completionHandler(false)
-            }.retainUntilComplete()
+            }
         }
 
         func ensureProfileComplete() -> Promise<Void> {
@@ -96,7 +96,7 @@ public class OWS106EnsureProfileComplete: YDBDatabaseMigration {
             }
 
             return firstly {
-                return ProfileFetcherJob.fetchAndUpdateProfilePromise(address: localAddress,
+                return ProfileFetcherJob.fetchProfilePromise(address: localAddress,
                                                                       ignoreThrottling: true)
             }.done { _ in
                 Logger.info("verified recipient profile is in good shape: \(localAddress)")

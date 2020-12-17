@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -39,6 +39,8 @@ public struct JobRecordRecord: SDSRecord {
     public let removeMessageAfterSending: Bool?
     public let threadId: String?
     public let attachmentId: String?
+    public let isMediaMessage: Bool?
+    public let serverDeliveryTimestamp: UInt64?
 
     public enum CodingKeys: String, CodingKey, ColumnExpression, CaseIterable {
         case id
@@ -55,6 +57,8 @@ public struct JobRecordRecord: SDSRecord {
         case removeMessageAfterSending
         case threadId
         case attachmentId
+        case isMediaMessage
+        case serverDeliveryTimestamp
     }
 
     public static func columnName(_ column: JobRecordRecord.CodingKeys, fullyQualified: Bool = false) -> String {
@@ -92,6 +96,8 @@ public extension JobRecordRecord {
         removeMessageAfterSending = row[11]
         threadId = row[12]
         attachmentId = row[13]
+        isMediaMessage = row[14]
+        serverDeliveryTimestamp = row[15]
     }
 }
 
@@ -212,6 +218,7 @@ extension SSKJobRecord {
             let sortId: UInt64 = UInt64(recordId)
             let status: SSKJobRecordStatus = record.status
             let envelopeData: Data? = SDSDeserialization.optionalData(record.envelopeData, name: "envelopeData")
+            let serverDeliveryTimestamp: UInt64 = try SDSDeserialization.required(record.serverDeliveryTimestamp, name: "serverDeliveryTimestamp")
 
             return SSKMessageDecryptJobRecord(grdbId: recordId,
                                               uniqueId: uniqueId,
@@ -219,7 +226,8 @@ extension SSKJobRecord {
                                               label: label,
                                               sortId: sortId,
                                               status: status,
-                                              envelopeData: envelopeData)
+                                              envelopeData: envelopeData,
+                                              serverDeliveryTimestamp: serverDeliveryTimestamp)
 
         case .messageSenderJobRecord:
 
@@ -230,6 +238,7 @@ extension SSKJobRecord {
             let status: SSKJobRecordStatus = record.status
             let invisibleMessageSerialized: Data? = record.invisibleMessage
             let invisibleMessage: TSOutgoingMessage? = try SDSDeserialization.optionalUnarchive(invisibleMessageSerialized, name: "invisibleMessage")
+            let isMediaMessage: Bool = try SDSDeserialization.required(record.isMediaMessage, name: "isMediaMessage")
             let messageId: String? = record.messageId
             let removeMessageAfterSending: Bool = try SDSDeserialization.required(record.removeMessageAfterSending, name: "removeMessageAfterSending")
             let threadId: String? = record.threadId
@@ -241,6 +250,7 @@ extension SSKJobRecord {
                                              sortId: sortId,
                                              status: status,
                                              invisibleMessage: invisibleMessage,
+                                             isMediaMessage: isMediaMessage,
                                              messageId: messageId,
                                              removeMessageAfterSending: removeMessageAfterSending,
                                              threadId: threadId)
@@ -296,27 +306,193 @@ extension SSKJobRecord: SDSModel {
     }
 }
 
+// MARK: - DeepCopyable
+
+extension SSKJobRecord: DeepCopyable {
+
+    public func deepCopy() throws -> AnyObject {
+        // Any subclass can be cast to it's superclass,
+        // so the order of this switch statement matters.
+        // We need to do a "depth first" search by type.
+        guard let id = self.grdbId?.int64Value else {
+            throw OWSAssertionError("Model missing grdbId.")
+        }
+
+        if let modelToCopy = self as? SSKMessageSenderJobRecord {
+            assert(type(of: modelToCopy) == SSKMessageSenderJobRecord.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let failureCount: UInt = modelToCopy.failureCount
+            let label: String = modelToCopy.label
+            let sortId: UInt64 = modelToCopy.sortId
+            let status: SSKJobRecordStatus = modelToCopy.status
+            // NOTE: If this generates build errors, you made need to
+            // modify DeepCopy.swift to support this type.
+            //
+            // That might mean:
+            //
+            // * Implement DeepCopyable for this type (e.g. a model).
+            // * Modify DeepCopies.deepCopy() to support this type (e.g. a collection).
+            let invisibleMessage: TSOutgoingMessage?
+            if let invisibleMessageForCopy = modelToCopy.invisibleMessage {
+               invisibleMessage = try DeepCopies.deepCopy(invisibleMessageForCopy)
+            } else {
+               invisibleMessage = nil
+            }
+            let isMediaMessage: Bool = modelToCopy.isMediaMessage
+            let messageId: String? = modelToCopy.messageId
+            let removeMessageAfterSending: Bool = modelToCopy.removeMessageAfterSending
+            let threadId: String? = modelToCopy.threadId
+
+            return SSKMessageSenderJobRecord(grdbId: id,
+                                             uniqueId: uniqueId,
+                                             failureCount: failureCount,
+                                             label: label,
+                                             sortId: sortId,
+                                             status: status,
+                                             invisibleMessage: invisibleMessage,
+                                             isMediaMessage: isMediaMessage,
+                                             messageId: messageId,
+                                             removeMessageAfterSending: removeMessageAfterSending,
+                                             threadId: threadId)
+        }
+
+        if let modelToCopy = self as? SSKMessageDecryptJobRecord {
+            assert(type(of: modelToCopy) == SSKMessageDecryptJobRecord.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let failureCount: UInt = modelToCopy.failureCount
+            let label: String = modelToCopy.label
+            let sortId: UInt64 = modelToCopy.sortId
+            let status: SSKJobRecordStatus = modelToCopy.status
+            let envelopeData: Data? = modelToCopy.envelopeData
+            let serverDeliveryTimestamp: UInt64 = modelToCopy.serverDeliveryTimestamp
+
+            return SSKMessageDecryptJobRecord(grdbId: id,
+                                              uniqueId: uniqueId,
+                                              failureCount: failureCount,
+                                              label: label,
+                                              sortId: sortId,
+                                              status: status,
+                                              envelopeData: envelopeData,
+                                              serverDeliveryTimestamp: serverDeliveryTimestamp)
+        }
+
+        if let modelToCopy = self as? OWSSessionResetJobRecord {
+            assert(type(of: modelToCopy) == OWSSessionResetJobRecord.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let failureCount: UInt = modelToCopy.failureCount
+            let label: String = modelToCopy.label
+            let sortId: UInt64 = modelToCopy.sortId
+            let status: SSKJobRecordStatus = modelToCopy.status
+            let contactThreadId: String = modelToCopy.contactThreadId
+
+            return OWSSessionResetJobRecord(grdbId: id,
+                                            uniqueId: uniqueId,
+                                            failureCount: failureCount,
+                                            label: label,
+                                            sortId: sortId,
+                                            status: status,
+                                            contactThreadId: contactThreadId)
+        }
+
+        if let modelToCopy = self as? OWSIncomingGroupSyncJobRecord {
+            assert(type(of: modelToCopy) == OWSIncomingGroupSyncJobRecord.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let failureCount: UInt = modelToCopy.failureCount
+            let label: String = modelToCopy.label
+            let sortId: UInt64 = modelToCopy.sortId
+            let status: SSKJobRecordStatus = modelToCopy.status
+            let attachmentId: String = modelToCopy.attachmentId
+
+            return OWSIncomingGroupSyncJobRecord(grdbId: id,
+                                                 uniqueId: uniqueId,
+                                                 failureCount: failureCount,
+                                                 label: label,
+                                                 sortId: sortId,
+                                                 status: status,
+                                                 attachmentId: attachmentId)
+        }
+
+        if let modelToCopy = self as? OWSIncomingContactSyncJobRecord {
+            assert(type(of: modelToCopy) == OWSIncomingContactSyncJobRecord.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let failureCount: UInt = modelToCopy.failureCount
+            let label: String = modelToCopy.label
+            let sortId: UInt64 = modelToCopy.sortId
+            let status: SSKJobRecordStatus = modelToCopy.status
+            let attachmentId: String = modelToCopy.attachmentId
+
+            return OWSIncomingContactSyncJobRecord(grdbId: id,
+                                                   uniqueId: uniqueId,
+                                                   failureCount: failureCount,
+                                                   label: label,
+                                                   sortId: sortId,
+                                                   status: status,
+                                                   attachmentId: attachmentId)
+        }
+
+        if let modelToCopy = self as? OWSBroadcastMediaMessageJobRecord {
+            assert(type(of: modelToCopy) == OWSBroadcastMediaMessageJobRecord.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let failureCount: UInt = modelToCopy.failureCount
+            let label: String = modelToCopy.label
+            let sortId: UInt64 = modelToCopy.sortId
+            let status: SSKJobRecordStatus = modelToCopy.status
+            // NOTE: If this generates build errors, you made need to
+            // implement DeepCopyable for this type in DeepCopy.swift.
+            let attachmentIdMap: [String: [String]] = try DeepCopies.deepCopy(modelToCopy.attachmentIdMap)
+
+            return OWSBroadcastMediaMessageJobRecord(grdbId: id,
+                                                     uniqueId: uniqueId,
+                                                     failureCount: failureCount,
+                                                     label: label,
+                                                     sortId: sortId,
+                                                     status: status,
+                                                     attachmentIdMap: attachmentIdMap)
+        }
+
+        do {
+            let modelToCopy = self
+            assert(type(of: modelToCopy) == SSKJobRecord.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let failureCount: UInt = modelToCopy.failureCount
+            let label: String = modelToCopy.label
+            let sortId: UInt64 = modelToCopy.sortId
+            let status: SSKJobRecordStatus = modelToCopy.status
+
+            return SSKJobRecord(grdbId: id,
+                                uniqueId: uniqueId,
+                                failureCount: failureCount,
+                                label: label,
+                                sortId: sortId,
+                                status: status)
+        }
+
+    }
+}
+
 // MARK: - Table Metadata
 
 extension SSKJobRecordSerializer {
 
     // This defines all of the columns used in the table
     // where this model (and any subclasses) are persisted.
-    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey, columnIndex: 0)
-    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64, columnIndex: 1)
-    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true, columnIndex: 2)
+    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey)
+    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64)
+    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true)
     // Properties
-    static let failureCountColumn = SDSColumnMetadata(columnName: "failureCount", columnType: .int64, columnIndex: 3)
-    static let labelColumn = SDSColumnMetadata(columnName: "label", columnType: .unicodeString, columnIndex: 4)
-    static let statusColumn = SDSColumnMetadata(columnName: "status", columnType: .int, columnIndex: 5)
-    static let attachmentIdMapColumn = SDSColumnMetadata(columnName: "attachmentIdMap", columnType: .blob, isOptional: true, columnIndex: 6)
-    static let contactThreadIdColumn = SDSColumnMetadata(columnName: "contactThreadId", columnType: .unicodeString, isOptional: true, columnIndex: 7)
-    static let envelopeDataColumn = SDSColumnMetadata(columnName: "envelopeData", columnType: .blob, isOptional: true, columnIndex: 8)
-    static let invisibleMessageColumn = SDSColumnMetadata(columnName: "invisibleMessage", columnType: .blob, isOptional: true, columnIndex: 9)
-    static let messageIdColumn = SDSColumnMetadata(columnName: "messageId", columnType: .unicodeString, isOptional: true, columnIndex: 10)
-    static let removeMessageAfterSendingColumn = SDSColumnMetadata(columnName: "removeMessageAfterSending", columnType: .int, isOptional: true, columnIndex: 11)
-    static let threadIdColumn = SDSColumnMetadata(columnName: "threadId", columnType: .unicodeString, isOptional: true, columnIndex: 12)
-    static let attachmentIdColumn = SDSColumnMetadata(columnName: "attachmentId", columnType: .unicodeString, isOptional: true, columnIndex: 13)
+    static let failureCountColumn = SDSColumnMetadata(columnName: "failureCount", columnType: .int64)
+    static let labelColumn = SDSColumnMetadata(columnName: "label", columnType: .unicodeString)
+    static let statusColumn = SDSColumnMetadata(columnName: "status", columnType: .int)
+    static let attachmentIdMapColumn = SDSColumnMetadata(columnName: "attachmentIdMap", columnType: .blob, isOptional: true)
+    static let contactThreadIdColumn = SDSColumnMetadata(columnName: "contactThreadId", columnType: .unicodeString, isOptional: true)
+    static let envelopeDataColumn = SDSColumnMetadata(columnName: "envelopeData", columnType: .blob, isOptional: true)
+    static let invisibleMessageColumn = SDSColumnMetadata(columnName: "invisibleMessage", columnType: .blob, isOptional: true)
+    static let messageIdColumn = SDSColumnMetadata(columnName: "messageId", columnType: .unicodeString, isOptional: true)
+    static let removeMessageAfterSendingColumn = SDSColumnMetadata(columnName: "removeMessageAfterSending", columnType: .int, isOptional: true)
+    static let threadIdColumn = SDSColumnMetadata(columnName: "threadId", columnType: .unicodeString, isOptional: true)
+    static let attachmentIdColumn = SDSColumnMetadata(columnName: "attachmentId", columnType: .unicodeString, isOptional: true)
+    static let isMediaMessageColumn = SDSColumnMetadata(columnName: "isMediaMessage", columnType: .int, isOptional: true)
+    static let serverDeliveryTimestampColumn = SDSColumnMetadata(columnName: "serverDeliveryTimestamp", columnType: .int64, isOptional: true)
 
     // TODO: We should decide on a naming convention for
     //       tables that store models.
@@ -336,7 +512,9 @@ extension SSKJobRecordSerializer {
         messageIdColumn,
         removeMessageAfterSendingColumn,
         threadIdColumn,
-        attachmentIdColumn
+        attachmentIdColumn,
+        isMediaMessageColumn,
+        serverDeliveryTimestampColumn
         ])
 }
 
@@ -446,9 +624,11 @@ public extension SSKJobRecord {
 
 @objc
 public class SSKJobRecordCursor: NSObject {
+    private let transaction: GRDBReadTransaction
     private let cursor: RecordCursor<JobRecordRecord>?
 
-    init(cursor: RecordCursor<JobRecordRecord>?) {
+    init(transaction: GRDBReadTransaction, cursor: RecordCursor<JobRecordRecord>?) {
+        self.transaction = transaction
         self.cursor = cursor
     }
 
@@ -490,10 +670,10 @@ public extension SSKJobRecord {
         let database = transaction.database
         do {
             let cursor = try JobRecordRecord.fetchCursor(database)
-            return SSKJobRecordCursor(cursor: cursor)
+            return SSKJobRecordCursor(transaction: transaction, cursor: cursor)
         } catch {
             owsFailDebug("Read failed: \(error)")
-            return SSKJobRecordCursor(cursor: nil)
+            return SSKJobRecordCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -699,11 +879,11 @@ public extension SSKJobRecord {
         do {
             let sqlRequest = SQLRequest<Void>(sql: sql, arguments: arguments, cached: true)
             let cursor = try JobRecordRecord.fetchCursor(transaction.database, sqlRequest)
-            return SSKJobRecordCursor(cursor: cursor)
+            return SSKJobRecordCursor(transaction: transaction, cursor: cursor)
         } catch {
             Logger.error("sql: \(sql)")
             owsFailDebug("Read failed: \(error)")
-            return SSKJobRecordCursor(cursor: nil)
+            return SSKJobRecordCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -757,7 +937,26 @@ class SSKJobRecordSerializer: SDSSerializer {
         let removeMessageAfterSending: Bool? = nil
         let threadId: String? = nil
         let attachmentId: String? = nil
+        let isMediaMessage: Bool? = nil
+        let serverDeliveryTimestamp: UInt64? = nil
 
-        return JobRecordRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, failureCount: failureCount, label: label, status: status, attachmentIdMap: attachmentIdMap, contactThreadId: contactThreadId, envelopeData: envelopeData, invisibleMessage: invisibleMessage, messageId: messageId, removeMessageAfterSending: removeMessageAfterSending, threadId: threadId, attachmentId: attachmentId)
+        return JobRecordRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, failureCount: failureCount, label: label, status: status, attachmentIdMap: attachmentIdMap, contactThreadId: contactThreadId, envelopeData: envelopeData, invisibleMessage: invisibleMessage, messageId: messageId, removeMessageAfterSending: removeMessageAfterSending, threadId: threadId, attachmentId: attachmentId, isMediaMessage: isMediaMessage, serverDeliveryTimestamp: serverDeliveryTimestamp)
     }
 }
+
+// MARK: - Deep Copy
+
+#if TESTABLE_BUILD
+@objc
+public extension SSKJobRecord {
+    // We're not using this method at the moment,
+    // but we might use it for validation of
+    // other deep copy methods.
+    func deepCopyUsingRecord() throws -> SSKJobRecord {
+        guard let record = try asRecord() as? JobRecordRecord else {
+            throw OWSAssertionError("Could not convert to record.")
+        }
+        return try SSKJobRecord.fromRecord(record)
+    }
+}
+#endif

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -8,7 +8,7 @@ import SignalServiceKit
 @objc
 public class OWSFlatButton: UIView {
 
-    private let button: UIButton
+    public let button: UIButton
 
     private var pressedBlock : (() -> Void)?
 
@@ -68,7 +68,7 @@ public class OWSFlatButton: UIView {
     private func createContent() {
         self.addSubview(button)
         button.addTarget(self, action: #selector(buttonPressed), for: .touchUpInside)
-        button.ows_autoPinToSuperviewEdges()
+        button.autoPinEdgesToSuperviewEdges()
     }
 
     @objc
@@ -143,11 +143,26 @@ public class OWSFlatButton: UIView {
     // MARK: Methods
 
     @objc
+    public func setTitleColor(_ color: UIColor) {
+        button.setTitleColor(color, for: .normal)
+    }
+
+    @objc
     public func setTitle(title: String, font: UIFont,
                          titleColor: UIColor ) {
         button.setTitle(title, for: .normal)
-        button.setTitleColor(titleColor, for: .normal)
         button.titleLabel!.font = font
+        setTitleColor(titleColor)
+    }
+
+    @objc
+    public func setAttributedTitle(_ title: NSAttributedString) {
+        button.setAttributedTitle(title, for: .normal)
+    }
+
+    @objc
+    public func setImage(_ image: UIImage) {
+        button.setImage(image, for: .normal)
     }
 
     @objc
@@ -190,10 +205,7 @@ public class OWSFlatButton: UIView {
 
     @objc
     public func setPressedBlock(_ pressedBlock: @escaping () -> Void) {
-        guard self.pressedBlock == nil else {
-            owsFailDebug("Button already has pressed block.")
-            return
-        }
+        guard self.pressedBlock == nil else { return }
         self.pressedBlock = pressedBlock
     }
 

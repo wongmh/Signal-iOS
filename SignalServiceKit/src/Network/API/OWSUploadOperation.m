@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSUploadOperation.h"
@@ -10,7 +10,7 @@
 #import "OWSError.h"
 #import "OWSOperation.h"
 #import "OWSRequestFactory.h"
-#import "OWSUploadV2.h"
+#import "OWSUpload.h"
 #import "SSKEnvironment.h"
 #import "TSAttachmentStream.h"
 #import "TSNetworkManager.h"
@@ -31,6 +31,8 @@ static const CGFloat kAttachmentUploadProgressTheta = 0.001f;
 @interface OWSUploadOperation ()
 
 @property (readonly, nonatomic) NSString *attachmentId;
+@property (readonly, nonatomic) BOOL canUseV3;
+
 @property (nonatomic, nullable) TSAttachmentStream *completedUpload;
 
 @end
@@ -63,7 +65,7 @@ static const CGFloat kAttachmentUploadProgressTheta = 0.001f;
 
 #pragma mark -
 
-- (instancetype)initWithAttachmentId:(NSString *)attachmentId
+- (instancetype)initWithAttachmentId:(NSString *)attachmentId canUseV3:(BOOL)canUseV3
 {
     self = [super init];
     if (!self) {
@@ -73,6 +75,7 @@ static const CGFloat kAttachmentUploadProgressTheta = 0.001f;
     self.remainingRetries = 4;
 
     _attachmentId = attachmentId;
+    _canUseV3 = canUseV3;
 
     return self;
 }
@@ -113,39 +116,41 @@ static const CGFloat kAttachmentUploadProgressTheta = 0.001f;
     
     [self fireNotificationWithProgress:0];
 
-    OWSAttachmentUploadV2 *upload = [OWSAttachmentUploadV2 new];
-    [[BlurHash ensureBlurHashForAttachmentStream:attachmentStream]
-            .catchInBackground(^{
-                // Swallow these errors; blurHashes are strictly optional.
-                OWSLogWarn(@"Error generating blurHash.");
-            })
-            .thenInBackground(^{
-                return [upload uploadAttachmentToService:attachmentStream
-                                           progressBlock:^(NSProgress *uploadProgress) {
-                                               [self fireNotificationWithProgress:uploadProgress.fractionCompleted];
-                                           }];
-            })
-            .thenInBackground(^{
-                [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-                    [attachmentStream updateAsUploadedWithEncryptionKey:upload.encryptionKey
-                                                                 digest:upload.digest
-                                                               serverId:upload.serverId
-                                                            transaction:transaction];
-                }];
-                self.completedUpload = attachmentStream;
-                [self reportSuccess];
-            })
-            .catchInBackground(^(NSError *error) {
-                OWSLogError(@"Failed: %@", error);
+    OWSAttachmentUploadV2 *upload = [[OWSAttachmentUploadV2 alloc] initWithAttachmentStream:attachmentStream
+                                                                                   canUseV3:self.canUseV3];
+    [BlurHash ensureBlurHashForAttachmentStream:attachmentStream]
+        .catchInBackground(^{
+            // Swallow these errors; blurHashes are strictly optional.
+            OWSLogWarn(@"Error generating blurHash.");
+        })
+        .thenInBackground(^{
+            return [upload uploadWithProgressBlock:^(
+                NSProgress *uploadProgress) { [self fireNotificationWithProgress:uploadProgress.fractionCompleted]; }];
+        })
+        .thenInBackground(^{
+            DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
+                [attachmentStream updateAsUploadedWithEncryptionKey:upload.encryptionKey
+                                                             digest:upload.digest
+                                                           serverId:upload.serverId
+                                                             cdnKey:upload.cdnKey
+                                                          cdnNumber:upload.cdnNumber
+                                                    uploadTimestamp:upload.uploadTimestamp
+                                                        transaction:transaction];
+            });
+            self.completedUpload = attachmentStream;
+            [self reportSuccess];
+        })
+        .catchInBackground(^(NSError *error) {
+            OWSLogError(@"Failed: %@", error);
 
-                if (error.code == kCFURLErrorSecureConnectionFailed) {
-                    error.isRetryable = NO;
-                } else {
-                    error.isRetryable = YES;
-                }
+            if (error.code == kCFURLErrorSecureConnectionFailed) {
+                error.isRetryable = NO;
+            } else {
+                error.isRetryable = YES;
+            }
 
-                [self reportError:error];
-            }) retainUntilComplete];
+            [self reportError:error];
+        });
 }
 
 - (void)fireNotificationWithProgress:(CGFloat)aProgress

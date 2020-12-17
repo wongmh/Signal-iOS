@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 NS_ASSUME_NONNULL_BEGIN
@@ -69,6 +69,8 @@ extern NSString *const OWSPreferencesCallLoggingDidChangeNotification;
 - (void)setHasGeneratedThumbnails:(BOOL)value;
 
 - (BOOL)shouldShowUnidentifiedDeliveryIndicators;
+- (BOOL)shouldShowUnidentifiedDeliveryIndicatorsWithTransaction:(SDSAnyReadTransaction *)transaction
+    NS_SWIFT_NAME(shouldShowUnidentifiedDeliveryIndicators(transaction:));
 - (void)setShouldShowUnidentifiedDeliveryIndicatorsAndSendSyncMessage:(BOOL)value;
 - (void)setShouldShowUnidentifiedDeliveryIndicators:(BOOL)value transaction:(SDSAnyWriteTransaction *)transaction;
 
@@ -76,11 +78,21 @@ extern NSString *const OWSPreferencesCallLoggingDidChangeNotification;
     NS_SWIFT_NAME(shouldNotifyOfNewAccounts(transaction:));
 
 - (void)setShouldNotifyOfNewAccounts:(BOOL)newValue
-                         transaction:(SDSAnyWriteTransaction *)transactio
+                         transaction:(SDSAnyWriteTransaction *)transaction
     NS_SWIFT_NAME(shouldNotifyOfNewAccounts(_:transaction:));
 
-- (BOOL)isViewOnceMessagesEnabled;
-- (void)setIsViewOnceMessagesEnabled:(BOOL)value;
+- (BOOL)wasViewOnceTooltipShown;
+- (void)setWasViewOnceTooltipShown;
+
+- (BOOL)wasGroupCallTooltipShown;
+- (void)incrementGroupCallTooltipShownCount;
+- (void)setWasGroupCallTooltipShown;
+
+- (BOOL)wasBlurTooltipShown;
+- (void)setWasBlurTooltipShown;
+
+- (BOOL)wasDeleteForEveryoneConfirmationShown;
+- (void)setWasDeleteForEveryoneConfirmationShown;
 
 #pragma mark Callkit
 
@@ -90,17 +102,6 @@ extern NSString *const OWSPreferencesCallLoggingDidChangeNotification;
 #pragma mark - Legacy CallKit settings
 
 - (void)applyCallLoggingSettingsForLegacyUsersWithTransaction:(YapDatabaseReadWriteTransaction *)transaction;
-
-- (BOOL)isCallKitEnabled;
-- (void)setIsCallKitEnabled:(BOOL)value;
-
-// Returns YES IFF isCallKitEnabled has been set by user.
-- (BOOL)isCallKitEnabledSet;
-
-- (BOOL)isCallKitPrivacyEnabled;
-- (void)setIsCallKitPrivacyEnabled:(BOOL)value;
-// Returns YES IFF isCallKitPrivacyEnabled has been set by user.
-- (BOOL)isCallKitPrivacySet;
 
 #pragma mark direct call connectivity (non-TURN)
 

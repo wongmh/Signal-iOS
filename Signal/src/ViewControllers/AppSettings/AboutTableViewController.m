@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "AboutTableViewController.h"
@@ -13,15 +13,6 @@
 
 @implementation AboutTableViewController
 
-#pragma mark - Dependencies
-
-- (SDSDatabaseStorage *)databaseStorage
-{
-    return SDSDatabaseStorage.shared;
-}
-
-#pragma mark -
-
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
@@ -32,6 +23,8 @@
     [super viewDidLoad];
 
     self.title = NSLocalizedString(@"SETTINGS_ABOUT", @"Navbar title");
+
+    self.useThemeBackgroundColors = YES;
 
     [self updateTableContents];
 
@@ -64,8 +57,7 @@
     OWSTableSection *informationSection = [OWSTableSection new];
     informationSection.headerTitle = NSLocalizedString(@"SETTINGS_INFORMATION_HEADER", @"");
     [informationSection addItem:[OWSTableItem labelItemWithText:NSLocalizedString(@"SETTINGS_VERSION", @"")
-                                                  accessoryText:[[[NSBundle mainBundle] infoDictionary]
-                                                                    objectForKey:@"CFBundleVersion"]]];
+                                                  accessoryText:AppVersion.shared.currentAppVersionLong]];
 
     [informationSection
         addItem:[OWSTableItem
@@ -79,18 +71,6 @@
 
     [contents addSection:informationSection];
 
-    OWSTableSection *helpSection = [OWSTableSection new];
-    helpSection.headerTitle = NSLocalizedString(@"SETTINGS_HELP_HEADER", @"");
-    [helpSection
-        addItem:[OWSTableItem disclosureItemWithText:NSLocalizedString(@"SETTINGS_SUPPORT", @"")
-                             accessibilityIdentifier:ACCESSIBILITY_IDENTIFIER_WITH_NAME(self, @"support")
-                                         actionBlock:^{
-                                             SFSafariViewController *safariVC = [[SFSafariViewController alloc]
-                                                 initWithURL:[NSURL URLWithString:@"https://support.signal.org"]];
-                                             [weakSelf presentViewController:safariVC animated:YES completion:nil];
-                                         }]];
-    [contents addSection:helpSection];
-
     UILabel *copyrightLabel = [UILabel new];
     copyrightLabel.text = NSLocalizedString(@"SETTINGS_COPYRIGHT", @"");
     copyrightLabel.textColor = Theme.secondaryTextAndIconColor;
@@ -98,11 +78,15 @@
     copyrightLabel.numberOfLines = 2;
     copyrightLabel.lineBreakMode = NSLineBreakByWordWrapping;
     copyrightLabel.textAlignment = NSTextAlignmentCenter;
-    helpSection.customFooterView = copyrightLabel;
-    helpSection.customFooterHeight = @(60.f);
+    informationSection.customFooterView = copyrightLabel;
+    informationSection.customFooterHeight = @(60.f);
 
-    if (SSKFeatureFlags.verboseAboutView) {
+    if (SSKDebugFlags.verboseAboutView) {
         [self addVerboseContents:contents];
+    }
+
+    if (SSKDebugFlags.groupsV2memberStatusIndicators) {
+        [self addGroupsV2memberStatusIndicators:contents];
     }
 
     self.contents = contents;
@@ -129,6 +113,22 @@
     OWSTableSection *debugSection = [OWSTableSection new];
 
     debugSection.headerTitle = @"Debug";
+
+    __weak AboutTableViewController *weakSelf = self;
+    [debugSection
+        addItem:[OWSTableItem disclosureItemWithText:@"Flags"
+                                         actionBlock:^{
+                                             UIViewController *flagsViewController = [FlagsViewController new];
+                                             [weakSelf.navigationController pushViewController:flagsViewController
+                                                                                      animated:YES];
+                                         }]];
+    [debugSection
+        addItem:[OWSTableItem disclosureItemWithText:@"Testing"
+                                         actionBlock:^{
+                                             UIViewController *testingViewController = [TestingViewController new];
+                                             [weakSelf.navigationController pushViewController:testingViewController
+                                                                                      animated:YES];
+                                         }]];
 
     NSString *environmentName = TSConstants.isUsingProductionService ? @"Production" : @"Staging";
     [debugSection
@@ -177,9 +177,21 @@
     NSString *_Nullable pushToken = [preferences getPushToken];
     NSString *_Nullable voipToken = [preferences getVoipToken];
     [debugSection
-        addItem:[OWSTableItem labelItemWithText:[NSString stringWithFormat:@"Push Token: %@", pushToken ?: @"None"]]];
+        addItem:[OWSTableItem actionItemWithText:[NSString stringWithFormat:@"Push Token: %@", pushToken ?: @"None"]
+                         accessibilityIdentifier:ACCESSIBILITY_IDENTIFIER_WITH_NAME(self, @"push_token")
+                                     actionBlock:^{
+                                         if (pushToken) {
+                                             UIPasteboard.generalPasteboard.string = pushToken;
+                                         }
+                                     }]];
     [debugSection
-        addItem:[OWSTableItem labelItemWithText:[NSString stringWithFormat:@"VOIP Token: %@", voipToken ?: @"None"]]];
+        addItem:[OWSTableItem actionItemWithText:[NSString stringWithFormat:@"VOIP Token: %@", voipToken ?: @"None"]
+                         accessibilityIdentifier:ACCESSIBILITY_IDENTIFIER_WITH_NAME(self, @"voip_token")
+                                     actionBlock:^{
+                                         if (voipToken) {
+                                             UIPasteboard.generalPasteboard.string = voipToken;
+                                         }
+                                     }]];
 
     // Strip prefix from category, otherwise it's too long to fit into cell on a small device.
     NSString *audioCategory =
@@ -187,6 +199,32 @@
                                                                           withString:@""];
     [debugSection
         addItem:[OWSTableItem labelItemWithText:[NSString stringWithFormat:@"Audio Category: %@", audioCategory]]];
+
+    NSData *localProfileKey = [self.profileManager localProfileKey].keyData;
+    [debugSection addItem:[OWSTableItem labelItemWithText:[NSString stringWithFormat:@"Local Profile Key: %@",
+                                                                    localProfileKey.hexadecimalString]]];
+}
+
+- (void)addGroupsV2memberStatusIndicators:(OWSTableContents *)contents
+{
+    SignalServiceAddress *localAddress = self.tsAccountManager.localAddress;
+    __block BOOL hasGroupsV2Capability;
+    __block BOOL hasGroupMigrationCapability;
+    [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
+        hasGroupsV2Capability = [GroupManager doesUserHaveGroupsV2CapabilityWithAddress:localAddress
+                                                                            transaction:transaction];
+        hasGroupMigrationCapability = [GroupManager doesUserHaveGroupsV2MigrationCapabilityWithAddress:localAddress
+                                                                                           transaction:transaction];
+    }];
+
+    OWSTableSection *section = [OWSTableSection new];
+    section.headerTitle = @"Groups v2";
+    [section addItem:[OWSTableItem labelItemWithText:[NSString stringWithFormat:@"Has Groups v2 capability: %@",
+                                                               @(hasGroupsV2Capability)]]];
+    [section addItem:[OWSTableItem labelItemWithText:[NSString stringWithFormat:@"Has Group Migration capability: %@",
+                                                               @(hasGroupMigrationCapability)]]];
+
+    [contents addSection:section];
 }
 
 - (void)crashApp

@@ -1,11 +1,12 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "SignalRecipient.h"
 #import "OWSDevice.h"
 #import "ProfileManagerProtocol.h"
 #import "SSKEnvironment.h"
+#import "SSKSessionStore.h"
 #import "TSAccountManager.h"
 #import "TSSocketManager.h"
 #import <SignalServiceKit/SignalServiceKit-Swift.h>
@@ -51,9 +52,29 @@ const NSUInteger SignalRecipientSchemaVersion = 1;
     return SSKEnvironment.shared.socketManager;
 }
 
+- (id<StorageServiceManagerProtocol>)storageServiceManager
+{
+    return SSKEnvironment.shared.storageServiceManager;
+}
+
 + (id<StorageServiceManagerProtocol>)storageServiceManager
 {
     return SSKEnvironment.shared.storageServiceManager;
+}
+
++ (SSKSessionStore *)sessionStore
+{
+    return SSKEnvironment.shared.sessionStore;
+}
+
++ (SignalRecipientReadCache *)signalRecipientReadCache
+{
+    return SSKEnvironment.shared.modelReadCaches.signalRecipientReadCache;
+}
+
+- (SignalRecipientReadCache *)signalRecipientReadCache
+{
+    return SSKEnvironment.shared.modelReadCaches.signalRecipientReadCache;
 }
 
 #pragma mark -
@@ -73,6 +94,23 @@ const NSUInteger SignalRecipientSchemaVersion = 1;
     return recipient;
 }
 
+- (instancetype)initWithUUIDString:(NSString *)uuidString
+{
+    self = [super init];
+
+    if (!self) {
+        return self;
+    }
+
+    _recipientUUID = uuidString;
+    _recipientPhoneNumber = nil;
+    _recipientSchemaVersion = SignalRecipientSchemaVersion;
+
+    _devices = [NSOrderedSet orderedSetWithObject:@(OWSDevicePrimaryDeviceId)];
+
+    return self;
+}
+
 - (instancetype)initWithAddress:(SignalServiceAddress *)address
 {
     self = [super init];
@@ -89,6 +127,28 @@ const NSUInteger SignalRecipientSchemaVersion = 1;
 
     return self;
 }
+
+#if TESTABLE_BUILD
+- (instancetype)initWithPhoneNumber:(nullable NSString *)phoneNumber
+                               uuid:(nullable NSUUID *)uuid
+                            devices:(NSArray<NSNumber *> *)devices
+{
+    OWSAssertDebug(phoneNumber.length > 0 || uuid.UUIDString.length > 0);
+
+    self = [super init];
+
+    if (!self) {
+        return self;
+    }
+
+    _recipientUUID = uuid.UUIDString;
+    _recipientPhoneNumber = phoneNumber;
+    _recipientSchemaVersion = SignalRecipientSchemaVersion;
+    _devices = [NSOrderedSet orderedSetWithArray:devices];
+
+    return self;
+}
+#endif
 
 - (nullable instancetype)initWithCoder:(NSCoder *)coder
 {
@@ -165,12 +225,11 @@ const NSUInteger SignalRecipientSchemaVersion = 1;
 {
     OWSAssertDebug(transaction);
     OWSAssertDebug(address.isValid);
-    SignalRecipient *_Nullable signalRecipient = [self.recipientFinder signalRecipientForAddress:address
-                                                                                     transaction:transaction];
+    SignalRecipient *_Nullable signalRecipient =
+        [self.signalRecipientReadCache getSignalRecipientForAddress:address transaction:transaction];
     if (mustHaveDevices && signalRecipient.devices.count < 1) {
         return nil;
     }
-
     return signalRecipient;
 }
 
@@ -205,9 +264,11 @@ const NSUInteger SignalRecipientSchemaVersion = 1;
     // can markRecipientAsUnregistered:... if the recipient has
     // no devices left.
     if (devicesToAdd.count > 0) {
+        OWSLogInfo(@"devicesToAdd: %@ for %@", devicesToAdd, self.address);
         [self addDevicesToRegisteredRecipient:[NSSet setWithArray:devicesToAdd] transaction:transaction];
     }
     if (devicesToRemove.count > 0) {
+        OWSLogInfo(@"devicesToRemove: %@ for %@", devicesToRemove, self.address);
         [self removeDevicesFromRecipient:[NSSet setWithArray:devicesToRemove] transaction:transaction];
     }
 
@@ -215,7 +276,7 @@ const NSUInteger SignalRecipientSchemaVersion = 1;
     dispatch_async(dispatch_get_main_queue(), ^{
         // Device changes can affect the UD access mode for a recipient,
         // so we need to fetch the profile for this user to update UD access mode.
-        [self.profileManager updateProfileForAddress:self.address];
+        [self.profileManager fetchProfileForAddress:self.address];
 
         if (self.address.isLocalAddress) {
             [self.socketManager cycleSocket];
@@ -285,30 +346,193 @@ const NSUInteger SignalRecipientSchemaVersion = 1;
 }
 
 + (SignalRecipient *)markRecipientAsRegisteredAndGet:(SignalServiceAddress *)address
+                                          trustLevel:(SignalRecipientTrustLevel)trustLevel
                                          transaction:(SDSAnyWriteTransaction *)transaction
 {
     OWSAssertDebug(address.isValid);
     OWSAssertDebug(transaction);
 
-    SignalRecipient *_Nullable existingInstance = [self registeredRecipientForAddress:address
-                                                                      mustHaveDevices:NO
-                                                                          transaction:transaction];
-    if (existingInstance == nil) {
-        OWSLogDebug(@"creating recipient: %@", address);
+    switch (trustLevel) {
+        case SignalRecipientTrustLevelLow:
+            return [self markLowTrustRecipientAsRegisteredAndGet:address transaction:transaction];
+        case SignalRecipientTrustLevelHigh:
+            return [self markHighTrustRecipientAsRegisteredAndGet:address transaction:transaction];
+    }
+}
+
++ (SignalRecipient *)markLowTrustRecipientAsRegisteredAndGet:(SignalServiceAddress *)address
+                                                 transaction:(SDSAnyWriteTransaction *)transaction
+{
+    OWSAssertDebug(address.isValid);
+    OWSAssertDebug(transaction);
+
+    SignalRecipient *_Nullable phoneNumberInstance = nil;
+    SignalRecipient *_Nullable uuidInstance = nil;
+    if (address.phoneNumber != nil) {
+        phoneNumberInstance = [self.recipientFinder signalRecipientForPhoneNumber:address.phoneNumber
+                                                                      transaction:transaction];
+    }
+    if (address.uuid != nil) {
+        uuidInstance = [self.recipientFinder signalRecipientForUUID:address.uuid transaction:transaction];
+    }
+
+    // Low trust updates should never update the database, unless
+    // there is no matching record for the UUID, in which case we
+    // can create a new UUID only record (we don't want to associate
+    // it with the phone number) or there is no UUID, in which case
+    // we will record the phone number alone.
+    if (uuidInstance) {
+        return uuidInstance;
+    } else if (address.uuidString) {
+        OWSLogDebug(@"creating new low trust recipient with UUID: %@", address.uuidString);
+
+        SignalRecipient *newInstance = [[self alloc] initWithUUIDString:address.uuidString];
+        [newInstance anyInsertWithTransaction:transaction];
+
+        // Record with the new contact in the social graph
+        [self.storageServiceManager recordPendingUpdatesWithUpdatedAccountIds:@[ newInstance.accountId ]];
+
+        return newInstance;
+    } else if (phoneNumberInstance) {
+        return phoneNumberInstance;
+    } else {
+        OWSAssertDebug(address.phoneNumber);
+        OWSLogDebug(@"creating new low trust recipient with phoneNumber: %@", address.phoneNumber);
 
         SignalRecipient *newInstance = [[self alloc] initWithAddress:address];
         [newInstance anyInsertWithTransaction:transaction];
 
         // Record with the new contact in the social graph
-        [self.storageServiceManager recordPendingUpdatesWithUpdatedIds:@[ newInstance.accountId ]];
+        [self.storageServiceManager recordPendingUpdatesWithUpdatedAccountIds:@[ newInstance.accountId ]];
+
+        return newInstance;
+    }
+}
+
++ (SignalRecipient *)markHighTrustRecipientAsRegisteredAndGet:(SignalServiceAddress *)address
+                                                  transaction:(SDSAnyWriteTransaction *)transaction
+{
+    OWSAssertDebug(address.isValid);
+    OWSAssertDebug(transaction);
+
+    SignalRecipient *_Nullable phoneNumberInstance = nil;
+    SignalRecipient *_Nullable uuidInstance = nil;
+    if (address.phoneNumber != nil) {
+        phoneNumberInstance = [self.recipientFinder signalRecipientForPhoneNumber:address.phoneNumber
+                                                                      transaction:transaction];
+    }
+    if (address.uuid != nil) {
+        uuidInstance = [self.recipientFinder signalRecipientForUUID:address.uuid transaction:transaction];
+    }
+
+    // High trust updates will fully update the database to reflect
+    // the new mapping in a given address, if any changes are present.
+    //
+    // In general, the rules we follow when applying changes are:
+    // * UUIDs are immutable and representative of an account. If the UUID
+    //   has changed we must treat it as an entirely new contact.
+    // * Phone numbers are transient and can move freely between UUIDs. When
+    //   they do, we must backfill the database to reflect the change.
+    BOOL shouldUpdate = NO;
+    SignalRecipient *_Nullable existingInstance = nil;
+
+    if (uuidInstance && phoneNumberInstance) {
+        // These are the same and both fully complete, we have no extra work to do.
+        if ([uuidInstance.uniqueId isEqualToString:phoneNumberInstance.uniqueId]) {
+            existingInstance = phoneNumberInstance;
+
+            // These are the same, but not fully complete. We need to merge them.
+        } else if (phoneNumberInstance.recipientUUID == nil && uuidInstance.recipientPhoneNumber == nil) {
+            existingInstance = [self mergeUUIDInstance:uuidInstance
+                                andPhoneNumberInstance:phoneNumberInstance
+                                           transaction:transaction];
+            shouldUpdate = YES;
+
+            // Update the SignalServiceAddressCache mappings with the now fully-qualified recipient.
+            [SSKEnvironment.shared.signalServiceAddressCache updateMappingWithUuid:address.uuid
+                                                                       phoneNumber:address.phoneNumber];
+
+            // The UUID differs between the two records, we need to migrate the phone
+            // number to the UUID instance.
+        } else {
+            OWSLogWarn(@"Learned phoneNumber (%@) now belongs to uuid (%@).", address.phoneNumber, address.uuid);
+
+            // Ordering is critical here. We must remove the phone number
+            // from the old recipient *before* we assign the phone number
+            // to the new recipient, in case there are any legacy phone
+            // number only records in the database.
+
+            shouldUpdate = YES;
+
+            OWSAssertDebug(phoneNumberInstance.recipientUUID != nil);
+            [phoneNumberInstance changePhoneNumber:nil transaction:transaction.unwrapGrdbWrite];
+            [phoneNumberInstance anyOverwritingUpdateWithTransaction:transaction];
+            [uuidInstance changePhoneNumber:address.phoneNumber transaction:transaction.unwrapGrdbWrite];
+
+            existingInstance = uuidInstance;
+        }
+    } else if (phoneNumberInstance) {
+        if (address.uuidString && phoneNumberInstance.recipientUUID != nil) {
+            OWSLogWarn(@"Learned phoneNumber (%@) now belongs to uuid (%@).", address.phoneNumber, address.uuid);
+
+            // The UUID associated with this phone number has changed, we must
+            // clear the phone number from this instance and create a new instance.
+            [phoneNumberInstance changePhoneNumber:nil transaction:transaction.unwrapGrdbWrite];
+            [phoneNumberInstance anyOverwritingUpdateWithTransaction:transaction];
+        } else {
+            if (address.uuidString) {
+                OWSLogWarn(
+                    @"Learned uuid (%@) is associated with phoneNumber (%@).", address.uuidString, address.phoneNumber);
+
+                shouldUpdate = YES;
+                phoneNumberInstance.recipientUUID = address.uuidString;
+
+                // Update the SignalServiceAddressCache mappings with the now fully-qualified recipient.
+                [SSKEnvironment.shared.signalServiceAddressCache updateMappingWithUuid:address.uuid
+                                                                           phoneNumber:address.phoneNumber];
+            }
+
+            existingInstance = phoneNumberInstance;
+        }
+    } else if (uuidInstance) {
+        if (address.phoneNumber) {
+            if (uuidInstance.recipientPhoneNumber == nil) {
+                OWSLogWarn(
+                    @"Learned uuid (%@) is associated with phoneNumber (%@).", address.uuidString, address.phoneNumber);
+            } else {
+                OWSLogWarn(@"Learned uuid (%@) changed from old phoneNumber (%@) to new phoneNumber (%@)",
+                    address.uuidString,
+                    existingInstance.recipientPhoneNumber,
+                    address.phoneNumber);
+            }
+
+            shouldUpdate = YES;
+            [uuidInstance changePhoneNumber:address.phoneNumber transaction:transaction.unwrapGrdbWrite];
+        }
+
+        existingInstance = uuidInstance;
+    }
+
+    if (existingInstance == nil) {
+        OWSLogDebug(@"creating new high trust recipient with address: %@", address);
+
+        SignalRecipient *newInstance = [[self alloc] initWithAddress:address];
+        [newInstance anyInsertWithTransaction:transaction];
+
+        // Update the SignalServiceAddressCache mappings with the new recipient.
+        if (address.uuid) {
+            [SSKEnvironment.shared.signalServiceAddressCache updateMappingWithUuid:address.uuid
+                                                                       phoneNumber:address.phoneNumber];
+        }
+
+        // Record with the new contact in the social graph
+        [self.storageServiceManager recordPendingUpdatesWithUpdatedAccountIds:@[ newInstance.accountId ]];
 
         return newInstance;
     }
 
-    BOOL hasChanged = NO;
-
     if (existingInstance.devices.count == 0) {
-        hasChanged = YES;
+        shouldUpdate = YES;
 
         // We know they're registered, so make sure they have at least one device.
         // We assume it's the default device. If we're wrong, the service will correct us when we
@@ -316,39 +540,86 @@ const NSUInteger SignalRecipientSchemaVersion = 1;
         existingInstance.devices = [NSOrderedSet orderedSetWithObject:@(OWSDevicePrimaryDeviceId)];
     }
 
-    // If we've learned a users UUID, record it.
-    if (existingInstance.recipientUUID == nil && address.uuid != nil) {
-        hasChanged = YES;
-
-        existingInstance.recipientUUID = address.uuidString;
-    }
-
-    // If we've learned a users phone number, record it.
-    if (existingInstance.recipientPhoneNumber == nil && address.phoneNumber != nil) {
-        hasChanged = YES;
-
-        OWSFailDebug(@"unexpectedly learned about a users phone number");
-        existingInstance.recipientPhoneNumber = address.phoneNumber;
-    }
-
     // Record the updated contact in the social graph
-    if (hasChanged) {
+    if (shouldUpdate) {
+        OWSAssertDebug([existingInstance.devices containsObject:@(OWSDevicePrimaryDeviceId)]);
         [existingInstance anyOverwritingUpdateWithTransaction:transaction];
-        [self.storageServiceManager recordPendingUpdatesWithUpdatedIds:@[ existingInstance.accountId ]];
+        [self.storageServiceManager recordPendingUpdatesWithUpdatedAccountIds:@[ existingInstance.accountId ]];
     }
 
     return existingInstance;
 }
 
++ (SignalRecipient *)mergeUUIDInstance:(SignalRecipient *)uuidInstance
+                andPhoneNumberInstance:(SignalRecipient *)phoneNumberInstance
+                           transaction:(SDSAnyWriteTransaction *)transaction
+{
+    OWSAssertDebug(uuidInstance.recipientPhoneNumber == nil ||
+        [NSObject isNullableObject:uuidInstance.recipientPhoneNumber equalTo:phoneNumberInstance.recipientPhoneNumber]);
+    OWSAssertDebug(phoneNumberInstance.recipientUUID == nil ||
+        [NSObject isNullableObject:phoneNumberInstance.recipientUUID equalTo:uuidInstance.recipientUUID]);
+
+    // We have separate recipients in the db for the uuid and phone number.
+    // There isn't an ideal way to do this, but we need to converge on one
+    // recipient and discard the other.
+    //
+    // TODO: Should we clean up any state related to the discarded recipient?
+
+    SignalRecipient *_Nullable winningInstance = nil;
+
+    // We try to preserve the recipient that has a session.
+    NSNumber *_Nullable sessionIndexForUuid =
+        [self.sessionStore maxSessionSenderChainKeyIndexForAccountId:uuidInstance.accountId transaction:transaction];
+    NSNumber *_Nullable sessionIndexForPhoneNumber =
+        [self.sessionStore maxSessionSenderChainKeyIndexForAccountId:phoneNumberInstance.accountId
+                                                         transaction:transaction];
+
+    if (SSKDebugFlags.verboseSignalRecipientLogging) {
+        OWSLogInfo(@"phoneNumberInstance: %@", phoneNumberInstance);
+        OWSLogInfo(@"uuidInstance: %@", uuidInstance);
+        OWSLogInfo(@"sessionIndexForUuid: %@", sessionIndexForUuid);
+        OWSLogInfo(@"sessionIndexForPhoneNumber: %@", sessionIndexForPhoneNumber);
+    }
+
+    // We want to retain the phone number recipient if it
+    // has a session and the uuid recipient doesn't or if
+    // both have a session but the phone number recipient
+    // has seen more use.
+    //
+    // All things being equal, we default to retaining the
+    // UUID recipient.
+    BOOL shouldUseUuid = (sessionIndexForPhoneNumber.intValue <= sessionIndexForUuid.intValue);
+    if (shouldUseUuid) {
+        OWSLogWarn(@"Discarding phone number recipient in favor of uuid recipient.");
+        winningInstance = uuidInstance;
+        [phoneNumberInstance anyRemoveWithTransaction:transaction];
+    } else {
+        OWSLogWarn(@"Discarding uuid recipient in favor of phone number recipient.");
+        winningInstance = phoneNumberInstance;
+        [uuidInstance anyRemoveWithTransaction:transaction];
+    }
+
+    // Make sure the winning instance is fully qualified.
+    winningInstance.recipientPhoneNumber = phoneNumberInstance.recipientPhoneNumber;
+    winningInstance.recipientUUID = uuidInstance.recipientUUID;
+
+    [OWSUserProfile mergeUserProfilesIfNecessaryForAddress:winningInstance.address transaction:transaction];
+
+    return winningInstance;
+}
+
 + (void)markRecipientAsRegistered:(SignalServiceAddress *)address
                          deviceId:(UInt32)deviceId
+                       trustLevel:(SignalRecipientTrustLevel)trustLevel
                       transaction:(SDSAnyWriteTransaction *)transaction
 {
     OWSAssertDebug(address.isValid);
     OWSAssertDebug(deviceId > 0);
     OWSAssertDebug(transaction);
 
-    SignalRecipient *recipient = [self markRecipientAsRegisteredAndGet:address transaction:transaction];
+    SignalRecipient *recipient = [self markRecipientAsRegisteredAndGet:address
+                                                            trustLevel:trustLevel
+                                                           transaction:transaction];
     if (![recipient.devices containsObject:@(deviceId)]) {
         OWSLogDebug(@"Adding device %u to existing recipient.", (unsigned int)deviceId);
 
@@ -366,8 +637,8 @@ const NSUInteger SignalRecipientSchemaVersion = 1;
     OWSAssertDebug(transaction);
 
     SignalRecipient *recipient = [self getOrBuildUnsavedRecipientForAddress:address transaction:transaction];
-    OWSLogDebug(@"Marking recipient as not registered: %@", address);
     if (recipient.devices.count > 0) {
+        OWSLogDebug(@"Marking recipient as not registered: %@", address);
         if ([SignalRecipient anyFetchWithUniqueId:recipient.uniqueId transaction:transaction] == nil) {
             [recipient removeDevices:recipient.devices.set];
             [recipient anyInsertWithTransaction:transaction];
@@ -379,8 +650,43 @@ const NSUInteger SignalRecipientSchemaVersion = 1;
         }
 
         // Remove the contact from our social graph
-        [self.storageServiceManager recordPendingDeletionsWithDeletedIds:@[ recipient.accountId ]];
+        [self.storageServiceManager recordPendingDeletionsWithDeletedAccountIds:@[ recipient.accountId ]];
     }
+}
+
+- (void)anyDidInsertWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidInsertWithTransaction:transaction];
+
+    [self.signalRecipientReadCache didInsertOrUpdateSignalRecipient:self transaction:transaction];
+}
+
+- (void)anyDidUpdateWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidUpdateWithTransaction:transaction];
+
+    [self.signalRecipientReadCache didInsertOrUpdateSignalRecipient:self transaction:transaction];
+}
+
+- (void)anyDidRemoveWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidRemoveWithTransaction:transaction];
+
+    [self.signalRecipientReadCache didRemoveSignalRecipient:self transaction:transaction];
+    [self.storageServiceManager recordPendingDeletionsWithDeletedAccountIds:@[ self.accountId ]];
+}
+
++ (BOOL)shouldBeIndexedForFTS
+{
+    return YES;
+}
+
+- (void)removePhoneNumberForDatabaseMigration
+{
+    OWSAssertDebug(self.recipientUUID != nil);
+    OWSAssertDebug(self.recipientPhoneNumber != nil);
+
+    _recipientPhoneNumber = nil;
 }
 
 @end

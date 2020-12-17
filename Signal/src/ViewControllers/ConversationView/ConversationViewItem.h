@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "ConversationViewLayout.h"
@@ -41,21 +41,22 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState value);
 @class ContactShareViewModel;
 @class ConversationViewCell;
 @class DisplayableText;
+@class GroupInviteLinkPreview;
+@class GroupInviteLinkViewModel;
+@class GroupUpdateCopyItem;
 @class InteractionReactionState;
 @class OWSLinkPreview;
 @class OWSQuotedReplyModel;
-@class OWSUnreadIndicator;
 @class SDSAnyReadTransaction;
 @class SignalServiceAddress;
 @class StickerInfo;
+@class StickerMetadata;
 @class TSAttachment;
 @class TSAttachmentPointer;
 @class TSAttachmentStream;
 @class TSGroupThread;
 @class TSInteraction;
 @class TSThread;
-
-@protocol MessageActionsDelegate;
 
 @interface ConversationMediaAlbumItem : NSObject
 
@@ -94,21 +95,19 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState value);
 @property (nonatomic, readonly) BOOL isQuotedReply;
 @property (nonatomic, readonly) BOOL hasQuotedAttachment;
 @property (nonatomic, readonly) BOOL hasQuotedText;
-@property (nonatomic, readonly) BOOL hasCellHeader;
 
 @property (nonatomic, readonly) BOOL hasPerConversationExpiration;
 @property (nonatomic, readonly) BOOL isViewOnceMessage;
 
-@property (nonatomic) BOOL shouldShowDate;
+@property (nonatomic, readonly) BOOL canShowDate;
 @property (nonatomic) BOOL shouldShowSenderAvatar;
 @property (nonatomic, nullable) NSAttributedString *senderName;
 @property (nonatomic, nullable) NSString *senderUsername;
+@property (nonatomic, nullable) NSString *senderProfileName;
 @property (nonatomic, nullable) NSString *accessibilityAuthorName;
 @property (nonatomic) BOOL shouldHideFooter;
 @property (nonatomic) BOOL isFirstInCluster;
 @property (nonatomic) BOOL isLastInCluster;
-
-@property (nonatomic, nullable) OWSUnreadIndicator *unreadIndicator;
 
 - (ConversationViewCell *)dequeueCellForCollectionView:(UICollectionView *)collectionView
                                              indexPath:(NSIndexPath *)indexPath;
@@ -153,13 +152,17 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState value);
 
 @property (nonatomic, readonly, nullable) OWSLinkPreview *linkPreview;
 @property (nonatomic, readonly, nullable) TSAttachment *linkPreviewAttachment;
+@property (nonatomic, readonly, nullable) GroupInviteLinkViewModel *groupInviteLinkViewModel;
 
 @property (nonatomic, readonly, nullable) StickerInfo *stickerInfo;
 @property (nonatomic, readonly, nullable) TSAttachmentStream *stickerAttachment;
+@property (nonatomic, readonly, nullable) StickerMetadata *stickerMetadata;
 @property (nonatomic, readonly) BOOL isFailedSticker;
 @property (nonatomic, readonly) ViewOnceMessageState viewOnceMessageState;
 
 @property (nonatomic, readonly, nullable) NSString *systemMessageText;
+@property (nonatomic) BOOL shouldCollapseSystemMessageAction;
+@property (nonatomic, readonly, nullable) NSArray<GroupUpdateCopyItem *> *systemMessageGroupUpdates;
 
 // NOTE: This property is only set for incoming messages, typing indicators, and thread details.
 @property (nonatomic, readonly, nullable) NSString *authorConversationColorName;
@@ -168,6 +171,8 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState value);
 @property (nonatomic, readonly, nullable) NSArray<NSString *> *mutualGroupNames;
 
 @property (nonatomic, readonly, nullable) InteractionReactionState *reactionState;
+
+@property (nonatomic) BOOL isTruncatedTextVisible;
 
 #pragma mark - MessageActions
 
@@ -179,7 +184,7 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState value);
 - (void)deleteAction;
 
 - (BOOL)canShareMedia;
-- (BOOL)canForwardMessage;
+@property (nonatomic, readonly) BOOL canForwardMessage;
 
 // For view items that correspond to interactions, this is the interaction's unique id.
 // For other view views (like the typing indicator), this is a unique, stable string.
@@ -188,6 +193,7 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState value);
 - (nullable TSAttachmentStream *)firstValidAlbumAttachment;
 
 - (BOOL)mediaAlbumHasFailedAttachment;
+- (BOOL)mediaAlbumHasPendingMessageRequestAttachment;
 
 @end
 
@@ -196,6 +202,7 @@ NSString *NSStringForViewOnceMessageState(ViewOnceMessageState value);
 @interface ConversationInteractionViewItem
     : NSObject <ConversationViewItem, ConversationViewLayoutItem, OWSAudioPlayerDelegate>
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
 - (instancetype)initWithInteraction:(TSInteraction *)interaction
                              thread:(TSThread *)thread

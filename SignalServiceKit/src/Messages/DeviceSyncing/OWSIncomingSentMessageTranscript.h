@@ -1,9 +1,11 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class DisappearingMessageToken;
+@class MessageBodyRanges;
 @class MessageSticker;
 @class OWSContact;
 @class OWSLinkPreview;
@@ -33,6 +35,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL isEndSessionMessage;
 @property (nonatomic, readonly, nullable) NSData *groupId;
 @property (nonatomic, readonly) NSString *body;
+@property (nonatomic, readonly) MessageBodyRanges *bodyRanges;
 @property (nonatomic, readonly) NSArray<SSKProtoAttachmentPointer *> *attachmentPointerProtos;
 @property (nonatomic, readonly, nullable) TSThread *thread;
 @property (nonatomic, readonly, nullable) TSQuotedMessage *quotedMessage;
@@ -42,6 +45,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL isRecipientUpdate;
 @property (nonatomic, readonly) BOOL isViewOnceMessage;
 @property (nonatomic, readonly, nullable) NSNumber *requiredProtocolVersion;
+@property (nonatomic, readonly) DisappearingMessageToken *disappearingMessageToken;
 
 // If either nonUdRecipientIds or udRecipientIds is nil,
 // this is either a legacy transcript or it reflects a legacy sync message.

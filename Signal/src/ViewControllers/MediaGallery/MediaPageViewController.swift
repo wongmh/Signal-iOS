@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import UIKit
@@ -83,7 +83,7 @@ class MediaPageViewController: UIPageViewController, UIPageViewControllerDataSou
         delegate = self
         transitioningDelegate = self
 
-        let galleryItem: MediaGalleryItem? = databaseStorage.uiread { transaction in
+        let galleryItem: MediaGalleryItem? = databaseStorage.uiRead { transaction in
             self.mediaGallery.buildGalleryItem(attachment: initialMediaAttachment, transaction: transaction)
         }
 
@@ -112,12 +112,6 @@ class MediaPageViewController: UIPageViewController, UIPageViewControllerDataSou
         Logger.debug("deinit")
     }
 
-    // MARK: - Dependencies
-
-    var databaseStorage: SDSDatabaseStorage {
-        return SDSDatabaseStorage.shared
-    }
-
     // MARK: - Subview
 
     // MARK: Top Bar
@@ -125,7 +119,7 @@ class MediaPageViewController: UIPageViewController, UIPageViewControllerDataSou
 
     // MARK: Bottom Bar
     lazy var bottomContainer = UIView()
-    lazy var footerBar = makeClearToolbar()
+    lazy var footerBar = UIToolbar.clear()
     let captionContainerView: CaptionContainerView = CaptionContainerView()
     var galleryRailView: GalleryRailView = GalleryRailView()
 
@@ -281,20 +275,6 @@ class MediaPageViewController: UIPageViewController, UIPageViewControllerDataSou
         }
     }
 
-    private func makeClearToolbar() -> UIToolbar {
-        let toolbar = UIToolbar()
-
-        toolbar.backgroundColor = UIColor.clear
-
-        // Making a toolbar transparent requires setting an empty uiimage
-        toolbar.setBackgroundImage(UIImage(), forToolbarPosition: .any, barMetrics: .default)
-
-        // hide 1px top-border
-        toolbar.clipsToBounds = true
-
-        return toolbar
-    }
-
     private var shouldHideToolbars: Bool = false {
         didSet {
             guard oldValue != shouldHideToolbars else { return }
@@ -357,13 +337,6 @@ class MediaPageViewController: UIPageViewController, UIPageViewControllerDataSou
     }()
 
     private func updateFooterBarButtonItems(isPlayingVideo: Bool) {
-        // TODO do we still need this? seems like a vestige
-        // from when media detail view was used for attachment approval
-        if self.footerBar == nil {
-            owsFailDebug("No footer bar visible.")
-            return
-        }
-
         var toolbarItems: [UIBarButtonItem] = [
             shareBarButton,
             buildFlexibleSpace(),
@@ -371,7 +344,7 @@ class MediaPageViewController: UIPageViewController, UIPageViewControllerDataSou
             buildFlexibleSpace()
         ]
 
-        if (self.currentItem.isVideo) {
+        if self.currentItem.isVideo {
             toolbarItems += [
                 isPlayingVideo ? self.videoPauseBarButton : self.videoPlayBarButton,
                 buildFlexibleSpace()
@@ -450,7 +423,7 @@ class MediaPageViewController: UIPageViewController, UIPageViewControllerDataSou
         }
 
         let actionSheet = ActionSheetController(title: nil, message: nil)
-        let deleteAction = ActionSheetAction(title: NSLocalizedString("TXT_DELETE_TITLE", comment: ""),
+        let deleteAction = ActionSheetAction(title: CommonStrings.deleteButton,
                                          style: .destructive) { _ in
                                             let deletedItem = currentViewController.galleryItem
                                             self.mediaGallery.delete(items: [deletedItem], initiatedBy: self, deleteFromDB: true)
@@ -563,7 +536,7 @@ class MediaPageViewController: UIPageViewController, UIPageViewControllerDataSou
 
                 // This can happen when trying to page past the last (or first) view controller
                 // In that case, we don't want to change the captionView.
-                if (previousPage != currentViewController) {
+                if previousPage != currentViewController {
                     captionContainerView.completePagerTransition()
                 }
 
@@ -683,10 +656,6 @@ class MediaPageViewController: UIPageViewController, UIPageViewControllerDataSou
     }
 
     // MARK: Dynamic Header
-
-    private var contactsManager: OWSContactsManager {
-        return Environment.shared.contactsManager
-    }
 
     private func senderName(message: TSMessage) -> String {
         switch message {
@@ -841,9 +810,8 @@ extension MediaPageViewController: MediaPresentationContextProvider {
             return nil
         }
 
-        let presentationFrame = coordinateSpace.convert(mediaView.frame, from: mediaSuperview)
         // TODO better match the corner radius
-        return MediaPresentationContext(mediaView: mediaView, presentationFrame: presentationFrame, cornerRadius: 0)
+        return MediaPresentationContext(mediaView: mediaView, presentationFrame: mediaView.frame, cornerRadius: 0)
     }
 
     func snapshotOverlayView(in coordinateSpace: UICoordinateSpace) -> (UIView, CGRect)? {

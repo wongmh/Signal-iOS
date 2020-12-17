@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import <UIKit/UIKit.h>
@@ -32,6 +32,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeHeadlineFont;
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeBodyFont;
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeBody2Font;
+@property (class, readonly, nonatomic) UIFont *ows_dynamicTypeCalloutFont;
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeSubheadlineFont;
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeFootnoteFont;
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeCaption1Font;
@@ -45,6 +46,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeTitle3ClampedFont;
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeHeadlineClampedFont;
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeBodyClampedFont;
+@property (class, readonly, nonatomic) UIFont *ows_dynamicTypeCalloutClampedFont;
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeSubheadlineClampedFont;
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeFootnoteClampedFont;
 @property (class, readonly, nonatomic) UIFont *ows_dynamicTypeCaption1ClampedFont;
@@ -52,9 +54,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Styles
 
-- (UIFont *)ows_italic;
-- (UIFont *)ows_semibold;
-- (UIFont *)ows_monospaced;
+@property (readonly, nonatomic) UIFont *ows_italic;
+@property (readonly, nonatomic) UIFont *ows_semibold;
+@property (readonly, nonatomic) UIFont *ows_monospaced;
 
 @end
 

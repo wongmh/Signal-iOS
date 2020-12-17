@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -25,7 +25,7 @@ public class SessionResetJobQueue: NSObject, JobQueue {
     }
     public static let maxRetries: UInt = 10
     public let requiresInternet: Bool = true
-    public var runningOperations: [SessionResetOperation] = []
+    public var runningOperations = AtomicArray<SessionResetOperation>()
 
     @objc
     public override init() {
@@ -41,7 +41,7 @@ public class SessionResetJobQueue: NSObject, JobQueue {
         defaultSetup()
     }
 
-    public var isSetup: Bool = false
+    public var isSetup = AtomicBool(false)
 
     public func didMarkAsReady(oldJobRecord: JobRecordType, transaction: SDSAnyWriteTransaction) {
         // no special handling
@@ -114,13 +114,13 @@ public class SessionResetOperation: OWSOperation, DurableOperation {
 
         if firstAttempt {
             self.databaseStorage.write { transaction in
-                Logger.info("deleting sessions for recipient: \(self.recipientAddress)")
-                self.sessionStore.deleteAllSessions(for: self.recipientAddress, transaction: transaction)
+                Logger.info("archiving sessions for recipient: \(self.recipientAddress)")
+                self.sessionStore.archiveAllSessions(for: self.recipientAddress, transaction: transaction)
             }
             firstAttempt = false
         }
 
-        let endSessionMessage = EndSessionMessage(timestamp: NSDate.ows_millisecondTimeStamp(), in: self.contactThread)
+        let endSessionMessage = EndSessionMessage(thread: self.contactThread)
 
         firstly {
             return self.messageSender.sendMessage(.promise, endSessionMessage.asPreparer)
@@ -132,8 +132,7 @@ public class SessionResetOperation: OWSOperation, DurableOperation {
                 // Otherwise if we send another message before them, they wont have the session to decrypt it.
                 self.sessionStore.archiveAllSessions(for: self.recipientAddress, transaction: transaction)
 
-                let message = TSInfoMessage(timestamp: NSDate.ows_millisecondTimeStamp(),
-                                            in: self.contactThread,
+                let message = TSInfoMessage(thread: self.contactThread,
                                             messageType: TSInfoMessageType.typeSessionDidEnd)
                 message.anyInsert(transaction: transaction)
             }
@@ -141,7 +140,7 @@ public class SessionResetOperation: OWSOperation, DurableOperation {
         }.catch { error in
             Logger.error("sending error: \(error.localizedDescription)")
             self.reportError(withUndefinedRetry: error)
-        }.retainUntilComplete()
+        }
     }
 
     override public func didSucceed() {
@@ -159,20 +158,7 @@ public class SessionResetOperation: OWSOperation, DurableOperation {
     }
 
     override public func retryInterval() -> TimeInterval {
-        // Arbitrary backoff factor...
-        // With backOffFactor of 1.9
-        // try  1 delay:  0.00s
-        // try  2 delay:  0.19s
-        // ...
-        // try  5 delay:  1.30s
-        // ...
-        // try 11 delay: 61.31s
-        let backoffFactor = 1.9
-        let maxBackoff = kHourInterval
-
-        let seconds = 0.1 * min(maxBackoff, pow(backoffFactor, Double(self.jobRecord.failureCount)))
-
-        return seconds
+        return OWSOperation.retryIntervalForExponentialBackoff(failureCount: jobRecord.failureCount)
     }
 
     override public func didFail(error: Error) {

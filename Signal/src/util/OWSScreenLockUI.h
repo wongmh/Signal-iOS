@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2018 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 NS_ASSUME_NONNULL_BEGIN
@@ -8,9 +8,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, readonly) UIWindow *screenBlockingWindow;
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
 
-+ (instancetype)sharedManager;
++ (instancetype)shared;
 
 - (void)setupWithRootWindow:(UIWindow *)rootWindow;
 

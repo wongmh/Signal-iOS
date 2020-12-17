@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -18,7 +18,7 @@ import Foundation
 //         let count: UInt32 = try paramParser.required(key: "count")
 //
 //         // Optional
-//         let last_seen: Date? = try paramParser.optional(key: "last_seen")
+//         let lastSeen: Date? = try paramParser.optional(key: "last_seen")
 //
 //         return Foo(name: name, count: count, isNew: lastSeen == nil)
 //     } catch {
@@ -26,11 +26,11 @@ import Foundation
 //     }
 //
 public class ParamParser {
-    public typealias Key = AnyHashable
+    public typealias Key = String
 
-    let dictionary: Dictionary<Key, Any>
+    let dictionary: [Key: Any]
 
-    public init(dictionary: Dictionary<Key, Any>) {
+    public init(dictionary: [Key: Any]) {
         self.dictionary = dictionary
     }
 
@@ -46,16 +46,25 @@ public class ParamParser {
 
     public enum ParseError: Error, CustomStringConvertible {
         case missingField(Key)
-        case invalidFormat(Key)
+        case invalidFormat(_ key: Key, description: String? = nil)
 
         public var description: String {
             switch self {
             case .missingField(let key):
                 return "ParseError: missing field for \(key)"
-            case .invalidFormat(let key):
-                return "ParseError: invalid format for \(key)"
+            case .invalidFormat(let key, let description):
+                if let description = description {
+                    return "ParseError: invalid format for \(key) - \(description)"
+                } else {
+                    return "ParseError: invalid format for \(key)"
+                }
             }
         }
+    }
+
+    private func badCast<T>(key: Key, type: T.Type) -> ParseError {
+        let description = "Could not cast result to expected type: \(T.self)."
+        return ParseError.invalidFormat(key, description: description)
     }
 
     private func invalid(key: Key) -> ParseError {
@@ -86,10 +95,14 @@ public class ParamParser {
         }
 
         guard let typedValue = someValue as? T else {
-            throw invalid(key: key)
+            throw badCast(key: key, type: T.self)
         }
 
         return typedValue
+    }
+
+    public func hasKey(_ key: Key) -> Bool {
+        return dictionary[key] != nil && !(dictionary[key] is NSNull)
     }
 
     // MARK: FixedWidthIntegers (e.g. Int, Int32, UInt, UInt32, etc.)
@@ -115,25 +128,25 @@ public class ParamParser {
             return typedValue
         case let int as Int:
             guard int >= T.min, int <= T.max else {
-                throw invalid(key: key)
+                throw badCast(key: key, type: T.self)
             }
             return T(int)
         default:
-            throw invalid(key: key)
+            throw badCast(key: key, type: T.self)
         }
     }
 
     // MARK: Base64 Data
 
-    public func requiredBase64EncodedData(key: Key) throws -> Data {
-        guard let data: Data = try optionalBase64EncodedData(key: key) else {
+    public func requiredBase64EncodedData(key: Key, byteCount: Int? = nil) throws -> Data {
+        guard let data: Data = try optionalBase64EncodedData(key: key, byteCount: byteCount) else {
             throw ParseError.missingField(key)
         }
 
         return data
     }
 
-    public func optionalBase64EncodedData(key: Key) throws -> Data? {
+    public func optionalBase64EncodedData(key: Key, byteCount: Int? = nil) throws -> Data? {
         guard let encodedData: String = try self.optional(key: key) else {
             return nil
         }
@@ -142,10 +155,22 @@ public class ParamParser {
             throw ParseError.invalidFormat(key)
         }
 
+        if let byteCount = byteCount {
+            guard data.count == byteCount else {
+                throw ParseError.invalidFormat(key, description: "expected byteCount: \(byteCount) but found: \(data.count)")
+            }
+        }
+
         guard data.count > 0 else {
             return nil
         }
 
         return data
+    }
+}
+
+extension ParamParser: CustomDebugStringConvertible {
+    public var debugDescription: String {
+        "<ParamParser: \(dictionary)>"
     }
 }

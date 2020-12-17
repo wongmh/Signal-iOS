@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -157,22 +157,58 @@ extension OWSBackupFragment: SDSModel {
     }
 }
 
+// MARK: - DeepCopyable
+
+extension OWSBackupFragment: DeepCopyable {
+
+    public func deepCopy() throws -> AnyObject {
+        // Any subclass can be cast to it's superclass,
+        // so the order of this switch statement matters.
+        // We need to do a "depth first" search by type.
+        guard let id = self.grdbId?.int64Value else {
+            throw OWSAssertionError("Model missing grdbId.")
+        }
+
+        do {
+            let modelToCopy = self
+            assert(type(of: modelToCopy) == OWSBackupFragment.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let attachmentId: String? = modelToCopy.attachmentId
+            let downloadFilePath: String? = modelToCopy.downloadFilePath
+            let encryptionKey: Data = modelToCopy.encryptionKey
+            let recordName: String = modelToCopy.recordName
+            let relativeFilePath: String? = modelToCopy.relativeFilePath
+            let uncompressedDataLength: NSNumber? = modelToCopy.uncompressedDataLength
+
+            return OWSBackupFragment(grdbId: id,
+                                     uniqueId: uniqueId,
+                                     attachmentId: attachmentId,
+                                     downloadFilePath: downloadFilePath,
+                                     encryptionKey: encryptionKey,
+                                     recordName: recordName,
+                                     relativeFilePath: relativeFilePath,
+                                     uncompressedDataLength: uncompressedDataLength)
+        }
+
+    }
+}
+
 // MARK: - Table Metadata
 
 extension OWSBackupFragmentSerializer {
 
     // This defines all of the columns used in the table
     // where this model (and any subclasses) are persisted.
-    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey, columnIndex: 0)
-    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64, columnIndex: 1)
-    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true, columnIndex: 2)
+    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey)
+    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64)
+    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true)
     // Properties
-    static let attachmentIdColumn = SDSColumnMetadata(columnName: "attachmentId", columnType: .unicodeString, isOptional: true, columnIndex: 3)
-    static let downloadFilePathColumn = SDSColumnMetadata(columnName: "downloadFilePath", columnType: .unicodeString, isOptional: true, columnIndex: 4)
-    static let encryptionKeyColumn = SDSColumnMetadata(columnName: "encryptionKey", columnType: .blob, columnIndex: 5)
-    static let recordNameColumn = SDSColumnMetadata(columnName: "recordName", columnType: .unicodeString, columnIndex: 6)
-    static let relativeFilePathColumn = SDSColumnMetadata(columnName: "relativeFilePath", columnType: .unicodeString, isOptional: true, columnIndex: 7)
-    static let uncompressedDataLengthColumn = SDSColumnMetadata(columnName: "uncompressedDataLength", columnType: .int64, isOptional: true, columnIndex: 8)
+    static let attachmentIdColumn = SDSColumnMetadata(columnName: "attachmentId", columnType: .unicodeString, isOptional: true)
+    static let downloadFilePathColumn = SDSColumnMetadata(columnName: "downloadFilePath", columnType: .unicodeString, isOptional: true)
+    static let encryptionKeyColumn = SDSColumnMetadata(columnName: "encryptionKey", columnType: .blob)
+    static let recordNameColumn = SDSColumnMetadata(columnName: "recordName", columnType: .unicodeString)
+    static let relativeFilePathColumn = SDSColumnMetadata(columnName: "relativeFilePath", columnType: .unicodeString, isOptional: true)
+    static let uncompressedDataLengthColumn = SDSColumnMetadata(columnName: "uncompressedDataLength", columnType: .int64, isOptional: true)
 
     // TODO: We should decide on a naming convention for
     //       tables that store models.
@@ -297,9 +333,11 @@ public extension OWSBackupFragment {
 
 @objc
 public class OWSBackupFragmentCursor: NSObject {
+    private let transaction: GRDBReadTransaction
     private let cursor: RecordCursor<BackupFragmentRecord>?
 
-    init(cursor: RecordCursor<BackupFragmentRecord>?) {
+    init(transaction: GRDBReadTransaction, cursor: RecordCursor<BackupFragmentRecord>?) {
+        self.transaction = transaction
         self.cursor = cursor
     }
 
@@ -341,10 +379,10 @@ public extension OWSBackupFragment {
         let database = transaction.database
         do {
             let cursor = try BackupFragmentRecord.fetchCursor(database)
-            return OWSBackupFragmentCursor(cursor: cursor)
+            return OWSBackupFragmentCursor(transaction: transaction, cursor: cursor)
         } catch {
             owsFailDebug("Read failed: \(error)")
-            return OWSBackupFragmentCursor(cursor: nil)
+            return OWSBackupFragmentCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -550,11 +588,11 @@ public extension OWSBackupFragment {
         do {
             let sqlRequest = SQLRequest<Void>(sql: sql, arguments: arguments, cached: true)
             let cursor = try BackupFragmentRecord.fetchCursor(transaction.database, sqlRequest)
-            return OWSBackupFragmentCursor(cursor: cursor)
+            return OWSBackupFragmentCursor(transaction: transaction, cursor: cursor)
         } catch {
             Logger.error("sql: \(sql)")
             owsFailDebug("Read failed: \(error)")
-            return OWSBackupFragmentCursor(cursor: nil)
+            return OWSBackupFragmentCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -607,3 +645,20 @@ class OWSBackupFragmentSerializer: SDSSerializer {
         return BackupFragmentRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, attachmentId: attachmentId, downloadFilePath: downloadFilePath, encryptionKey: encryptionKey, recordName: recordName, relativeFilePath: relativeFilePath, uncompressedDataLength: uncompressedDataLength)
     }
 }
+
+// MARK: - Deep Copy
+
+#if TESTABLE_BUILD
+@objc
+public extension OWSBackupFragment {
+    // We're not using this method at the moment,
+    // but we might use it for validation of
+    // other deep copy methods.
+    func deepCopyUsingRecord() throws -> OWSBackupFragment {
+        guard let record = try asRecord() as? BackupFragmentRecord else {
+            throw OWSAssertionError("Could not convert to record.")
+        }
+        return try OWSBackupFragment.fromRecord(record)
+    }
+}
+#endif

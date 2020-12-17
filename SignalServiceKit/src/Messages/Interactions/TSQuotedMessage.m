@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSQuotedMessage.h"
@@ -77,7 +77,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (instancetype)initWithTimestamp:(uint64_t)timestamp
                     authorAddress:(SignalServiceAddress *)authorAddress
-                             body:(NSString *_Nullable)body
+                             body:(nullable NSString *)body
+                       bodyRanges:(nullable MessageBodyRanges *)bodyRanges
                        bodySource:(TSQuotedMessageContentSource)bodySource
     receivedQuotedAttachmentInfos:(NSArray<OWSAttachmentInfo *> *)attachmentInfos
 {
@@ -92,6 +93,7 @@ NS_ASSUME_NONNULL_BEGIN
     _timestamp = timestamp;
     _authorAddress = authorAddress;
     _body = body;
+    _bodyRanges = bodyRanges;
     _bodySource = bodySource;
     _quotedAttachments = attachmentInfos;
 
@@ -100,7 +102,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (instancetype)initWithTimestamp:(uint64_t)timestamp
                     authorAddress:(SignalServiceAddress *)authorAddress
-                             body:(NSString *_Nullable)body
+                             body:(nullable NSString *)body
+                       bodyRanges:(nullable MessageBodyRanges *)bodyRanges
       quotedAttachmentsForSending:(NSArray<TSAttachmentStream *> *)attachments
 {
     OWSAssertDebug(timestamp > 0);
@@ -114,6 +117,7 @@ NS_ASSUME_NONNULL_BEGIN
     _timestamp = timestamp;
     _authorAddress = authorAddress;
     _body = body;
+    _bodyRanges = bodyRanges;
     _bodySource = TSQuotedMessageContentSourceLocal;
 
     NSMutableArray *attachmentInfos = [NSMutableArray new];
@@ -170,6 +174,7 @@ NS_ASSUME_NONNULL_BEGIN
     SignalServiceAddress *authorAddress = quoteProto.authorAddress;
 
     NSString *_Nullable body = nil;
+    MessageBodyRanges *_Nullable bodyRanges = nil;
     BOOL hasAttachment = NO;
     TSQuotedMessageContentSource contentSource = TSQuotedMessageContentSourceUnknown;
 
@@ -191,19 +196,29 @@ NS_ASSUME_NONNULL_BEGIN
             return [[TSQuotedMessage alloc] initWithTimestamp:timestamp
                                                 authorAddress:authorAddress
                                                          body:body
+                                                   bodyRanges:nil
                                                    bodySource:TSQuotedMessageContentSourceLocal
                                 receivedQuotedAttachmentInfos:@[]];
         }
 
-        NSString *localText = [quotedMessage bodyTextWithTransaction:transaction];
-        if (localText.length > 0) {
-            body = localText;
+        if (quotedMessage.body.length > 0) {
+            body = quotedMessage.body;
+            bodyRanges = quotedMessage.bodyRanges;
+
+        } else if (quotedMessage.contactShare.name.displayName.length > 0) {
+            // Contact share bodies are special-cased in OWSQuotedReplyModel
+            // We need to account for that here.
+            body = [@"👤 " stringByAppendingString:quotedMessage.contactShare.name.displayName];
+            bodyRanges = nil;
         }
     } else {
         OWSLogWarn(@"Could not find quoted message: %llu", timestamp);
         contentSource = TSQuotedMessageContentSourceRemote;
         if (quoteProto.text.length > 0) {
             body = quoteProto.text;
+        }
+        if (quoteProto.bodyRanges.count > 0) {
+            bodyRanges = [[MessageBodyRanges alloc] initWithProtos:quoteProto.bodyRanges];
         }
     }
 
@@ -268,6 +283,7 @@ NS_ASSUME_NONNULL_BEGIN
     return [[TSQuotedMessage alloc] initWithTimestamp:timestamp
                                         authorAddress:authorAddress
                                                  body:body
+                                           bodyRanges:bodyRanges
                                            bodySource:contentSource
                         receivedQuotedAttachmentInfos:attachmentInfos];
 }
@@ -290,7 +306,7 @@ NS_ASSUME_NONNULL_BEGIN
 
     TSAttachment *_Nullable attachmentToQuote = nil;
     if (quotedMessage.attachmentIds.count > 0) {
-        attachmentToQuote = [quotedMessage bodyAttachmentsWithTransaction:transaction].firstObject;
+        attachmentToQuote = [quotedMessage bodyAttachmentsWithTransaction:transaction.unwrapGrdbRead].firstObject;
     } else if (quotedMessage.linkPreview && quotedMessage.linkPreview.imageAttachmentId.length > 0) {
         attachmentToQuote =
             [TSAttachment anyFetchWithUniqueId:quotedMessage.linkPreview.imageAttachmentId transaction:transaction];

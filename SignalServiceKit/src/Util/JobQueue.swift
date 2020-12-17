@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -42,7 +42,7 @@ public enum JobError: Error {
     case obsolete(description: String)
 }
 
-public protocol DurableOperation: class {
+public protocol DurableOperation: class, Equatable {
     associatedtype JobRecordType: SSKJobRecord
     associatedtype DurableOperationDelegateType: DurableOperationDelegate
 
@@ -78,12 +78,13 @@ public protocol JobQueue: DurableOperationDelegate {
 
     // MARK: Required
 
-    var runningOperations: [DurableOperationType] { get set }
+    var runningOperations: AtomicArray<DurableOperationType> { get set }
     var jobRecordLabel: String { get }
 
-    var isSetup: Bool { get set }
+    var isSetup: AtomicBool { get set }
     func setup()
     func didMarkAsReady(oldJobRecord: JobRecordType, transaction: SDSAnyWriteTransaction)
+    func didFlushQueue(transaction: SDSAnyWriteTransaction)
 
     func operationQueue(jobRecord: JobRecordType) -> OperationQueue
     func buildOperation(jobRecord: JobRecordType, transaction: SDSAnyReadTransaction) throws -> DurableOperationType
@@ -120,9 +121,13 @@ public extension JobQueue {
 
         jobRecord.anyInsert(transaction: transaction)
 
-        transaction.addCompletion(queue: .global()) {
+        transaction.addAsyncCompletion(queue: .global()) {
             self.startWorkWhenAppIsReady()
         }
+    }
+
+    func hasPendingJobs(transaction: SDSAnyReadTransaction) -> Bool {
+        return nil != finder.getNextReady(label: self.jobRecordLabel, transaction: transaction)
     }
 
     func startWorkWhenAppIsReady() {
@@ -133,8 +138,8 @@ public extension JobQueue {
             return
         }
 
-        AppReadiness.runNowOrWhenAppDidBecomeReady {
-            guard self.isSetup else {
+        AppReadiness.runNowOrWhenAppDidBecomeReadyPolite {
+            guard self.isSetup.get() else {
                 return
             }
             DispatchQueue.global().async {
@@ -146,12 +151,12 @@ public extension JobQueue {
     func workStep() {
         Logger.debug("")
 
-        guard !FeatureFlags.suppressBackgroundActivity else {
+        guard !DebugFlags.suppressBackgroundActivity else {
             // Don't process queues.
             return
         }
 
-        guard isSetup else {
+        guard isSetup.get() else {
             if !CurrentAppContext().isRunningTests {
                 owsFailDebug("not setup")
             }
@@ -162,6 +167,7 @@ public extension JobQueue {
         self.databaseStorage.write { transaction in
             guard let nextJob: JobRecordType = self.finder.getNextReady(label: self.jobRecordLabel, transaction: transaction) else {
                 Logger.verbose("nothing left to enqueue")
+                self.didFlushQueue(transaction: transaction)
                 return
             }
 
@@ -199,7 +205,7 @@ public extension JobQueue {
     }
 
     func restartOldJobs() {
-        guard !FeatureFlags.suppressBackgroundActivity else {
+        guard !DebugFlags.suppressBackgroundActivity else {
             // Don't process queues.
             return
         }
@@ -228,7 +234,7 @@ public extension JobQueue {
     /// `setup` is called from objc, and default implementations from a protocol
     /// cannot be marked as @objc.
     func defaultSetup() {
-        guard !isSetup else {
+        guard !isSetup.get() else {
             owsFailDebug("already ready already")
             return
         }
@@ -240,7 +246,7 @@ public extension JobQueue {
                 return
             }
             if self.requiresInternet {
-                NotificationCenter.default.addObserver(forName: .reachabilityChanged,
+                NotificationCenter.default.addObserver(forName: SSKReachability.owsReachabilityDidChange,
                                                        object: self.reachabilityManager.observationContext,
                                                        queue: nil) { _ in
 
@@ -253,9 +259,9 @@ public extension JobQueue {
                 }
             }
 
-            self.isSetup = true
+            self.isSetup.set(true)
             self.startWorkWhenAppIsReady()
-        }.retainUntilComplete()
+        }
     }
 
     func remainingRetries(durableOperation: DurableOperationType) -> UInt {
@@ -290,8 +296,10 @@ public extension JobQueue {
     // MARK: DurableOperationDelegate
 
     func durableOperationDidSucceed(_ operation: DurableOperationType, transaction: SDSAnyWriteTransaction) {
-        self.runningOperations = self.runningOperations.filter { $0 !== operation }
+        runningOperations.remove(operation)
         operation.jobRecord.anyRemove(transaction: transaction)
+
+        notifyFlushQueueIfPossible(transaction: transaction)
     }
 
     func durableOperation(_ operation: DurableOperationType, didReportError: Error, transaction: SDSAnyWriteTransaction) {
@@ -304,8 +312,21 @@ public extension JobQueue {
     }
 
     func durableOperation(_ operation: DurableOperationType, didFailWithError error: Error, transaction: SDSAnyWriteTransaction) {
-        self.runningOperations = self.runningOperations.filter { $0 !== operation }
+        runningOperations.remove(operation)
         operation.jobRecord.saveAsPermanentlyFailed(transaction: transaction)
+
+        notifyFlushQueueIfPossible(transaction: transaction)
+    }
+
+    func notifyFlushQueueIfPossible(transaction: SDSAnyWriteTransaction) {
+        guard nil == finder.getNextReady(label: jobRecordLabel, transaction: transaction) else {
+            return
+        }
+        self.didFlushQueue(transaction: transaction)
+    }
+
+    func didFlushQueue(transaction: SDSAnyWriteTransaction) {
+        // Do nothing.
     }
 }
 

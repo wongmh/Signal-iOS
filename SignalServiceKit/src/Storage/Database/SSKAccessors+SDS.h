@@ -1,16 +1,19 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import <Foundation/Foundation.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class MessageBodyRanges;
+
 // This header exposes private properties for SDS serialization.
 
 @interface TSThread (SDS)
 
 @property (nonatomic, copy, nullable, readonly) NSString *messageDraft;
+@property (nonatomic, readonly, nullable) MessageBodyRanges *messageDraftBodyRanges;
 
 @end
 
@@ -46,7 +49,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) TSOutgoingMessageState legacyMessageState;
 @property (nonatomic, readonly) BOOL legacyWasDelivered;
 @property (nonatomic, readonly) BOOL hasLegacyMessageState;
-@property (atomic, readonly)
+@property (atomic, nullable, readonly)
     NSDictionary<SignalServiceAddress *, TSOutgoingMessageRecipientState *> *recipientAddressStates;
 @property (nonatomic, readonly) TSOutgoingMessageState storedMessageState;
 
@@ -100,6 +103,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (atomic, nullable, readonly) NSNumber *isValidImageCached;
 @property (atomic, nullable, readonly) NSNumber *isValidVideoCached;
+@property (atomic, nullable, readonly) NSNumber *isAnimatedCached;
 
 @end
 
@@ -148,15 +152,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (atomic, nullable, readonly) NSString *recipientPhoneNumber;
 @property (atomic, nullable, readonly) NSString *recipientUUID;
-
-@end
-
-#pragma mark -
-
-@interface OWSLinkedDeviceReadReceipt (SDS)
-
-@property (nonatomic, nullable, readonly) NSString *senderPhoneNumber;
-@property (nonatomic, nullable, readonly) NSString *senderUUID;
+@property (atomic, nullable, readonly) NSString *profileName;
 
 @end
 
@@ -166,6 +162,18 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic, readonly, nullable) NSString *reactorE164;
 @property (nonatomic, readonly, nullable) NSString *reactorUUID;
+
+@end
+
+#pragma mark -
+
+@interface OWSGroupCallMessage (SDS)
+
+@property (nonatomic, getter=wasRead) BOOL read;
+@property (nonatomic, readonly, nullable) NSString *eraId;
+@property (nonatomic, nullable) NSArray<NSString *> *joinedMemberUuids;
+@property (nonatomic, nullable) NSString *creatorUuid;
+@property (nonatomic, readonly) BOOL hasEnded;
 
 @end
 

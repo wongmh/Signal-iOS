@@ -1,17 +1,19 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSMessageReceiver.h"
 #import "AppContext.h"
 #import "AppReadiness.h"
 #import "NSArray+OWS.h"
+#import "NSNotificationCenter+OWS.h"
 #import "NotificationsProtocol.h"
 #import "OWSBackgroundTask.h"
 #import "OWSBatchMessageProcessor.h"
 #import "OWSMessageDecrypter.h"
 #import "OWSQueues.h"
 #import "OWSStorage.h"
+#import "ProfileManagerProtocol.h"
 #import "SSKEnvironment.h"
 #import "TSAccountManager.h"
 #import "TSErrorMessage.h"
@@ -21,6 +23,9 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+NSNotificationName const kNSNotificationNameMessageDecryptionDidFlushQueue
+    = @"kNSNotificationNameMessageDecryptionDidFlushQueue";
+
 @implementation OWSMessageDecryptJob
 
 + (NSString *)collection
@@ -28,7 +33,7 @@ NS_ASSUME_NONNULL_BEGIN
     return @"OWSMessageProcessingJob";
 }
 
-- (instancetype)initWithEnvelopeData:(NSData *)envelopeData
+- (instancetype)initWithEnvelopeData:(NSData *)envelopeData serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
 {
     OWSAssertDebug(envelopeData);
 
@@ -38,6 +43,7 @@ NS_ASSUME_NONNULL_BEGIN
     }
 
     _envelopeData = envelopeData;
+    _serverDeliveryTimestamp = serverDeliveryTimestamp;
     _createdAt = [NSDate new];
 
     return self;
@@ -53,6 +59,7 @@ NS_ASSUME_NONNULL_BEGIN
                       uniqueId:(NSString *)uniqueId
                        createdAt:(NSDate *)createdAt
                     envelopeData:(NSData *)envelopeData
+         serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
 {
     self = [super initWithGrdbId:grdbId
                         uniqueId:uniqueId];
@@ -63,6 +70,7 @@ NS_ASSUME_NONNULL_BEGIN
 
     _createdAt = createdAt;
     _envelopeData = envelopeData;
+    _serverDeliveryTimestamp = serverDeliveryTimestamp;
 
     return self;
 }
@@ -79,7 +87,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable SSKProtoEnvelope *)envelopeProto
 {
     NSError *error;
-    SSKProtoEnvelope *_Nullable envelope = [SSKProtoEnvelope parseData:self.envelopeData error:&error];
+    SSKProtoEnvelope *_Nullable envelope = [[SSKProtoEnvelope alloc] initWithSerializedData:self.envelopeData
+                                                                                      error:&error];
     if (error || envelope == nil) {
         OWSFailDebug(@"failed to parse envelope with error: %@", error);
         return nil;
@@ -143,28 +152,33 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
     return job;
 }
 
-- (void)addJobForEnvelopeData:(NSData *)envelopeData
+- (void)addJobForEnvelopeData:(NSData *)envelopeData serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
 {
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        [self addJobForEnvelopeData:envelopeData transaction:transaction];
-    }];
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
+        [self addJobForEnvelopeData:envelopeData
+            serverDeliveryTimestamp:serverDeliveryTimestamp
+                        transaction:transaction];
+    });
 }
 
-- (void)addJobForEnvelopeData:(NSData *)envelopeData transaction:(SDSAnyWriteTransaction *)transaction
+- (void)addJobForEnvelopeData:(NSData *)envelopeData
+      serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
+                  transaction:(SDSAnyWriteTransaction *)transaction
 {
-    OWSMessageDecryptJob *job = [[OWSMessageDecryptJob alloc] initWithEnvelopeData:envelopeData];
+    OWSMessageDecryptJob *job = [[OWSMessageDecryptJob alloc] initWithEnvelopeData:envelopeData
+                                                           serverDeliveryTimestamp:serverDeliveryTimestamp];
     [job anyInsertWithTransaction:transaction];
 }
 
 - (void)removeJobWithId:(NSString *)uniqueId
 {
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         OWSMessageDecryptJob *_Nullable job =
             [OWSMessageDecryptJob anyFetchWithUniqueId:uniqueId transaction:transaction];
         if (job) {
             [job anyRemoveWithTransaction:transaction];
         }
-    }];
+    });
 }
 
 - (NSUInteger)queuedJobCount
@@ -255,12 +269,13 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
 
 #pragma mark - Queue Processing
 
-@interface YAPDBMessageDecryptQueue : NSObject
+@interface YAPDBMessageDecryptQueue : NSObject <OWSMessageProcessingPipelineStage>
 
 @property (nonatomic, readonly) OWSMessageDecryptJobFinder *finder;
 @property (nonatomic) BOOL isDrainingQueue;
 
 - (instancetype)initWithFinder:(OWSMessageDecryptJobFinder *)finder NS_DESIGNATED_INITIALIZER;
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
 
 @end
@@ -282,14 +297,13 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
     _isDrainingQueue = NO;
 
     [AppReadiness runNowOrWhenAppDidBecomeReady:^{
-        if (CurrentAppContext().isMainApp) {
-            [self drainQueue];
-        }
+        [self.pipelineSupervisor registerPipelineStage:self];
+        [self drainQueue];
     }];
 
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(registrationStateDidChange:)
-                                                 name:RegistrationStateDidChangeNotification
+                                                 name:NSNotificationNameRegistrationStateDidChange
                                                object:nil];
 
     return self;
@@ -323,17 +337,23 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
     return SDSDatabaseStorage.shared;
 }
 
+- (id<ProfileManagerProtocol>)profileManager
+{
+    return SSKEnvironment.shared.profileManager;
+}
+
+- (OWSMessagePipelineSupervisor *)pipelineSupervisor
+{
+    return SSKEnvironment.shared.messagePipelineSupervisor;
+}
+
 #pragma mark - Notifications
 
 - (void)registrationStateDidChange:(NSNotification *)notification
 {
     OWSAssertIsOnMainThread();
 
-    [AppReadiness runNowOrWhenAppDidBecomeReady:^{
-        if (CurrentAppContext().isMainApp) {
-            [self drainQueue];
-        }
-    }];
+    [AppReadiness runNowOrWhenAppDidBecomeReady:^{ [self drainQueue]; }];
 }
 
 #pragma mark - Instance methods
@@ -348,20 +368,21 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
     return queue;
 }
 
-- (void)enqueueEnvelopeData:(NSData *)envelopeData
+- (void)enqueueEnvelopeData:(NSData *)envelopeData serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
 {
-    [self.finder addJobForEnvelopeData:envelopeData];
+    [self.finder addJobForEnvelopeData:envelopeData serverDeliveryTimestamp:serverDeliveryTimestamp];
 }
 
 - (void)drainQueue
 {
     OWSAssertDebug(AppReadiness.isAppReady || CurrentAppContext().isRunningTests);
-
-    // Don't decrypt messages in app extensions.
-    if (!CurrentAppContext().isMainApp) {
+    if (!self.pipelineSupervisor.isMessageProcessingPermitted) {
         return;
     }
     if (!self.tsAccountManager.isRegisteredAndReady) {
+        return;
+    }
+    if (SSKDebugFlags.disableMessageProcessing) {
         return;
     }
 
@@ -375,11 +396,16 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
     });
 }
 
+- (BOOL)hasPendingJobsWithTransaction:(SDSAnyReadTransaction *)transaction
+{
+    return nil != [self.finder nextJobWithTransaction:transaction];
+}
+
 - (void)drainQueueWorkStep
 {
     AssertOnDispatchQueue(self.serialQueue);
 
-    if (SSKFeatureFlags.suppressBackgroundActivity) {
+    if (SSKDebugFlags.suppressBackgroundActivity) {
         // Don't process queues.
         return;
     }
@@ -388,6 +414,12 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
     if (!job) {
         self.isDrainingQueue = NO;
         OWSLogVerbose(@"Queue is drained.");
+
+        [[NSNotificationCenter defaultCenter]
+            postNotificationNameAsync:kNSNotificationNameMessageDecryptionDidFlushQueue
+                               object:nil
+                             userInfo:nil];
+
         return;
     }
 
@@ -425,11 +457,11 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
         OWSFailDebug(@"Could not parse proto.");
         // TODO: Add analytics.
 
-        [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+        DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
             ThreadlessErrorMessage *errorMessage = [ThreadlessErrorMessage corruptedMessageInUnknownThread];
             [SSKEnvironment.shared.notificationsManager notifyUserForThreadlessErrorMessage:errorMessage
                                                                                 transaction:transaction];
-        }];
+        });
 
         dispatch_async(self.serialQueue, ^{
             completion(NO);
@@ -455,7 +487,10 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
             [self.batchMessageProcessor enqueueEnvelopeData:result.envelopeData
                                               plaintextData:result.plaintextData
                                             wasReceivedByUD:wasReceivedByUD
+                                    serverDeliveryTimestamp:job.serverDeliveryTimestamp
                                                 transaction:transaction];
+
+            [self.profileManager didSendOrReceiveMessageFromAddress:result.sourceAddress transaction:transaction];
 
             dispatch_async(self.serialQueue, ^{
                 completion(YES);
@@ -466,6 +501,13 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
                 completion(NO);
             });
         }];
+}
+
+#pragma mark - <OWSMessageProcessingPipelineStage>
+
+- (void)supervisorDidResumeMessageProcessing:(OWSMessagePipelineSupervisor *)supervisor
+{
+    [AppReadiness runNowOrWhenAppDidBecomeReady:^{ [self drainQueue]; }];
 }
 
 @end
@@ -496,11 +538,7 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
 
     _yapProcessingQueue = yapProcessingQueue;
 
-    [AppReadiness runNowOrWhenAppDidBecomeReady:^{
-        if (CurrentAppContext().isMainApp) {
-            [self.yapProcessingQueue drainQueue];
-        }
-    }];
+    [AppReadiness runNowOrWhenAppDidBecomeReady:^{ [self.yapProcessingQueue drainQueue]; }];
 
     return self;
 }
@@ -531,7 +569,7 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
 
 #pragma mark - instance methods
 
-- (void)handleReceivedEnvelopeData:(NSData *)envelopeData
+- (void)handleReceivedEnvelopeData:(NSData *)envelopeData serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
 {
     if (envelopeData.length < 1) {
         OWSFailDebug(@"Empty envelope.");
@@ -555,11 +593,21 @@ NSString *const OWSMessageDecryptJobFinderExtensionGroup = @"OWSMessageProcessin
     }
 
     if (StorageCoordinator.dataStoreForUI == DataStoreYdb) {
-        [self.yapProcessingQueue enqueueEnvelopeData:envelopeData];
+        [self.yapProcessingQueue enqueueEnvelopeData:envelopeData serverDeliveryTimestamp:serverDeliveryTimestamp];
         [self.yapProcessingQueue drainQueue];
     } else {
         // We *could* use this processing Queue for Yap *and* GRDB
-        [self.messageDecryptJobQueue enqueueEnvelopeData:envelopeData];
+        [self.messageDecryptJobQueue enqueueEnvelopeData:envelopeData serverDeliveryTimestamp:serverDeliveryTimestamp];
+    }
+}
+
+- (BOOL)hasPendingJobsWithTransaction:(SDSAnyReadTransaction *)transaction
+{
+    if (StorageCoordinator.dataStoreForUI == DataStoreYdb) {
+        OWSFailDebug(@"GRDB-for-all should ship before we use this method in production.");
+        return [self.yapProcessingQueue hasPendingJobsWithTransaction:transaction];
+    } else {
+        return [self.messageDecryptJobQueue hasPendingJobsObjcWithTransaction:transaction];
     }
 }
 

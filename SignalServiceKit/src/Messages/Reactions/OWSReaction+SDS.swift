@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -34,6 +34,7 @@ public struct ReactionRecord: SDSRecord {
     public let receivedAtTimestamp: UInt64
     public let sentAtTimestamp: UInt64
     public let uniqueMessageId: String
+    public let read: Bool
 
     public enum CodingKeys: String, CodingKey, ColumnExpression, CaseIterable {
         case id
@@ -45,6 +46,7 @@ public struct ReactionRecord: SDSRecord {
         case receivedAtTimestamp
         case sentAtTimestamp
         case uniqueMessageId
+        case read
     }
 
     public static func columnName(_ column: ReactionRecord.CodingKeys, fullyQualified: Bool = false) -> String {
@@ -77,6 +79,7 @@ public extension ReactionRecord {
         receivedAtTimestamp = row[6]
         sentAtTimestamp = row[7]
         uniqueMessageId = row[8]
+        read = row[9]
     }
 }
 
@@ -111,6 +114,7 @@ extension OWSReaction {
             let emoji: String = record.emoji
             let reactorE164: String? = record.reactorE164
             let reactorUUID: String? = record.reactorUUID
+            let read: Bool = record.read
             let receivedAtTimestamp: UInt64 = record.receivedAtTimestamp
             let sentAtTimestamp: UInt64 = record.sentAtTimestamp
             let uniqueMessageId: String = record.uniqueMessageId
@@ -120,6 +124,7 @@ extension OWSReaction {
                                emoji: emoji,
                                reactorE164: reactorE164,
                                reactorUUID: reactorUUID,
+                               read: read,
                                receivedAtTimestamp: receivedAtTimestamp,
                                sentAtTimestamp: sentAtTimestamp,
                                uniqueMessageId: uniqueMessageId)
@@ -157,22 +162,61 @@ extension OWSReaction: SDSModel {
     }
 }
 
+// MARK: - DeepCopyable
+
+extension OWSReaction: DeepCopyable {
+
+    public func deepCopy() throws -> AnyObject {
+        // Any subclass can be cast to it's superclass,
+        // so the order of this switch statement matters.
+        // We need to do a "depth first" search by type.
+        guard let id = self.grdbId?.int64Value else {
+            throw OWSAssertionError("Model missing grdbId.")
+        }
+
+        do {
+            let modelToCopy = self
+            assert(type(of: modelToCopy) == OWSReaction.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let emoji: String = modelToCopy.emoji
+            let reactorE164: String? = modelToCopy.reactorE164
+            let reactorUUID: String? = modelToCopy.reactorUUID
+            let read: Bool = modelToCopy.read
+            let receivedAtTimestamp: UInt64 = modelToCopy.receivedAtTimestamp
+            let sentAtTimestamp: UInt64 = modelToCopy.sentAtTimestamp
+            let uniqueMessageId: String = modelToCopy.uniqueMessageId
+
+            return OWSReaction(grdbId: id,
+                               uniqueId: uniqueId,
+                               emoji: emoji,
+                               reactorE164: reactorE164,
+                               reactorUUID: reactorUUID,
+                               read: read,
+                               receivedAtTimestamp: receivedAtTimestamp,
+                               sentAtTimestamp: sentAtTimestamp,
+                               uniqueMessageId: uniqueMessageId)
+        }
+
+    }
+}
+
 // MARK: - Table Metadata
 
 extension OWSReactionSerializer {
 
     // This defines all of the columns used in the table
     // where this model (and any subclasses) are persisted.
-    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey, columnIndex: 0)
-    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64, columnIndex: 1)
-    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true, columnIndex: 2)
+    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey)
+    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64)
+    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true)
     // Properties
-    static let emojiColumn = SDSColumnMetadata(columnName: "emoji", columnType: .unicodeString, columnIndex: 3)
-    static let reactorE164Column = SDSColumnMetadata(columnName: "reactorE164", columnType: .unicodeString, isOptional: true, columnIndex: 4)
-    static let reactorUUIDColumn = SDSColumnMetadata(columnName: "reactorUUID", columnType: .unicodeString, isOptional: true, columnIndex: 5)
-    static let receivedAtTimestampColumn = SDSColumnMetadata(columnName: "receivedAtTimestamp", columnType: .int64, columnIndex: 6)
-    static let sentAtTimestampColumn = SDSColumnMetadata(columnName: "sentAtTimestamp", columnType: .int64, columnIndex: 7)
-    static let uniqueMessageIdColumn = SDSColumnMetadata(columnName: "uniqueMessageId", columnType: .unicodeString, columnIndex: 8)
+    static let emojiColumn = SDSColumnMetadata(columnName: "emoji", columnType: .unicodeString)
+    static let reactorE164Column = SDSColumnMetadata(columnName: "reactorE164", columnType: .unicodeString, isOptional: true)
+    static let reactorUUIDColumn = SDSColumnMetadata(columnName: "reactorUUID", columnType: .unicodeString, isOptional: true)
+    static let receivedAtTimestampColumn = SDSColumnMetadata(columnName: "receivedAtTimestamp", columnType: .int64)
+    static let sentAtTimestampColumn = SDSColumnMetadata(columnName: "sentAtTimestamp", columnType: .int64)
+    static let uniqueMessageIdColumn = SDSColumnMetadata(columnName: "uniqueMessageId", columnType: .unicodeString)
+    static let readColumn = SDSColumnMetadata(columnName: "read", columnType: .int)
 
     // TODO: We should decide on a naming convention for
     //       tables that store models.
@@ -187,7 +231,8 @@ extension OWSReactionSerializer {
         reactorUUIDColumn,
         receivedAtTimestampColumn,
         sentAtTimestampColumn,
-        uniqueMessageIdColumn
+        uniqueMessageIdColumn,
+        readColumn
         ])
 }
 
@@ -297,9 +342,11 @@ public extension OWSReaction {
 
 @objc
 public class OWSReactionCursor: NSObject {
+    private let transaction: GRDBReadTransaction
     private let cursor: RecordCursor<ReactionRecord>?
 
-    init(cursor: RecordCursor<ReactionRecord>?) {
+    init(transaction: GRDBReadTransaction, cursor: RecordCursor<ReactionRecord>?) {
+        self.transaction = transaction
         self.cursor = cursor
     }
 
@@ -341,10 +388,10 @@ public extension OWSReaction {
         let database = transaction.database
         do {
             let cursor = try ReactionRecord.fetchCursor(database)
-            return OWSReactionCursor(cursor: cursor)
+            return OWSReactionCursor(transaction: transaction, cursor: cursor)
         } catch {
             owsFailDebug("Read failed: \(error)")
-            return OWSReactionCursor(cursor: nil)
+            return OWSReactionCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -550,11 +597,11 @@ public extension OWSReaction {
         do {
             let sqlRequest = SQLRequest<Void>(sql: sql, arguments: arguments, cached: true)
             let cursor = try ReactionRecord.fetchCursor(transaction.database, sqlRequest)
-            return OWSReactionCursor(cursor: cursor)
+            return OWSReactionCursor(transaction: transaction, cursor: cursor)
         } catch {
             Logger.error("sql: \(sql)")
             owsFailDebug("Read failed: \(error)")
-            return OWSReactionCursor(cursor: nil)
+            return OWSReactionCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -603,7 +650,25 @@ class OWSReactionSerializer: SDSSerializer {
         let receivedAtTimestamp: UInt64 = model.receivedAtTimestamp
         let sentAtTimestamp: UInt64 = model.sentAtTimestamp
         let uniqueMessageId: String = model.uniqueMessageId
+        let read: Bool = model.read
 
-        return ReactionRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, emoji: emoji, reactorE164: reactorE164, reactorUUID: reactorUUID, receivedAtTimestamp: receivedAtTimestamp, sentAtTimestamp: sentAtTimestamp, uniqueMessageId: uniqueMessageId)
+        return ReactionRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, emoji: emoji, reactorE164: reactorE164, reactorUUID: reactorUUID, receivedAtTimestamp: receivedAtTimestamp, sentAtTimestamp: sentAtTimestamp, uniqueMessageId: uniqueMessageId, read: read)
     }
 }
+
+// MARK: - Deep Copy
+
+#if TESTABLE_BUILD
+@objc
+public extension OWSReaction {
+    // We're not using this method at the moment,
+    // but we might use it for validation of
+    // other deep copy methods.
+    func deepCopyUsingRecord() throws -> OWSReaction {
+        guard let record = try asRecord() as? ReactionRecord else {
+            throw OWSAssertionError("Could not convert to record.")
+        }
+        return try OWSReaction.fromRecord(record)
+    }
+}
+#endif

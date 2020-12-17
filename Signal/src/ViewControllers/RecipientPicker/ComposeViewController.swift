@@ -1,8 +1,9 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
+import PromiseKit
 
 @objc
 class ComposeViewController: OWSViewController {
@@ -13,17 +14,21 @@ class ComposeViewController: OWSViewController {
 
         title = NSLocalizedString("MESSAGE_COMPOSEVIEW_TITLE", comment: "Title for the compose view.")
 
+        view.backgroundColor = Theme.backgroundColor
+
         recipientPicker.allowsSelectingUnregisteredPhoneNumbers = false
         recipientPicker.shouldShowInvites = true
+        recipientPicker.shouldShowNewGroup = true
+        recipientPicker.shouldHideLocalRecipient = false
         recipientPicker.delegate = self
         addChild(recipientPicker)
         view.addSubview(recipientPicker.view)
+        recipientPicker.view.autoPin(toTopLayoutGuideOf: self, withInset: 0)
+        recipientPicker.view.autoPinEdge(toSuperviewEdge: .leading)
+        recipientPicker.view.autoPinEdge(toSuperviewEdge: .trailing)
+        recipientPicker.view.autoPinEdge(toSuperviewEdge: .bottom)
 
         navigationItem.leftBarButtonItem = UIBarButtonItem(barButtonSystemItem: .stop, target: self, action: #selector(dismissPressed))
-
-        navigationItem.rightBarButtonItem = UIBarButtonItem(image: UIImage(named: "btnGroup--white"), style: .plain, target: self, action: #selector(newGroupPressed))
-        navigationItem.rightBarButtonItem?.accessibilityLabel = NSLocalizedString("NEW_GROUP_BUTTON_LABEL",
-                                                                                  comment: "Accessibility label for the new group button")
     }
 
     @objc func dismissPressed() {
@@ -31,7 +36,7 @@ class ComposeViewController: OWSViewController {
     }
 
     @objc func newGroupPressed() {
-        navigationController?.pushViewController(NewGroupViewController(), animated: true)
+        showNewGroupUI()
     }
 
     func newConversation(address: SignalServiceAddress) {
@@ -44,14 +49,19 @@ class ComposeViewController: OWSViewController {
         SignalApp.shared().presentConversation(for: thread, action: .compose, animated: false)
         presentingViewController?.dismiss(animated: true)
     }
+
+    func showNewGroupUI() {
+        navigationController?.pushViewController(NewGroupMembersViewController(), animated: true)
+    }
 }
 
 extension ComposeViewController: RecipientPickerDelegate {
+
     func recipientPicker(
         _ recipientPickerViewController: RecipientPickerViewController,
         canSelectRecipient recipient: PickedRecipient
-    ) -> Bool {
-        return true
+    ) -> RecipientPickerRecipientState {
+        return .canBeSelected
     }
 
     func recipientPicker(
@@ -66,6 +76,22 @@ extension ComposeViewController: RecipientPickerDelegate {
         }
     }
 
+    func recipientPicker(_ recipientPickerViewController: RecipientPickerViewController,
+                         willRenderRecipient recipient: PickedRecipient) {
+        // Do nothing.
+    }
+
+    func recipientPicker(_ recipientPickerViewController: RecipientPickerViewController,
+                         prepareToSelectRecipient recipient: PickedRecipient) -> AnyPromise {
+        owsFailDebug("This method should not called.")
+        return AnyPromise(Promise.value(()))
+    }
+
+    func recipientPicker(_ recipientPickerViewController: RecipientPickerViewController,
+                         showInvalidRecipientAlert recipient: PickedRecipient) {
+        owsFailDebug("Unexpected error.")
+    }
+
     func recipientPicker(
         _ recipientPickerViewController: RecipientPickerViewController,
         didDeselectRecipient recipient: PickedRecipient
@@ -77,13 +103,19 @@ extension ComposeViewController: RecipientPickerDelegate {
     ) -> String? {
         switch recipient.identifier {
         case .address(let address):
-            guard recipientPicker.contactsViewHelper.isSignalServiceAddressBlocked(address) else { return nil }
+            guard contactsViewHelper.isSignalServiceAddressBlocked(address) else { return nil }
             return MessageStrings.conversationIsBlocked
         case .group(let thread):
-            guard recipientPicker.contactsViewHelper.isThreadBlocked(thread) else { return nil }
+            guard contactsViewHelper.isThreadBlocked(thread) else { return nil }
             return MessageStrings.conversationIsBlocked
         }
     }
 
     func recipientPickerTableViewWillBeginDragging(_ recipientPickerViewController: RecipientPickerViewController) {}
+
+    func recipientPickerNewGroupButtonWasPressed() {
+        showNewGroupUI()
+    }
+
+    func recipientPickerCustomHeaderViews() -> [UIView] { return [] }
 }

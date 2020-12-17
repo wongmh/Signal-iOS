@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -46,38 +46,38 @@ class DebugUINotifications: DebugUIPage {
         if let contactThread = thread as? TSContactThread {
             sectionItems += [
                 OWSTableItem(title: "All Notifications in Sequence") { [weak self] in
-                    self?.notifyForEverythingInSequence(contactThread: contactThread).retainUntilComplete()
+                    self?.notifyForEverythingInSequence(contactThread: contactThread)
                 },
                 OWSTableItem(title: "Incoming Call") { [weak self] in
-                    self?.notifyForIncomingCall(thread: contactThread).retainUntilComplete()
+                    self?.notifyForIncomingCall(thread: contactThread)
                 },
                 OWSTableItem(title: "Call Missed") { [weak self] in
-                    self?.notifyForMissedCall(thread: contactThread).retainUntilComplete()
+                    self?.notifyForMissedCall(thread: contactThread)
                 },
                 OWSTableItem(title: "Call Rejected: New Safety Number") { [weak self] in
-                    self?.notifyForMissedCallBecauseOfNewIdentity(thread: contactThread).retainUntilComplete()
+                    self?.notifyForMissedCallBecauseOfNewIdentity(thread: contactThread)
                 },
                 OWSTableItem(title: "Call Rejected: No Longer Verified") { [weak self] in
-                    self?.notifyForMissedCallBecauseOfNoLongerVerifiedIdentity(thread: contactThread).retainUntilComplete()
+                    self?.notifyForMissedCallBecauseOfNoLongerVerifiedIdentity(thread: contactThread)
                 }
             ]
         }
 
         sectionItems += [
             OWSTableItem(title: "Last Incoming Message") { [weak self] in
-                self?.notifyForIncomingMessage(thread: thread).retainUntilComplete()
+                self?.notifyForIncomingMessage(thread: thread)
             },
 
             OWSTableItem(title: "Notify For Error Message") { [weak self] in
-                self?.notifyForErrorMessage(thread: thread).retainUntilComplete()
+                self?.notifyForErrorMessage(thread: thread)
             },
 
             OWSTableItem(title: "Notify For Threadless Error Message") { [weak self] in
-                self?.notifyUserForThreadlessErrorMessage().retainUntilComplete()
+                self?.notifyUserForThreadlessErrorMessage()
             },
 
             OWSTableItem(title: "Notify of New Signal Users") { [weak self] in
-                self?.notifyOfNewUsers().retainUntilComplete()
+                self?.notifyOfNewUsers()
             }
 
         ]
@@ -109,11 +109,16 @@ class DebugUINotifications: DebugUIPage {
         }
     }
 
-    func delayedNotificationDispatchWithFakeCall(thread: TSContactThread, callBlock: @escaping (SignalCall) -> Void) -> Guarantee<Void> {
-        let call = SignalCall.incomingCall(localId: UUID(), remoteAddress: thread.contactAddress, signalingId: 0)
+    func delayedNotificationDispatchWithFakeCall(thread: TSContactThread, callBlock: @escaping (IndividualCall) -> Void) -> Guarantee<Void> {
+        let call = SignalCall.incomingIndividualCall(
+            localId: UUID(),
+            remoteAddress: thread.contactAddress,
+            sentAtTimestamp: Date.ows_millisecondTimestamp(),
+            offerMediaType: .audio
+        )
 
         return delayedNotificationDispatch {
-            callBlock(call)
+            callBlock(call.individualCall)
         }
     }
 
@@ -179,16 +184,15 @@ class DebugUINotifications: DebugUIPage {
                 let incomingMessage = factory.create(transaction: transaction)
 
                 self.notificationPresenter.notifyUser(for: incomingMessage,
-                                                     in: thread,
-                                                     transaction: transaction)
+                                                      thread: thread,
+                                                      transaction: transaction)
             }
         }
     }
 
     func notifyForErrorMessage(thread: TSThread) -> Guarantee<Void> {
         return delayedNotificationDispatch {
-            let errorMessage = TSErrorMessage(timestamp: NSDate.ows_millisecondTimeStamp(),
-                                              in: thread,
+            let errorMessage = TSErrorMessage(thread: thread,
                                               failedMessageType: TSErrorMessageType.invalidMessage)
 
             self.databaseStorage.write { transaction in
@@ -208,7 +212,7 @@ class DebugUINotifications: DebugUIPage {
     }
 
     func notifyOfNewUsers() -> Guarantee<Void> {
-         return delayedNotificationDispatch {
+        return delayedNotificationDispatch {
             let recipients: Set<SignalRecipient> = self.databaseStorage.read { transaction in
                 let allRecipients = SignalRecipient.anyFetchAll(transaction: transaction)
                 let activeRecipients = allRecipients.filter { recipient in

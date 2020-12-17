@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "BaseModel.h"
@@ -11,17 +11,23 @@ NS_ASSUME_NONNULL_BEGIN
 @class SDSAnyWriteTransaction;
 @class SSKProtoEnvelope;
 
+extern NSNotificationName const kNSNotificationNameMessageDecryptionDidFlushQueue;
+
 @interface OWSMessageDecryptJob : BaseModel
 
 @property (nonatomic, readonly) NSDate *createdAt;
 @property (nonatomic, readonly) NSData *envelopeData;
 @property (nonatomic, readonly, nullable) SSKProtoEnvelope *envelopeProto;
+@property (nonatomic, readonly) uint64_t serverDeliveryTimestamp;
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
-- (instancetype)initWithUniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
-
-- (instancetype)initWithEnvelopeData:(NSData *)envelopeData NS_DESIGNATED_INITIALIZER;
 - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithUniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
+- (instancetype)initWithGrdbId:(int64_t)grdbId uniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
+
+- (instancetype)initWithEnvelopeData:(NSData *)envelopeData
+             serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp NS_DESIGNATED_INITIALIZER;
 
 // --- CODE GENERATION MARKER
 
@@ -33,7 +39,8 @@ NS_ASSUME_NONNULL_BEGIN
                       uniqueId:(NSString *)uniqueId
                        createdAt:(NSDate *)createdAt
                     envelopeData:(NSData *)envelopeData
-NS_SWIFT_NAME(init(grdbId:uniqueId:createdAt:envelopeData:));
+         serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
+NS_DESIGNATED_INITIALIZER NS_SWIFT_NAME(init(grdbId:uniqueId:createdAt:envelopeData:serverDeliveryTimestamp:));
 
 // clang-format on
 
@@ -51,7 +58,9 @@ NS_SWIFT_NAME(init(grdbId:uniqueId:createdAt:envelopeData:));
 - (NSUInteger)queuedJobCountWithTransaction:(SDSAnyReadTransaction *)transaction;
 
 #ifdef DEBUG
-- (void)addJobForEnvelopeData:(NSData *)envelopeData transaction:(SDSAnyWriteTransaction *)transaction;
+- (void)addJobForEnvelopeData:(NSData *)envelopeData
+      serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
+                  transaction:(SDSAnyWriteTransaction *)transaction;
 #endif
 
 @end
@@ -69,7 +78,9 @@ NS_SWIFT_NAME(init(grdbId:uniqueId:createdAt:envelopeData:));
 + (NSString *)databaseExtensionName;
 + (void)asyncRegisterDatabaseExtension:(OWSStorage *)storage;
 
-- (void)handleReceivedEnvelopeData:(NSData *)envelopeData;
+- (void)handleReceivedEnvelopeData:(NSData *)envelopeData serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp;
+
+- (BOOL)hasPendingJobsWithTransaction:(SDSAnyReadTransaction *)transaction;
 
 @end
 

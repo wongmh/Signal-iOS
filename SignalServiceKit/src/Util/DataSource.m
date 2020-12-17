@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "DataSource.h"
@@ -21,8 +21,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic) NSString *fileExtension;
 @property (atomic) BOOL isConsumed;
 
-// This property is lazily-populated
+// These properties is lazily-populated.
 @property (nonatomic, nullable) NSURL *cachedFileUrl;
+@property (nonatomic, nullable) ImageMetadata *cachedImageMetadata;
 
 @end
 
@@ -112,7 +113,8 @@ NS_ASSUME_NONNULL_BEGIN
     @synchronized(self)
     {
         if (!self.cachedFileUrl) {
-            NSURL *fileUrl = [OWSFileSystem temporaryFileURLWithFileExtension:self.fileExtension];
+            NSURL *fileUrl = [OWSFileSystem temporaryFileUrlWithFileExtension:self.fileExtension
+                                                 isAvailableWhileDeviceLocked:YES];
             if ([self writeToUrl:fileUrl error:nil]) {
                 self.cachedFileUrl = fileUrl;
             } else {
@@ -137,17 +139,12 @@ NS_ASSUME_NONNULL_BEGIN
     OWSAssertDebug(self.data);
     OWSAssertDebug(!self.isConsumed);
 
-    // There's an odd bug wherein instances of NSData/Data created in Swift
-    // code reliably crash on iOS 9 when calling [NSData writeToFile:...].
-    // We can avoid these crashes by simply copying the Data.
-    NSData *dataCopy = (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(10, 0) ? self.data : [self.data copy]);
-
     __block BOOL success;
-    NSString *benchTitle = [NSString stringWithFormat:@"DataSourceValue writeData of size: %llu", (unsigned long long)dataCopy.length];
+    NSString *benchTitle = [NSString stringWithFormat:@"DataSourceValue writeData of size: %llu", (unsigned long long)self.data.length];
     [BenchManager benchWithTitle:benchTitle block:^{
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wblock-capture-autoreleasing"
-        success = [dataCopy writeToURL:dstUrl options:NSDataWritingAtomic error:error];
+        success = [self.data writeToURL:dstUrl options:NSDataWritingAtomic error:error];
 #pragma clang diagnostic pop
     }];
     if (!success) {
@@ -215,6 +212,9 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isValidVideo
 {
     OWSAssertDebug(!self.isConsumed);
+    if (![MIMETypeUtil isSupportedVideoFile:self.dataUrl.path]) {
+        return NO;
+    }
     OWSFailDebug(@"Are we calling this anywhere? It seems quite inefficient.");
     return [OWSMediaUtils isValidVideoWithPath:self.dataUrl.path];
 }
@@ -230,6 +230,26 @@ NS_ASSUME_NONNULL_BEGIN
     return [MIMETypeUtil mimeTypeForFileExtension:self.fileExtension];
 }
 
+- (BOOL)hasStickerLikeProperties
+{
+    OWSAssertDebug(!self.isConsumed);
+    return [self.data ows_hasStickerLikeProperties];
+}
+
+- (ImageMetadata *)imageMetadata
+{
+    OWSAssertDebug(!self.isConsumed);
+
+    @synchronized(self) {
+        if (self.cachedImageMetadata != nil) {
+            return self.cachedImageMetadata;
+        }
+        ImageMetadata *imageMetadata = [self.data imageMetadataWithPath:nil mimeType:self.mimeType];
+        self.cachedImageMetadata = imageMetadata;
+        return imageMetadata;
+    }
+}
+
 @end
 
 #pragma mark -
@@ -240,8 +260,9 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL shouldDeleteOnDeallocation;
 @property (atomic) BOOL isConsumed;
 
-// This property is lazily-populated
+// These properties is lazily-populated.
 @property (nonatomic) NSData *cachedData;
+@property (nonatomic, nullable) ImageMetadata *cachedImageMetadata;
 
 @end
 
@@ -321,13 +342,11 @@ NS_ASSUME_NONNULL_BEGIN
                                             fileExtension:(NSString *)fileExtension
                                                     error:(NSError **)error
 {
-    NSURL *fileUrl = [OWSFileSystem temporaryFileURLWithFileExtension:fileExtension];
+    NSURL *fileUrl = [OWSFileSystem temporaryFileUrlWithFileExtension:fileExtension isAvailableWhileDeviceLocked:YES];
     [data writeToURL:fileUrl options:NSDataWritingFileProtectionCompleteUntilFirstUserAuthentication error:error];
-
     if (*error != nil) {
         return nil;
     }
-
     return [[self alloc] initWithFileUrl:fileUrl shouldDeleteOnDeallocation:YES error:error];
 }
 
@@ -399,7 +418,34 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isValidVideo
 {
     OWSAssertDebug(!self.isConsumed);
+    if (self.mimeType != nil) {
+        if (![MIMETypeUtil isSupportedVideoMIMEType:self.mimeType]) {
+            return NO;
+        }
+    } else if (![MIMETypeUtil isSupportedVideoFile:self.dataUrl.path]) {
+        return NO;
+    }
     return [OWSMediaUtils isValidVideoWithPath:self.dataUrl.path];
+}
+
+- (BOOL)hasStickerLikeProperties
+{
+    OWSAssertDebug(!self.isConsumed);
+    return [NSData ows_hasStickerLikePropertiesWithPath:self.dataUrl.path];
+}
+
+- (ImageMetadata *)imageMetadata
+{
+    OWSAssertDebug(!self.isConsumed);
+
+    @synchronized(self) {
+        if (self.cachedImageMetadata != nil) {
+            return self.cachedImageMetadata;
+        }
+        ImageMetadata *imageMetadata = [NSData imageMetadataWithPath:self.dataUrl.path mimeType:self.mimeType];
+        self.cachedImageMetadata = imageMetadata;
+        return imageMetadata;
+    }
 }
 
 - (BOOL)writeToUrl:(NSURL *)dstUrl error:(NSError **)error

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -39,7 +39,7 @@ import Foundation
 
         let actionSheet = ActionSheetController(title: title, message: message)
 
-        let actionTitle = buttonTitle ?? NSLocalizedString("OK", comment: "")
+        let actionTitle = buttonTitle ?? CommonStrings.okButton
         let okAction = ActionSheetAction(title: actionTitle, style: .default, handler: buttonAction)
         okAction.accessibilityIdentifier = "OWSActionSheets.\("ok")"
         actionSheet.addAction(okAction)
@@ -47,17 +47,17 @@ import Foundation
     }
 
     @objc
-    public class func showConfirmationAlert(title: String, message: String? = nil, proceedTitle: String? = nil, proceedAction: @escaping ActionSheetAction.Handler) {
+    public class func showConfirmationAlert(title: String, message: String? = nil, proceedTitle: String? = nil, proceedStyle: ActionSheetAction.Style = .default, proceedAction: @escaping ActionSheetAction.Handler) {
         assert(title.count > 0)
 
         let actionSheet = ActionSheetController(title: title, message: message)
         actionSheet.addAction(self.cancelAction)
 
-        let actionTitle = proceedTitle ?? NSLocalizedString("OK", comment: "")
+        let actionTitle = proceedTitle ?? CommonStrings.okButton
         let okAction = ActionSheetAction(
             title: actionTitle,
             accessibilityIdentifier: "OWSActionSheets.ok",
-            style: .default,
+            style: proceedStyle,
             handler: proceedAction
         )
         actionSheet.addAction(okAction)
@@ -119,18 +119,13 @@ import Foundation
 
     @objc
     public class func showIOSUpgradeNagIfNecessary() {
-        // Our min SDK is iOS9, so this will only show for iOS9 users
-        // TODO: Start nagging iOS 10 users now that we're bumping up
-        // our min SDK to iOS 10.
-        if #available(iOS 10.0, *) { return }
-
-        // Don't nag legacy users if this is an end of life build
-        // (the last build their OS version supports)
-        guard !AppExpiry.isEndOfLifeOSVersion else { return }
+        // We want to nag iOS 10 users now that we're bumping up
+        // our min SDK to iOS 11.
+        if #available(iOS 11.0, *) { return }
 
         // Don't show the nag to users who have just launched
         // the app for the first time.
-        guard AppVersion.sharedInstance().lastAppVersion != nil else {
+        guard AppVersion.shared().lastAppVersion != nil else {
             return
         }
 

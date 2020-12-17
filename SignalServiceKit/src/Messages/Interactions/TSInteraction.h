@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "BaseModel.h"
@@ -18,14 +18,15 @@ typedef NS_ENUM(NSInteger, OWSInteractionType) {
     OWSInteractionType_Info,
     OWSInteractionType_TypingIndicator,
     OWSInteractionType_ThreadDetails,
-    OWSInteractionType_Offer,
+    OWSInteractionType_UnreadIndicator,
+    OWSInteractionType_DateHeader
 };
 
 NSString *NSStringFromOWSInteractionType(OWSInteractionType value);
 
 @protocol OWSPreviewText <NSObject>
 
-- (NSString *)previewTextWithTransaction:(SDSAnyReadTransaction *)transaction;
+- (NSString *)previewTextWithTransaction:(SDSAnyReadTransaction *)transaction NS_SWIFT_NAME(previewText(transaction:));
 
 @end
 
@@ -33,11 +34,25 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value);
 
 @interface TSInteraction : BaseModel
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
+- (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithUniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
+- (instancetype)initWithGrdbId:(int64_t)grdbId uniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
 
-- (instancetype)initWithUniqueId:(NSString *)uniqueId timestamp:(uint64_t)timestamp inThread:(TSThread *)thread;
+// Convenience initializer which is neither "designated" nor "unavailable".
+- (instancetype)initWithUniqueId:(NSString *)uniqueId thread:(TSThread *)thread;
 
-- (instancetype)initInteractionWithTimestamp:(uint64_t)timestamp inThread:(TSThread *)thread;
+- (instancetype)initWithUniqueId:(NSString *)uniqueId
+                       timestamp:(uint64_t)timestamp
+                          thread:(TSThread *)thread NS_DESIGNATED_INITIALIZER;
+
+- (instancetype)initWithUniqueId:(NSString *)uniqueId
+                       timestamp:(uint64_t)timestamp
+             receivedAtTimestamp:(uint64_t)receivedAtTimestamp
+                          thread:(TSThread *)thread NS_DESIGNATED_INITIALIZER;
+
+- (instancetype)initInteractionWithTimestamp:(uint64_t)timestamp thread:(TSThread *)thread NS_DESIGNATED_INITIALIZER;
 
 // --- CODE GENERATION MARKER
 
@@ -51,7 +66,7 @@ NSString *NSStringFromOWSInteractionType(OWSInteractionType value);
                           sortId:(uint64_t)sortId
                        timestamp:(uint64_t)timestamp
                   uniqueThreadId:(NSString *)uniqueThreadId
-NS_SWIFT_NAME(init(grdbId:uniqueId:receivedAtTimestamp:sortId:timestamp:uniqueThreadId:));
+NS_DESIGNATED_INITIALIZER NS_SWIFT_NAME(init(grdbId:uniqueId:receivedAtTimestamp:sortId:timestamp:uniqueThreadId:));
 
 // clang-format on
 
@@ -71,7 +86,7 @@ NS_SWIFT_NAME(init(grdbId:uniqueId:receivedAtTimestamp:sortId:timestamp:uniqueTh
 
 - (OWSInteractionType)interactionType;
 
-@property (nonatomic, readonly) TSThread *threadWithSneakyTransaction;
+@property (nonatomic, readonly, nullable) TSThread *threadWithSneakyTransaction;
 
 - (TSThread *)threadWithTransaction:(SDSAnyReadTransaction *)transaction NS_SWIFT_NAME(thread(transaction:));
 
@@ -105,6 +120,11 @@ NS_SWIFT_NAME(init(grdbId:uniqueId:receivedAtTimestamp:sortId:timestamp:uniqueTh
 
 // NOTE: This is only for use by the YDB-to-GRDB legacy migration.
 - (void)replaceSortId:(uint64_t)sortId;
+
+#if TESTABLE_BUILD
+- (void)replaceReceivedAtTimestamp:(uint64_t)receivedAtTimestamp NS_SWIFT_NAME(replaceReceivedAtTimestamp(_:));
+- (void)replaceReceivedAtTimestamp:(uint64_t)receivedAtTimestamp transaction:(SDSAnyWriteTransaction *)transaction;
+#endif
 
 @end
 

@@ -1,11 +1,12 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import <Mantle/MTLModel.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class MessageBodyRanges;
 @class SDSAnyWriteTransaction;
 @class SSKProtoDataMessage;
 @class SignalServiceAddress;
@@ -31,6 +32,7 @@ NS_ASSUME_NONNULL_BEGIN
 // References an already downloaded or locally generated thumbnail file
 @property (atomic, nullable) NSString *thumbnailAttachmentStreamId;
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
 
 - (instancetype)initWithAttachmentId:(nullable NSString *)attachmentId
@@ -64,6 +66,7 @@ typedef NS_ENUM(NSUInteger, TSQuotedMessageContentSource) {
 // This property should be set IFF we are quoting a text message
 // or attachment with caption.
 @property (nullable, nonatomic, readonly) NSString *body;
+@property (nonatomic, readonly, nullable) MessageBodyRanges *bodyRanges;
 
 #pragma mark - Attachments
 
@@ -89,19 +92,22 @@ typedef NS_ENUM(NSUInteger, TSQuotedMessageContentSource) {
 - (NSArray<TSAttachmentStream *> *)createThumbnailAttachmentsIfNecessaryWithTransaction:
     (SDSAnyWriteTransaction *)transaction;
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
 
 // used when receiving quoted messages
 - (instancetype)initWithTimestamp:(uint64_t)timestamp
                     authorAddress:(SignalServiceAddress *)authorAddress
-                             body:(NSString *_Nullable)body
+                             body:(nullable NSString *)body
+                       bodyRanges:(nullable MessageBodyRanges *)bodyRanges
                        bodySource:(TSQuotedMessageContentSource)bodySource
     receivedQuotedAttachmentInfos:(NSArray<OWSAttachmentInfo *> *)attachmentInfos;
 
 // used when sending quoted messages
 - (instancetype)initWithTimestamp:(uint64_t)timestamp
                     authorAddress:(SignalServiceAddress *)authorAddress
-                             body:(NSString *_Nullable)body
+                             body:(nullable NSString *)body
+                       bodyRanges:(nullable MessageBodyRanges *)bodyRanges
       quotedAttachmentsForSending:(NSArray<TSAttachment *> *)attachments;
 
 

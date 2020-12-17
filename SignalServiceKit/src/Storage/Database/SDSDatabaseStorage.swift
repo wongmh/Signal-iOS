@@ -1,8 +1,9 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
+import PromiseKit
 
 @objc
 public protocol SDSDatabaseStorageDelegate {
@@ -21,13 +22,11 @@ public class SDSDatabaseStorage: SDSTransactable {
 
     private weak var delegate: SDSDatabaseStorageDelegate?
 
-    static public var shouldLogDBQueries: Bool = FeatureFlags.logSQLQueries
+    static public var shouldLogDBQueries: Bool = DebugFlags.logSQLQueries
 
     private var hasPendingCrossProcessWrite = false
 
     private let crossProcess = SDSCrossProcess()
-
-    let observation = SDSDatabaseStorageObservation()
 
     // MARK: - Initialization / Setup
 
@@ -130,6 +129,34 @@ public class SDSDatabaseStorage: SDSTransactable {
         return GRDBDatabaseStorageAdapter.databaseFileUrl(baseDir: baseDir())
     }
 
+    @objc
+    public static let storageDidReload = Notification.Name("storageDidReload")
+
+    public func reload() {
+        AssertIsOnMainThread()
+        assert(storageCoordinatorState == .GRDB)
+
+        Logger.info("")
+
+        let wasRegistered = TSAccountManager.shared().isRegistered
+
+        let grdbStorage = createGrdbStorage()
+        _grdbStorage = grdbStorage
+
+        GRDBSchemaMigrator().runSchemaMigrations()
+        grdbStorage.forceUpdateSnapshot()
+
+        // We need to do this _before_ warmCaches().
+        NotificationCenter.default.post(name: Self.storageDidReload, object: nil, userInfo: nil)
+
+        SSKEnvironment.shared.warmCaches()
+        OWSIdentityManager.shared().recreateDatabaseQueue()
+
+        if wasRegistered != TSAccountManager.shared().isRegistered {
+            NotificationCenter.default.post(name: .registrationStateDidChange, object: nil, userInfo: nil)
+        }
+    }
+
     func createGrdbStorage() -> GRDBDatabaseStorageAdapter {
         if !canLoadGrdb {
             Logger.error("storageMode: \(FeatureFlags.storageModeDescription).")
@@ -155,13 +182,8 @@ public class SDSDatabaseStorage: SDSTransactable {
             owsFailDebug("Unexpected data store.")
         }
 
-        // crash if we can't read the DB.
-        do {
-            return try Bench(title: "Creating GRDB storage") {
-                return try GRDBDatabaseStorageAdapter(baseDir: type(of: self).baseDir())
-            }
-        } catch {
-            owsFail("\(error.grdbErrorForLogging)")
+        return Bench(title: "Creating GRDB storage") {
+            return GRDBDatabaseStorageAdapter(baseDir: type(of: self).baseDir())
         }
     }
 
@@ -200,6 +222,17 @@ public class SDSDatabaseStorage: SDSTransactable {
         }
     }
 
+    // MARK: - Observation
+
+    @objc
+    public func appendUIDatabaseSnapshotDelegate(_ snapshotDelegate: UIDatabaseSnapshotDelegate) {
+        guard let uiDatabaseObserver = grdbStorage.uiDatabaseObserver else {
+            owsFailDebug("Missing uiDatabaseObserver.")
+            return
+        }
+        uiDatabaseObserver.appendSnapshotDelegate(snapshotDelegate)
+    }
+
     // MARK: -
 
     @objc
@@ -222,10 +255,37 @@ public class SDSDatabaseStorage: SDSTransactable {
                                    crossProcess: crossProcess)
     }
 
+    // MARK: - UI Database Snapshot Completion
+
+    @objc
+    public func add(uiDatabaseSnapshotFlushBlock: @escaping () -> Void) {
+        guard AppReadiness.isAppReady else {
+            owsFailDebug("App not ready.")
+            return
+        }
+        guard let uiDatabaseObserver = grdbStorage.uiDatabaseObserver else {
+            owsFailDebug("Missing uiDatabaseObserver")
+            return
+        }
+        uiDatabaseObserver.add(snapshotFlushBlock: uiDatabaseSnapshotFlushBlock)
+    }
+
+    public func uiDatabaseSnapshotFlushPromise() -> Promise<Void> {
+        let (promise, resolver) = Promise<Void>.pending()
+
+        add(uiDatabaseSnapshotFlushBlock: {
+            resolver.fulfill(())
+        })
+
+        return firstly {
+            promise
+        }.timeout(seconds: 30)
+    }
+
     // MARK: - Touch
 
-    @objc(touchInteraction:transaction:)
-    public func touch(interaction: TSInteraction, transaction: SDSAnyWriteTransaction) {
+    @objc(touchInteraction:shouldReindex:transaction:)
+    public func touch(interaction: TSInteraction, shouldReindex: Bool, transaction: SDSAnyWriteTransaction) {
         switch transaction.writeTransaction {
         case .yapWrite(let yap):
             let uniqueId = interaction.uniqueId
@@ -236,24 +296,20 @@ public class SDSDatabaseStorage: SDSTransactable {
                     return
                 }
 
-                if let conversationViewDatabaseObserver = grdbStorage.conversationViewDatabaseObserver {
-                    conversationViewDatabaseObserver.didTouch(interaction: interaction, transaction: grdb)
-                } else if AppReadiness.isAppReady() {
-                    owsFailDebug("conversationViewDatabaseObserver was unexpectedly nil")
+                if let uiDatabaseObserver = grdbStorage.uiDatabaseObserver {
+                    uiDatabaseObserver.didTouch(interaction: interaction, transaction: grdb)
+                } else if AppReadiness.isAppReady {
+                    owsFailDebug("uiDatabaseObserver was unexpectedly nil")
                 }
-                if let genericDatabaseObserver = grdbStorage.genericDatabaseObserver {
-                    genericDatabaseObserver.didTouch(interaction: interaction,
-                                                     transaction: grdb)
-                } else if AppReadiness.isAppReady() {
-                    owsFailDebug("genericDatabaseObserver was unexpectedly nil")
+                if shouldReindex {
+                    GRDBFullTextSearchFinder.modelWasUpdated(model: interaction, transaction: grdb)
                 }
-                GRDBFullTextSearchFinder.modelWasUpdated(model: interaction, transaction: grdb)
             }
         }
     }
 
-    @objc(touchThread:transaction:)
-    public func touch(thread: TSThread, transaction: SDSAnyWriteTransaction) {
+    @objc(touchThread:shouldReindex:transaction:)
+    public func touch(thread: TSThread, shouldReindex: Bool, transaction: SDSAnyWriteTransaction) {
         switch transaction.writeTransaction {
         case .yapWrite(let yap):
             yap.touchObject(forKey: thread.uniqueId, inCollection: TSThread.collection())
@@ -263,22 +319,14 @@ public class SDSDatabaseStorage: SDSTransactable {
                     return
                 }
 
-                if let conversationListDatabaseObserver = grdbStorage.conversationListDatabaseObserver {
-                    conversationListDatabaseObserver.didTouch(thread: thread, transaction: grdb)
-                } else if AppReadiness.isAppReady() {
+                if let uiDatabaseObserver = grdbStorage.uiDatabaseObserver {
+                    uiDatabaseObserver.didTouch(thread: thread, transaction: grdb)
+                } else if AppReadiness.isAppReady {
                     owsFailDebug("conversationListDatabaseObserver was unexpectedly nil")
                 }
-                if let conversationViewDatabaseObserver = grdbStorage.conversationViewDatabaseObserver {
-                    conversationViewDatabaseObserver.didTouch(thread: thread, transaction: grdb)
-                } else if AppReadiness.isAppReady() {
-                    owsFailDebug("conversationViewDatabaseObserver was unexpectedly nil")
+                if shouldReindex {
+                    GRDBFullTextSearchFinder.modelWasUpdated(model: thread, transaction: grdb)
                 }
-                if let genericDatabaseObserver = grdbStorage.genericDatabaseObserver {
-                    genericDatabaseObserver.didTouchThread(transaction: grdb)
-                } else if AppReadiness.isAppReady() {
-                    owsFailDebug("genericDatabaseObserver was unexpectedly nil")
-                }
-                GRDBFullTextSearchFinder.modelWasUpdated(model: thread, transaction: grdb)
             }
         }
     }
@@ -333,13 +381,6 @@ public class SDSDatabaseStorage: SDSTransactable {
         NotificationCenter.default.postNotificationNameAsync(SDSDatabaseStorage.didReceiveCrossProcessNotification, object: nil)
     }
 
-    // MARK: - Generic Observation
-
-    @objc(addDatabaseStorageObserver:)
-    public func add(databaseStorageObserver: SDSDatabaseStorageObserver) {
-        observation.add(databaseStorageObserver: databaseStorageObserver)
-    }
-
     // MARK: - SDSTransactable
 
     @objc
@@ -354,7 +395,9 @@ public class SDSDatabaseStorage: SDSTransactable {
                 owsFail("error: \(error.grdbErrorForLogging)")
             }
         case .ydb:
-            yapStorage.uiRead { transaction in
+            owsFailDebug("YDB UI read.")
+            // We no longer use a UI connection with YDB.
+            yapStorage.read { transaction in
                 block(transaction.asAnyRead)
             }
         }
@@ -378,19 +421,24 @@ public class SDSDatabaseStorage: SDSTransactable {
         }
     }
 
-    @objc
-    public override func write(block: @escaping (SDSAnyWriteTransaction) -> Void) {
-        if OWSIsDebugBuild() &&
-            Thread.isMainThread &&
-            AppReadiness.isAppReady() {
-            Logger.verbose("Database write on main thread.")
+    // NOTE: This method is not @objc. See SDSDatabaseStorage+Objc.h.
+    public override func write(file: String = #file,
+                               function: String = #function,
+                               line: Int = #line,
+                               block: @escaping (SDSAnyWriteTransaction) -> Void) {
+        #if TESTABLE_BUILD
+        if Thread.isMainThread &&
+            AppReadiness.isAppReady {
+            Logger.warn("Database write on main thread.")
         }
+        #endif
 
+        let benchTitle = "Slow Write Transaction \(Self.owsFormatLogMessage(file: file, function: function, line: line))"
         switch dataStoreForWrites {
         case .grdb:
             do {
                 try grdbStorage.write { transaction in
-                    Bench(title: "Slow Write Transaction", logIfLongerThan: 0.1) {
+                    Bench(title: benchTitle, logIfLongerThan: 0.1) {
                         block(transaction.asAnyWrite)
                     }
                 }
@@ -399,7 +447,7 @@ public class SDSDatabaseStorage: SDSTransactable {
             }
         case .ydb:
             yapStorage.write { transaction in
-                Bench(title: "Slow Write Transaction", logIfLongerThan: 0.1) {
+                Bench(title: benchTitle, logIfLongerThan: 0.1) {
                     block(transaction.asAnyWrite)
                 }
             }
@@ -416,18 +464,29 @@ public class SDSDatabaseStorage: SDSTransactable {
                 }
             }
         case .ydb:
-            try yapStorage.uiReadThrows { transaction in
+            owsFailDebug("YDB UI read.")
+            // We no longer use a UI connection with YDB.
+            try yapStorage.readThrows { transaction in
                 try block(transaction.asAnyRead)
             }
         }
     }
 
-    public func uiread<T>(block: @escaping (SDSAnyReadTransaction) -> T) -> T {
+    public func uiRead<T>(block: @escaping (SDSAnyReadTransaction) -> T) -> T {
         var value: T!
         uiRead { (transaction) in
             value = block(transaction)
         }
         return value
+    }
+
+    public static func owsFormatLogMessage(file: String = #file,
+                                           function: String = #function,
+                                           line: Int = #line) -> String {
+        let filename = (file as NSString).lastPathComponent
+        // We format the filename & line number in a format compatible
+        // with XCode's "Open Quickly..." feature.
+        return "[\(filename):\(line) \(function)]"
     }
 }
 

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -45,7 +45,11 @@ class AttachmentKeyboard: CustomKeyboard {
     )
 
     private var mediaLibraryAuthorizationStatus: PHAuthorizationStatus {
-        return PHPhotoLibrary.authorizationStatus()
+        if #available(iOS 14, *) {
+            return PHPhotoLibrary.ows_authorizationStatus(for: .readWrite)
+        } else {
+            return PHPhotoLibrary.authorizationStatus()
+        }
     }
 
     // MARK: -
@@ -113,10 +117,10 @@ class AttachmentKeyboard: CustomKeyboard {
 
     func setupGalleryButton() {
         addSubview(galleryButton)
-        galleryButton.setTemplateImage(#imageLiteral(resourceName: "photo-outline-28"), tintColor: .white)
+        galleryButton.setTemplateImage(#imageLiteral(resourceName: "photo-album-outline-28"), tintColor: .white)
         galleryButton.setBackgroundImage(UIImage(color: UIColor.black.withAlphaComponent(0.7)), for: .normal)
 
-        galleryButton.autoSetDimensions(to: CGSize(width: 48, height: 48))
+        galleryButton.autoSetDimensions(to: CGSize(square: 48))
         galleryButton.clipsToBounds = true
         galleryButton.layer.cornerRadius = 24
 
@@ -168,23 +172,23 @@ class AttachmentKeyboard: CustomKeyboard {
         // The items should always expand to fit the height of their collection view.
 
         // If we have space we will show two rows of recent photos (e.g. iPad in landscape).
-        if recentPhotosCollectionView.height() > 250 {
+        if recentPhotosCollectionView.height > 250 {
             recentPhotosCollectionView.itemSize = CGSize(square:
-                (recentPhotosCollectionView.height() - recentPhotosCollectionView.spaceBetweenRows) / 2
+                (recentPhotosCollectionView.height - recentPhotosCollectionView.spaceBetweenRows) / 2
             )
 
         // Otherwise, assume the recent photos take up the full height of the collection view.
         } else {
-            recentPhotosCollectionView.itemSize = CGSize(square: recentPhotosCollectionView.height())
+            recentPhotosCollectionView.itemSize = CGSize(square: recentPhotosCollectionView.height)
         }
 
         // There is only ever one row for the attachment format picker.
-        attachmentFormatPickerView.itemSize = CGSize(square: attachmentFormatPickerView.height())
+        attachmentFormatPickerView.itemSize = CGSize(square: attachmentFormatPickerView.height)
     }
 
     func checkPermissions(completion: @escaping () -> Void) {
         switch mediaLibraryAuthorizationStatus {
-        case .authorized:
+        case .authorized, .limited:
             showRecentPhotos()
         case .denied, .restricted:
             showRecentPhotosError()
@@ -218,7 +222,16 @@ class AttachmentKeyboard: CustomKeyboard {
 
 extension AttachmentKeyboard: RecentPhotosDelegate {
     var isMediaLibraryAccessGranted: Bool {
-        return mediaLibraryAuthorizationStatus == .authorized
+        if #available(iOS 14, *) {
+            return [.authorized, .limited].contains(mediaLibraryAuthorizationStatus)
+        } else {
+            return mediaLibraryAuthorizationStatus == .authorized
+        }
+    }
+
+    var isMediaLibraryAccessLimited: Bool {
+        guard #available(iOS 14, *) else { return false }
+        return mediaLibraryAuthorizationStatus == .limited
     }
 
     func didSelectRecentPhoto(asset: PHAsset, attachment: SignalAttachment) {
@@ -289,7 +302,7 @@ private class RecentPhotosErrorView: UIView {
         stackView.addArrangedSubview(label)
 
         let button = OWSFlatButton()
-        button.setBackgroundColors(upColor: .ows_signalBlue)
+        button.setBackgroundColors(upColor: .ows_accentBlue)
         button.setTitle(title: CommonStrings.openSettingsButton, font: .ows_dynamicTypeBodyClamped, titleColor: .white)
         button.useDefaultCornerRadius()
         button.contentEdgeInsets = UIEdgeInsets(top: 3, leading: 8, bottom: 3, trailing: 8)

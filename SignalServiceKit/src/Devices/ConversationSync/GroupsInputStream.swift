@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -34,7 +34,7 @@ public class GroupsInputStream {
         var groupData: Data = Data()
         try inputStream.decodeData(value: &groupData, count: Int(groupDataLength))
 
-        let groupDetails = try SSKProtoGroupDetails.parseData(groupData)
+        let groupDetails = try SSKProtoGroupDetails(serializedData: groupData)
 
         var avatarData: Data?
         if let avatar = groupDetails.avatar {

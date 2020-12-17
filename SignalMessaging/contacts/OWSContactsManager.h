@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import <SignalServiceKit/Contact.h>
@@ -15,7 +15,6 @@ extern NSString *const OWSContactsManagerSignalAccountsDidChangeNotification;
 @class SDSKeyValueStore;
 @class SignalAccount;
 @class SignalServiceAddress;
-@class TSThread;
 @class UIFont;
 
 /**
@@ -42,6 +41,8 @@ extern NSString *const OWSContactsManagerSignalAccountsDidChangeNotification;
 
 - (nullable SignalAccount *)fetchSignalAccountForAddress:(SignalServiceAddress *)address
                                              transaction:(SDSAnyReadTransaction *)transaction;
+
+- (nullable NSString *)nameFromSystemContactsForAddress:(SignalServiceAddress *)address;
 
 // This will always return an instance of SignalAccount.
 - (SignalAccount *)fetchOrBuildSignalAccountForAddress:(SignalServiceAddress *)address;
@@ -91,7 +92,6 @@ extern NSString *const OWSContactsManagerSignalAccountsDidChangeNotification;
                                  transaction:(SDSAnyReadTransaction *)transaction;
 - (NSString *)comparableNameForAddress:(SignalServiceAddress *)address transaction:(SDSAnyReadTransaction *)transaction;
 
-- (nullable UIImage *)systemContactOrSyncedImageForAddress:(nullable SignalServiceAddress *)address;
 - (nullable UIImage *)profileImageForAddressWithSneakyTransaction:(nullable SignalServiceAddress *)address;
 - (nullable NSData *)profileImageDataForAddressWithSneakyTransaction:(nullable SignalServiceAddress *)address;
 - (nullable UIImage *)imageForAddress:(nullable SignalServiceAddress *)address
@@ -99,22 +99,6 @@ extern NSString *const OWSContactsManagerSignalAccountsDidChangeNotification;
 - (nullable UIImage *)imageForAddressWithSneakyTransaction:(nullable SignalServiceAddress *)address;
 
 - (void)clearColorNameCache;
-- (NSString *)conversationColorNameForAddress:(SignalServiceAddress *)address
-                                  transaction:(SDSAnyReadTransaction *)transaction;
-
-// Legacy display name helpers, once the `profileDisplayChanges` feature is enabled these can go away.
-- (NSString *)legacyDisplayNameForAddress:(SignalServiceAddress *)address;
-- (NSAttributedString *)attributedLegacyDisplayNameForAddress:(SignalServiceAddress *)address
-                                                  primaryFont:(UIFont *)primaryFont
-                                                secondaryFont:(UIFont *)secondaryFont;
-- (NSAttributedString *)attributedLegacyDisplayNameForAddress:(SignalServiceAddress *)address
-                                            primaryAttributes:(NSDictionary *)primaryAttributes
-                                          secondaryAttributes:(NSDictionary *)secondaryAttributes;
-- (nullable NSString *)formattedProfileNameForAddress:(SignalServiceAddress *)address;
-- (nullable NSString *)formattedProfileNameForAddress:(SignalServiceAddress *)address
-                                          transaction:(SDSAnyReadTransaction *)transaction;
-
-- (nullable NSString *)contactOrProfileNameForAddress:(SignalServiceAddress *)address;
 
 @end
 

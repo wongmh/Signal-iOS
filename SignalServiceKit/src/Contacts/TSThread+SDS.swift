@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -39,6 +39,11 @@ public struct ThreadRecord: SDSRecord {
     public let contactUUID: String?
     public let groupModel: Data?
     public let hasDismissedOffers: Bool?
+    public let isMarkedUnread: Bool
+    public let lastVisibleSortIdOnScreenPercentage: Double
+    public let lastVisibleSortId: UInt64
+    public let messageDraftBodyRanges: Data?
+    public let mentionNotificationMode: UInt
 
     public enum CodingKeys: String, CodingKey, ColumnExpression, CaseIterable {
         case id
@@ -55,6 +60,11 @@ public struct ThreadRecord: SDSRecord {
         case contactUUID
         case groupModel
         case hasDismissedOffers
+        case isMarkedUnread
+        case lastVisibleSortIdOnScreenPercentage
+        case lastVisibleSortId
+        case messageDraftBodyRanges
+        case mentionNotificationMode
     }
 
     public static func columnName(_ column: ThreadRecord.CodingKeys, fullyQualified: Bool = false) -> String {
@@ -92,6 +102,11 @@ public extension ThreadRecord {
         contactUUID = row[11]
         groupModel = row[12]
         hasDismissedOffers = row[13]
+        isMarkedUnread = row[14]
+        lastVisibleSortIdOnScreenPercentage = row[15]
+        lastVisibleSortId = row[16]
+        messageDraftBodyRanges = row[17]
+        mentionNotificationMode = row[18]
     }
 }
 
@@ -127,8 +142,14 @@ extension TSThread {
             let creationDateInterval: Double? = record.creationDate
             let creationDate: Date? = SDSDeserialization.optionalDoubleAsDate(creationDateInterval, name: "creationDate")
             let isArchived: Bool = record.isArchived
+            let isMarkedUnread: Bool = record.isMarkedUnread
             let lastInteractionRowId: Int64 = record.lastInteractionRowId
+            let lastVisibleSortId: UInt64 = record.lastVisibleSortId
+            let lastVisibleSortIdOnScreenPercentage: Double = record.lastVisibleSortIdOnScreenPercentage
+            let mentionNotificationMode: TSThreadMentionNotificationMode = TSThreadMentionNotificationMode(rawValue: record.mentionNotificationMode) ?? .default
             let messageDraft: String? = record.messageDraft
+            let messageDraftBodyRangesSerialized: Data? = record.messageDraftBodyRanges
+            let messageDraftBodyRanges: MessageBodyRanges? = try SDSDeserialization.optionalUnarchive(messageDraftBodyRangesSerialized, name: "messageDraftBodyRanges")
             let mutedUntilDateInterval: Double? = record.mutedUntilDate
             let mutedUntilDate: Date? = SDSDeserialization.optionalDoubleAsDate(mutedUntilDateInterval, name: "mutedUntilDate")
             let shouldThreadBeVisible: Bool = record.shouldThreadBeVisible
@@ -141,8 +162,13 @@ extension TSThread {
                                    conversationColorName: conversationColorName,
                                    creationDate: creationDate,
                                    isArchived: isArchived,
+                                   isMarkedUnread: isMarkedUnread,
                                    lastInteractionRowId: lastInteractionRowId,
+                                   lastVisibleSortId: lastVisibleSortId,
+                                   lastVisibleSortIdOnScreenPercentage: lastVisibleSortIdOnScreenPercentage,
+                                   mentionNotificationMode: mentionNotificationMode,
                                    messageDraft: messageDraft,
+                                   messageDraftBodyRanges: messageDraftBodyRanges,
                                    mutedUntilDate: mutedUntilDate,
                                    shouldThreadBeVisible: shouldThreadBeVisible,
                                    contactPhoneNumber: contactPhoneNumber,
@@ -156,8 +182,14 @@ extension TSThread {
             let creationDateInterval: Double? = record.creationDate
             let creationDate: Date? = SDSDeserialization.optionalDoubleAsDate(creationDateInterval, name: "creationDate")
             let isArchived: Bool = record.isArchived
+            let isMarkedUnread: Bool = record.isMarkedUnread
             let lastInteractionRowId: Int64 = record.lastInteractionRowId
+            let lastVisibleSortId: UInt64 = record.lastVisibleSortId
+            let lastVisibleSortIdOnScreenPercentage: Double = record.lastVisibleSortIdOnScreenPercentage
+            let mentionNotificationMode: TSThreadMentionNotificationMode = TSThreadMentionNotificationMode(rawValue: record.mentionNotificationMode) ?? .default
             let messageDraft: String? = record.messageDraft
+            let messageDraftBodyRangesSerialized: Data? = record.messageDraftBodyRanges
+            let messageDraftBodyRanges: MessageBodyRanges? = try SDSDeserialization.optionalUnarchive(messageDraftBodyRangesSerialized, name: "messageDraftBodyRanges")
             let mutedUntilDateInterval: Double? = record.mutedUntilDate
             let mutedUntilDate: Date? = SDSDeserialization.optionalDoubleAsDate(mutedUntilDateInterval, name: "mutedUntilDate")
             let shouldThreadBeVisible: Bool = record.shouldThreadBeVisible
@@ -169,8 +201,13 @@ extension TSThread {
                                  conversationColorName: conversationColorName,
                                  creationDate: creationDate,
                                  isArchived: isArchived,
+                                 isMarkedUnread: isMarkedUnread,
                                  lastInteractionRowId: lastInteractionRowId,
+                                 lastVisibleSortId: lastVisibleSortId,
+                                 lastVisibleSortIdOnScreenPercentage: lastVisibleSortIdOnScreenPercentage,
+                                 mentionNotificationMode: mentionNotificationMode,
                                  messageDraft: messageDraft,
+                                 messageDraftBodyRanges: messageDraftBodyRanges,
                                  mutedUntilDate: mutedUntilDate,
                                  shouldThreadBeVisible: shouldThreadBeVisible,
                                  groupModel: groupModel)
@@ -182,8 +219,14 @@ extension TSThread {
             let creationDateInterval: Double? = record.creationDate
             let creationDate: Date? = SDSDeserialization.optionalDoubleAsDate(creationDateInterval, name: "creationDate")
             let isArchived: Bool = record.isArchived
+            let isMarkedUnread: Bool = record.isMarkedUnread
             let lastInteractionRowId: Int64 = record.lastInteractionRowId
+            let lastVisibleSortId: UInt64 = record.lastVisibleSortId
+            let lastVisibleSortIdOnScreenPercentage: Double = record.lastVisibleSortIdOnScreenPercentage
+            let mentionNotificationMode: TSThreadMentionNotificationMode = TSThreadMentionNotificationMode(rawValue: record.mentionNotificationMode) ?? .default
             let messageDraft: String? = record.messageDraft
+            let messageDraftBodyRangesSerialized: Data? = record.messageDraftBodyRanges
+            let messageDraftBodyRanges: MessageBodyRanges? = try SDSDeserialization.optionalUnarchive(messageDraftBodyRangesSerialized, name: "messageDraftBodyRanges")
             let mutedUntilDateInterval: Double? = record.mutedUntilDate
             let mutedUntilDate: Date? = SDSDeserialization.optionalDoubleAsDate(mutedUntilDateInterval, name: "mutedUntilDate")
             let shouldThreadBeVisible: Bool = record.shouldThreadBeVisible
@@ -193,8 +236,13 @@ extension TSThread {
                             conversationColorName: conversationColorName,
                             creationDate: creationDate,
                             isArchived: isArchived,
+                            isMarkedUnread: isMarkedUnread,
                             lastInteractionRowId: lastInteractionRowId,
+                            lastVisibleSortId: lastVisibleSortId,
+                            lastVisibleSortIdOnScreenPercentage: lastVisibleSortIdOnScreenPercentage,
+                            mentionNotificationMode: mentionNotificationMode,
                             messageDraft: messageDraft,
+                            messageDraftBodyRanges: messageDraftBodyRanges,
                             mutedUntilDate: mutedUntilDate,
                             shouldThreadBeVisible: shouldThreadBeVisible)
 
@@ -237,27 +285,190 @@ extension TSThread: SDSModel {
     }
 }
 
+// MARK: - DeepCopyable
+
+extension TSThread: DeepCopyable {
+
+    public func deepCopy() throws -> AnyObject {
+        // Any subclass can be cast to it's superclass,
+        // so the order of this switch statement matters.
+        // We need to do a "depth first" search by type.
+        guard let id = self.grdbId?.int64Value else {
+            throw OWSAssertionError("Model missing grdbId.")
+        }
+
+        if let modelToCopy = self as? TSGroupThread {
+            assert(type(of: modelToCopy) == TSGroupThread.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let conversationColorName: ConversationColorName = modelToCopy.conversationColorName
+            let creationDate: Date? = modelToCopy.creationDate
+            let isArchived: Bool = modelToCopy.isArchived
+            let isMarkedUnread: Bool = modelToCopy.isMarkedUnread
+            let lastInteractionRowId: Int64 = modelToCopy.lastInteractionRowId
+            let lastVisibleSortId: UInt64 = modelToCopy.lastVisibleSortId
+            let lastVisibleSortIdOnScreenPercentage: Double = modelToCopy.lastVisibleSortIdOnScreenPercentage
+            let mentionNotificationMode: TSThreadMentionNotificationMode = modelToCopy.mentionNotificationMode
+            let messageDraft: String? = modelToCopy.messageDraft
+            // NOTE: If this generates build errors, you made need to
+            // modify DeepCopy.swift to support this type.
+            //
+            // That might mean:
+            //
+            // * Implement DeepCopyable for this type (e.g. a model).
+            // * Modify DeepCopies.deepCopy() to support this type (e.g. a collection).
+            let messageDraftBodyRanges: MessageBodyRanges?
+            if let messageDraftBodyRangesForCopy = modelToCopy.messageDraftBodyRanges {
+               messageDraftBodyRanges = try DeepCopies.deepCopy(messageDraftBodyRangesForCopy)
+            } else {
+               messageDraftBodyRanges = nil
+            }
+            let mutedUntilDate: Date? = modelToCopy.mutedUntilDate
+            let shouldThreadBeVisible: Bool = modelToCopy.shouldThreadBeVisible
+            // NOTE: If this generates build errors, you made need to
+            // implement DeepCopyable for this type in DeepCopy.swift.
+            let groupModel: TSGroupModel = try DeepCopies.deepCopy(modelToCopy.groupModel)
+
+            return TSGroupThread(grdbId: id,
+                                 uniqueId: uniqueId,
+                                 conversationColorName: conversationColorName,
+                                 creationDate: creationDate,
+                                 isArchived: isArchived,
+                                 isMarkedUnread: isMarkedUnread,
+                                 lastInteractionRowId: lastInteractionRowId,
+                                 lastVisibleSortId: lastVisibleSortId,
+                                 lastVisibleSortIdOnScreenPercentage: lastVisibleSortIdOnScreenPercentage,
+                                 mentionNotificationMode: mentionNotificationMode,
+                                 messageDraft: messageDraft,
+                                 messageDraftBodyRanges: messageDraftBodyRanges,
+                                 mutedUntilDate: mutedUntilDate,
+                                 shouldThreadBeVisible: shouldThreadBeVisible,
+                                 groupModel: groupModel)
+        }
+
+        if let modelToCopy = self as? TSContactThread {
+            assert(type(of: modelToCopy) == TSContactThread.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let conversationColorName: ConversationColorName = modelToCopy.conversationColorName
+            let creationDate: Date? = modelToCopy.creationDate
+            let isArchived: Bool = modelToCopy.isArchived
+            let isMarkedUnread: Bool = modelToCopy.isMarkedUnread
+            let lastInteractionRowId: Int64 = modelToCopy.lastInteractionRowId
+            let lastVisibleSortId: UInt64 = modelToCopy.lastVisibleSortId
+            let lastVisibleSortIdOnScreenPercentage: Double = modelToCopy.lastVisibleSortIdOnScreenPercentage
+            let mentionNotificationMode: TSThreadMentionNotificationMode = modelToCopy.mentionNotificationMode
+            let messageDraft: String? = modelToCopy.messageDraft
+            // NOTE: If this generates build errors, you made need to
+            // modify DeepCopy.swift to support this type.
+            //
+            // That might mean:
+            //
+            // * Implement DeepCopyable for this type (e.g. a model).
+            // * Modify DeepCopies.deepCopy() to support this type (e.g. a collection).
+            let messageDraftBodyRanges: MessageBodyRanges?
+            if let messageDraftBodyRangesForCopy = modelToCopy.messageDraftBodyRanges {
+               messageDraftBodyRanges = try DeepCopies.deepCopy(messageDraftBodyRangesForCopy)
+            } else {
+               messageDraftBodyRanges = nil
+            }
+            let mutedUntilDate: Date? = modelToCopy.mutedUntilDate
+            let shouldThreadBeVisible: Bool = modelToCopy.shouldThreadBeVisible
+            let contactPhoneNumber: String? = modelToCopy.contactPhoneNumber
+            let contactUUID: String? = modelToCopy.contactUUID
+            let hasDismissedOffers: Bool = modelToCopy.hasDismissedOffers
+
+            return TSContactThread(grdbId: id,
+                                   uniqueId: uniqueId,
+                                   conversationColorName: conversationColorName,
+                                   creationDate: creationDate,
+                                   isArchived: isArchived,
+                                   isMarkedUnread: isMarkedUnread,
+                                   lastInteractionRowId: lastInteractionRowId,
+                                   lastVisibleSortId: lastVisibleSortId,
+                                   lastVisibleSortIdOnScreenPercentage: lastVisibleSortIdOnScreenPercentage,
+                                   mentionNotificationMode: mentionNotificationMode,
+                                   messageDraft: messageDraft,
+                                   messageDraftBodyRanges: messageDraftBodyRanges,
+                                   mutedUntilDate: mutedUntilDate,
+                                   shouldThreadBeVisible: shouldThreadBeVisible,
+                                   contactPhoneNumber: contactPhoneNumber,
+                                   contactUUID: contactUUID,
+                                   hasDismissedOffers: hasDismissedOffers)
+        }
+
+        do {
+            let modelToCopy = self
+            assert(type(of: modelToCopy) == TSThread.self)
+            let uniqueId: String = modelToCopy.uniqueId
+            let conversationColorName: ConversationColorName = modelToCopy.conversationColorName
+            let creationDate: Date? = modelToCopy.creationDate
+            let isArchived: Bool = modelToCopy.isArchived
+            let isMarkedUnread: Bool = modelToCopy.isMarkedUnread
+            let lastInteractionRowId: Int64 = modelToCopy.lastInteractionRowId
+            let lastVisibleSortId: UInt64 = modelToCopy.lastVisibleSortId
+            let lastVisibleSortIdOnScreenPercentage: Double = modelToCopy.lastVisibleSortIdOnScreenPercentage
+            let mentionNotificationMode: TSThreadMentionNotificationMode = modelToCopy.mentionNotificationMode
+            let messageDraft: String? = modelToCopy.messageDraft
+            // NOTE: If this generates build errors, you made need to
+            // modify DeepCopy.swift to support this type.
+            //
+            // That might mean:
+            //
+            // * Implement DeepCopyable for this type (e.g. a model).
+            // * Modify DeepCopies.deepCopy() to support this type (e.g. a collection).
+            let messageDraftBodyRanges: MessageBodyRanges?
+            if let messageDraftBodyRangesForCopy = modelToCopy.messageDraftBodyRanges {
+               messageDraftBodyRanges = try DeepCopies.deepCopy(messageDraftBodyRangesForCopy)
+            } else {
+               messageDraftBodyRanges = nil
+            }
+            let mutedUntilDate: Date? = modelToCopy.mutedUntilDate
+            let shouldThreadBeVisible: Bool = modelToCopy.shouldThreadBeVisible
+
+            return TSThread(grdbId: id,
+                            uniqueId: uniqueId,
+                            conversationColorName: conversationColorName,
+                            creationDate: creationDate,
+                            isArchived: isArchived,
+                            isMarkedUnread: isMarkedUnread,
+                            lastInteractionRowId: lastInteractionRowId,
+                            lastVisibleSortId: lastVisibleSortId,
+                            lastVisibleSortIdOnScreenPercentage: lastVisibleSortIdOnScreenPercentage,
+                            mentionNotificationMode: mentionNotificationMode,
+                            messageDraft: messageDraft,
+                            messageDraftBodyRanges: messageDraftBodyRanges,
+                            mutedUntilDate: mutedUntilDate,
+                            shouldThreadBeVisible: shouldThreadBeVisible)
+        }
+
+    }
+}
+
 // MARK: - Table Metadata
 
 extension TSThreadSerializer {
 
     // This defines all of the columns used in the table
     // where this model (and any subclasses) are persisted.
-    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey, columnIndex: 0)
-    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64, columnIndex: 1)
-    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true, columnIndex: 2)
+    static let idColumn = SDSColumnMetadata(columnName: "id", columnType: .primaryKey)
+    static let recordTypeColumn = SDSColumnMetadata(columnName: "recordType", columnType: .int64)
+    static let uniqueIdColumn = SDSColumnMetadata(columnName: "uniqueId", columnType: .unicodeString, isUnique: true)
     // Properties
-    static let conversationColorNameColumn = SDSColumnMetadata(columnName: "conversationColorName", columnType: .unicodeString, columnIndex: 3)
-    static let creationDateColumn = SDSColumnMetadata(columnName: "creationDate", columnType: .double, isOptional: true, columnIndex: 4)
-    static let isArchivedColumn = SDSColumnMetadata(columnName: "isArchived", columnType: .int, columnIndex: 5)
-    static let lastInteractionRowIdColumn = SDSColumnMetadata(columnName: "lastInteractionRowId", columnType: .int64, columnIndex: 6)
-    static let messageDraftColumn = SDSColumnMetadata(columnName: "messageDraft", columnType: .unicodeString, isOptional: true, columnIndex: 7)
-    static let mutedUntilDateColumn = SDSColumnMetadata(columnName: "mutedUntilDate", columnType: .double, isOptional: true, columnIndex: 8)
-    static let shouldThreadBeVisibleColumn = SDSColumnMetadata(columnName: "shouldThreadBeVisible", columnType: .int, columnIndex: 9)
-    static let contactPhoneNumberColumn = SDSColumnMetadata(columnName: "contactPhoneNumber", columnType: .unicodeString, isOptional: true, columnIndex: 10)
-    static let contactUUIDColumn = SDSColumnMetadata(columnName: "contactUUID", columnType: .unicodeString, isOptional: true, columnIndex: 11)
-    static let groupModelColumn = SDSColumnMetadata(columnName: "groupModel", columnType: .blob, isOptional: true, columnIndex: 12)
-    static let hasDismissedOffersColumn = SDSColumnMetadata(columnName: "hasDismissedOffers", columnType: .int, isOptional: true, columnIndex: 13)
+    static let conversationColorNameColumn = SDSColumnMetadata(columnName: "conversationColorName", columnType: .unicodeString)
+    static let creationDateColumn = SDSColumnMetadata(columnName: "creationDate", columnType: .double, isOptional: true)
+    static let isArchivedColumn = SDSColumnMetadata(columnName: "isArchived", columnType: .int)
+    static let lastInteractionRowIdColumn = SDSColumnMetadata(columnName: "lastInteractionRowId", columnType: .int64)
+    static let messageDraftColumn = SDSColumnMetadata(columnName: "messageDraft", columnType: .unicodeString, isOptional: true)
+    static let mutedUntilDateColumn = SDSColumnMetadata(columnName: "mutedUntilDate", columnType: .double, isOptional: true)
+    static let shouldThreadBeVisibleColumn = SDSColumnMetadata(columnName: "shouldThreadBeVisible", columnType: .int)
+    static let contactPhoneNumberColumn = SDSColumnMetadata(columnName: "contactPhoneNumber", columnType: .unicodeString, isOptional: true)
+    static let contactUUIDColumn = SDSColumnMetadata(columnName: "contactUUID", columnType: .unicodeString, isOptional: true)
+    static let groupModelColumn = SDSColumnMetadata(columnName: "groupModel", columnType: .blob, isOptional: true)
+    static let hasDismissedOffersColumn = SDSColumnMetadata(columnName: "hasDismissedOffers", columnType: .int, isOptional: true)
+    static let isMarkedUnreadColumn = SDSColumnMetadata(columnName: "isMarkedUnread", columnType: .int)
+    static let lastVisibleSortIdOnScreenPercentageColumn = SDSColumnMetadata(columnName: "lastVisibleSortIdOnScreenPercentage", columnType: .double)
+    static let lastVisibleSortIdColumn = SDSColumnMetadata(columnName: "lastVisibleSortId", columnType: .int64)
+    static let messageDraftBodyRangesColumn = SDSColumnMetadata(columnName: "messageDraftBodyRanges", columnType: .blob, isOptional: true)
+    static let mentionNotificationModeColumn = SDSColumnMetadata(columnName: "mentionNotificationMode", columnType: .int)
 
     // TODO: We should decide on a naming convention for
     //       tables that store models.
@@ -277,7 +488,12 @@ extension TSThreadSerializer {
         contactPhoneNumberColumn,
         contactUUIDColumn,
         groupModelColumn,
-        hasDismissedOffersColumn
+        hasDismissedOffersColumn,
+        isMarkedUnreadColumn,
+        lastVisibleSortIdOnScreenPercentageColumn,
+        lastVisibleSortIdColumn,
+        messageDraftBodyRangesColumn,
+        mentionNotificationModeColumn
         ])
 }
 
@@ -387,9 +603,11 @@ public extension TSThread {
 
 @objc
 public class TSThreadCursor: NSObject {
+    private let transaction: GRDBReadTransaction
     private let cursor: RecordCursor<ThreadRecord>?
 
-    init(cursor: RecordCursor<ThreadRecord>?) {
+    init(transaction: GRDBReadTransaction, cursor: RecordCursor<ThreadRecord>?) {
+        self.transaction = transaction
         self.cursor = cursor
     }
 
@@ -400,7 +618,9 @@ public class TSThreadCursor: NSObject {
         guard let record = try cursor.next() else {
             return nil
         }
-        return try TSThread.fromRecord(record)
+        let value = try TSThread.fromRecord(record)
+        SSKEnvironment.shared.modelReadCaches.threadReadCache.didReadThread(value, transaction: transaction.asAnyRead)
+        return value
     }
 
     public func all() throws -> [TSThread] {
@@ -431,10 +651,10 @@ public extension TSThread {
         let database = transaction.database
         do {
             let cursor = try ThreadRecord.fetchCursor(database)
-            return TSThreadCursor(cursor: cursor)
+            return TSThreadCursor(transaction: transaction, cursor: cursor)
         } catch {
             owsFailDebug("Read failed: \(error)")
-            return TSThreadCursor(cursor: nil)
+            return TSThreadCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -442,6 +662,20 @@ public extension TSThread {
     class func anyFetch(uniqueId: String,
                         transaction: SDSAnyReadTransaction) -> TSThread? {
         assert(uniqueId.count > 0)
+
+        return anyFetch(uniqueId: uniqueId, transaction: transaction, ignoreCache: false)
+    }
+
+    // Fetches a single model by "unique id".
+    class func anyFetch(uniqueId: String,
+                        transaction: SDSAnyReadTransaction,
+                        ignoreCache: Bool) -> TSThread? {
+        assert(uniqueId.count > 0)
+
+        if !ignoreCache,
+            let cachedCopy = SSKEnvironment.shared.modelReadCaches.threadReadCache.getThread(uniqueId: uniqueId, transaction: transaction) {
+            return cachedCopy
+        }
 
         switch transaction.readTransaction {
         case .yapRead(let ydbTransaction):
@@ -640,11 +874,11 @@ public extension TSThread {
         do {
             let sqlRequest = SQLRequest<Void>(sql: sql, arguments: arguments, cached: true)
             let cursor = try ThreadRecord.fetchCursor(transaction.database, sqlRequest)
-            return TSThreadCursor(cursor: cursor)
+            return TSThreadCursor(transaction: transaction, cursor: cursor)
         } catch {
             Logger.error("sql: \(sql)")
             owsFailDebug("Read failed: \(error)")
-            return TSThreadCursor(cursor: nil)
+            return TSThreadCursor(transaction: transaction, cursor: nil)
         }
     }
 
@@ -659,7 +893,9 @@ public extension TSThread {
                 return nil
             }
 
-            return try TSThread.fromRecord(record)
+            let value = try TSThread.fromRecord(record)
+            SSKEnvironment.shared.modelReadCaches.threadReadCache.didReadThread(value, transaction: transaction.asAnyRead)
+            return value
         } catch {
             owsFailDebug("error: \(error)")
             return nil
@@ -698,7 +934,29 @@ class TSThreadSerializer: SDSSerializer {
         let contactUUID: String? = nil
         let groupModel: Data? = nil
         let hasDismissedOffers: Bool? = nil
+        let isMarkedUnread: Bool = model.isMarkedUnread
+        let lastVisibleSortIdOnScreenPercentage: Double = model.lastVisibleSortIdOnScreenPercentage
+        let lastVisibleSortId: UInt64 = model.lastVisibleSortId
+        let messageDraftBodyRanges: Data? = optionalArchive(model.messageDraftBodyRanges)
+        let mentionNotificationMode: UInt = model.mentionNotificationMode.rawValue
 
-        return ThreadRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, conversationColorName: conversationColorName, creationDate: creationDate, isArchived: isArchived, lastInteractionRowId: lastInteractionRowId, messageDraft: messageDraft, mutedUntilDate: mutedUntilDate, shouldThreadBeVisible: shouldThreadBeVisible, contactPhoneNumber: contactPhoneNumber, contactUUID: contactUUID, groupModel: groupModel, hasDismissedOffers: hasDismissedOffers)
+        return ThreadRecord(delegate: model, id: id, recordType: recordType, uniqueId: uniqueId, conversationColorName: conversationColorName, creationDate: creationDate, isArchived: isArchived, lastInteractionRowId: lastInteractionRowId, messageDraft: messageDraft, mutedUntilDate: mutedUntilDate, shouldThreadBeVisible: shouldThreadBeVisible, contactPhoneNumber: contactPhoneNumber, contactUUID: contactUUID, groupModel: groupModel, hasDismissedOffers: hasDismissedOffers, isMarkedUnread: isMarkedUnread, lastVisibleSortIdOnScreenPercentage: lastVisibleSortIdOnScreenPercentage, lastVisibleSortId: lastVisibleSortId, messageDraftBodyRanges: messageDraftBodyRanges, mentionNotificationMode: mentionNotificationMode)
     }
 }
+
+// MARK: - Deep Copy
+
+#if TESTABLE_BUILD
+@objc
+public extension TSThread {
+    // We're not using this method at the moment,
+    // but we might use it for validation of
+    // other deep copy methods.
+    func deepCopyUsingRecord() throws -> TSThread {
+        guard let record = try asRecord() as? ThreadRecord else {
+            throw OWSAssertionError("Could not convert to record.")
+        }
+        return try TSThread.fromRecord(record)
+    }
+}
+#endif

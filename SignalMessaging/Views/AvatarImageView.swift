@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import UIKit
@@ -22,7 +22,7 @@ public class AvatarImageView: UIImageView {
         self.configureView()
     }
 
-    override init(image: UIImage?) {
+    public override init(image: UIImage?) {
         super.init(image: image)
         self.configureView()
     }
@@ -47,17 +47,8 @@ public class AvatarImageView: UIImageView {
 @objc
 public class ConversationAvatarImageView: AvatarImageView {
 
-    // MARK: - Dependencies
-
-    private var databaseStorage: SDSDatabaseStorage {
-        return SDSDatabaseStorage.shared
-    }
-
-    // MARK: -
-
-    let thread: TSThread
+    var thread: TSThread
     let diameter: UInt
-    let contactsManager: OWSContactsManager
 
     // nil if group avatar
     let recipientAddress: SignalServiceAddress?
@@ -65,10 +56,9 @@ public class ConversationAvatarImageView: AvatarImageView {
     // nil if contact avatar
     let groupThreadId: String?
 
-    required public init(thread: TSThread, diameter: UInt, contactsManager: OWSContactsManager) {
+    required public init(thread: TSThread, diameter: UInt) {
         self.thread = thread
         self.diameter = diameter
-        self.contactsManager = contactsManager
 
         switch thread {
         case let contactThread as TSContactThread:
@@ -86,9 +76,9 @@ public class ConversationAvatarImageView: AvatarImageView {
         super.init(frame: .zero)
 
         if recipientAddress != nil {
-            NotificationCenter.default.addObserver(self, selector: #selector(handleOtherUsersProfileChanged(notification:)), name: NSNotification.Name(rawValue: kNSNotificationName_OtherUsersProfileDidChange), object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(handleOtherUsersProfileChanged(notification:)), name: .otherUsersProfileDidChange, object: nil)
 
-            NotificationCenter.default.addObserver(self, selector: #selector(handleSignalAccountsChanged(notification:)), name: NSNotification.Name.OWSContactsManagerSignalAccountsDidChange, object: nil)
+            NotificationCenter.default.addObserver(self, selector: #selector(handleSignalAccountsChanged(notification:)), name: .OWSContactsManagerSignalAccountsDidChange, object: nil)
         }
 
         if groupThreadId != nil {
@@ -159,9 +149,13 @@ public class ConversationAvatarImageView: AvatarImageView {
             return
         }
 
-        databaseStorage.read { transaction in
-            self.thread.anyReload(transaction: transaction)
+        guard let latestThread = (databaseStorage.read { transaction in
+            TSThread.anyFetch(uniqueId: self.thread.uniqueId, transaction: transaction)
+        }) else {
+            owsFailDebug("Missing thread.")
+            return
         }
+        self.thread = latestThread
 
         self.updateImage()
     }

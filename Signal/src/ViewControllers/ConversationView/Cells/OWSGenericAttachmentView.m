@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSGenericAttachmentView.h"
@@ -9,8 +9,8 @@
 #import "UIView+OWS.h"
 #import "ViewControllerUtils.h"
 #import <SignalCoreKit/NSString+OWS.h>
-#import <SignalMessaging/OWSFormat.h>
 #import <SignalServiceKit/MimeTypeUtil.h>
+#import <SignalServiceKit/OWSFormat.h>
 #import <SignalServiceKit/TSAttachmentStream.h>
 
 NS_ASSUME_NONNULL_BEGIN
@@ -193,6 +193,7 @@ NS_ASSUME_NONNULL_BEGIN
             return;
         case TSAttachmentPointerStateEnqueued:
         case TSAttachmentPointerStateDownloading:
+        case TSAttachmentPointerStatePendingMessageRequest:
             break;
     }
     switch (self.viewItem.attachmentPointer.pointerType) {

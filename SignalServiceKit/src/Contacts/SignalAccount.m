@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "SignalAccount.h"
@@ -17,9 +17,19 @@ NS_ASSUME_NONNULL_BEGIN
 
 NSUInteger const SignalAccountSchemaVersion = 1;
 
+/* We need to query the system preferences to achieve the behaviour at Messages on iOS.
+ 
+ If we ask NSPersonNameComponentsFormatter for "short" we will get the nickname if it exists but if it _doesn't_ exit we'll just get the first name. (Or the name pattern the user has selected in their system preferences. This means that in the conversation list in the left, where Messages displays the full name of a contact if they don't have a nickname, we'd just display the Short Name. To match the behaviour we ask UserDefaults for the value of this key and prefer to use the nickname, if available, in the conversation list.
+*/
+static NSString *kSignalPreferNicknamesPreference = @"NSPersonNameDefaultShouldPreferNicknamesPreference";
+
 @interface SignalAccount ()
 
 @property (nonatomic, readonly) NSUInteger accountSchemaVersion;
+
+@property (nonatomic) NSString *multipleAccountLabelText;
+
+@property (nonatomic, nullable) Contact *contact;
 
 @end
 
@@ -34,6 +44,11 @@ NSUInteger const SignalAccountSchemaVersion = 1;
     return SSKEnvironment.shared.contactsManager;
 }
 
+- (SignalAccountReadCache *)signalAccountReadCache
+{
+    return SSKEnvironment.shared.modelReadCaches.signalAccountReadCache;
+}
+
 #pragma mark -
 
 + (BOOL)shouldBeIndexedForFTS
@@ -42,18 +57,31 @@ NSUInteger const SignalAccountSchemaVersion = 1;
 }
 
 - (instancetype)initWithSignalRecipient:(SignalRecipient *)signalRecipient
+                                contact:(nullable Contact *)contact
+               multipleAccountLabelText:(nullable NSString *)multipleAccountLabelText
 {
     OWSAssertDebug(signalRecipient);
-    OWSAssertDebug(signalRecipient.address.isValid);
-    return [self initWithSignalServiceAddress:signalRecipient.address];
+    return [self initWithSignalServiceAddress:signalRecipient.address
+                                      contact:contact
+                     multipleAccountLabelText:multipleAccountLabelText];
 }
 
 - (instancetype)initWithSignalServiceAddress:(SignalServiceAddress *)serviceAddress
 {
+    return [self initWithSignalServiceAddress:serviceAddress contact:nil multipleAccountLabelText:nil];
+}
+
+- (instancetype)initWithSignalServiceAddress:(SignalServiceAddress *)serviceAddress
+                                     contact:(nullable Contact *)contact
+                    multipleAccountLabelText:(nullable NSString *)multipleAccountLabelText
+{
+    OWSAssertDebug(serviceAddress.isValid);
     if (self = [super init]) {
         _recipientUUID = serviceAddress.uuidString;
         _recipientPhoneNumber = serviceAddress.phoneNumber;
         _accountSchemaVersion = SignalAccountSchemaVersion;
+        _contact = contact;
+        _multipleAccountLabelText = multipleAccountLabelText;
     }
     return self;
 }
@@ -92,7 +120,6 @@ NSUInteger const SignalAccountSchemaVersion = 1;
     }
 
     OWSAssertDebug(recipientPhoneNumber != nil || recipientUUID != nil);
-    OWSAssertDebug(recipientPhoneNumber != nil || SSKFeatureFlags.allowUUIDOnlyContacts);
 
     _contact = contact;
     _contactAvatarHash = contactAvatarHash;
@@ -141,9 +168,37 @@ NSUInteger const SignalAccountSchemaVersion = 1;
 
 // --- CODE GENERATION MARKER
 
+- (nullable NSString *)contactPreferredDisplayName {
+    NSPersonNameComponents *components = [NSPersonNameComponents new];
+    components.givenName = self.contact.firstName;
+    components.familyName = self.contact.lastName;
+    components.nickname = self.contact.nickname;
+    
+    NSString *result = nil;
+    // If we have a nickname check what the user prefers.
+    if (components.nickname.length && [[NSUserDefaults standardUserDefaults] boolForKey: kSignalPreferNicknamesPreference]) {
+        result = components.nickname;
+    } else {
+        result = [NSPersonNameComponentsFormatter localizedStringFromPersonNameComponents: components
+                                                                                    style: NSPersonNameComponentsFormatterStyleDefault
+                                                                                  options: 0];
+    }
+    return result.filterStringForDisplay;
+}
+
 - (nullable NSString *)contactFullName
 {
     return self.contact.fullName.filterStringForDisplay;
+}
+
+- (nullable NSString *)contactFirstName
+{
+    return self.contact.firstName.filterStringForDisplay;
+}
+
+- (nullable NSString *)contactLastName
+{
+    return self.contact.lastName.filterStringForDisplay;
 }
 
 - (NSString *)multipleAccountLabelText
@@ -191,18 +246,54 @@ NSUInteger const SignalAccountSchemaVersion = 1;
     if (contactAvatarData == nil) {
         return;
     }
-    self.contactAvatarHash = [Cryptography computeSHA256Digest:contactAvatarData];
+    _contactAvatarHash = [Cryptography computeSHA256Digest:contactAvatarData];
     OWSAssertDebug(self.contactAvatarHash != nil);
     if (self.contactAvatarHash == nil) {
         return;
     }
 
-    self.contactAvatarJpegData = [UIImage validJpegDataFromAvatarData:contactAvatarData];
+    _contactAvatarJpegData = [UIImage validJpegDataFromAvatarData:contactAvatarData];
     if (self.contactAvatarJpegData == nil) {
         OWSFailDebug(@"Could not convert avatar to JPEG.");
         return;
     }
 }
+
+- (void)anyDidInsertWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidInsertWithTransaction:transaction];
+
+    [self.signalAccountReadCache didInsertOrUpdateSignalAccount:self transaction:transaction];
+}
+
+- (void)anyDidUpdateWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidUpdateWithTransaction:transaction];
+
+    [self.signalAccountReadCache didInsertOrUpdateSignalAccount:self transaction:transaction];
+}
+
+- (void)anyDidRemoveWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidRemoveWithTransaction:transaction];
+
+    [self.signalAccountReadCache didRemoveSignalAccount:self transaction:transaction];
+}
+
+- (void)updateWithContact:(nullable Contact *)contact transaction:(SDSAnyWriteTransaction *)transaction
+{
+    [self anyUpdateWithTransaction:transaction
+                             block:^(SignalAccount *account) {
+                                 account.contact = contact;
+                             }];
+}
+
+#if TESTABLE_BUILD
+- (void)replaceContactForTests:(nullable Contact *)contact
+{
+    self.contact = contact;
+}
+#endif
 
 @end
 

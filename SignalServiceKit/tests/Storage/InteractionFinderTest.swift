@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -20,31 +20,6 @@ class InteractionFinderTest: SSKBaseTestSwift {
         super.setUp()
 
         storageCoordinator.useGRDBForTests()
-    }
-
-    func specialMessageCount(threadId: String, transaction: SDSAnyReadTransaction) -> UInt {
-        var count: UInt = 0
-        let interactionFinder = InteractionFinder(threadUniqueId: threadId)
-        interactionFinder.enumerateSpecialMessages(transaction: transaction) { (_, _) in
-            count += 1
-        }
-        return count
-    }
-
-    func envelopeForThread(thread: TSContactThread) -> SSKProtoEnvelope {
-        let timestamp = NSDate.ows_millisecondTimeStamp()
-        let source = thread.contactAddress
-
-        let builder = SSKProtoEnvelope.builder(timestamp: timestamp)
-        builder.setType(.ciphertext)
-        if let phoneNumber = source.phoneNumber {
-            builder.setSourceE164(phoneNumber)
-        }
-        if let uuidString = source.uuidString {
-            builder.setSourceUuid(uuidString)
-        }
-        builder.setSourceDevice(1)
-        return try! builder.build()
     }
 
     func testInteractions() {
@@ -68,13 +43,14 @@ class InteractionFinderTest: SSKBaseTestSwift {
         let outgoingMessage2 = TSOutgoingMessage(in: contactThread2, messageBody: "land's sakes", attachmentId: attachment2.uniqueId)
         let outgoingMessage3 = TSOutgoingMessage(in: contactThread2, messageBody: "oh my word", attachmentId: nil)
         let errorMessage1 = TSErrorMessage.nonblockingIdentityChange(in: contactThread1, address: address1)
-        let errorMessage2 = TSErrorMessage(timestamp: NSDate.ows_millisecondTimeStamp(),
-                                           in: contactThread1,
+        let errorMessage2 = TSErrorMessage(thread: contactThread1,
                                            failedMessageType: .groupCreationFailed)
 
+        let finder1 = InteractionFinder(threadUniqueId: contactThread1.uniqueId)
+        let finder2 = InteractionFinder(threadUniqueId: contactThread2.uniqueId)
         self.read { transaction in
-            XCTAssertEqual(0, self.specialMessageCount(threadId: contactThread1.uniqueId, transaction: transaction))
-            XCTAssertEqual(0, self.specialMessageCount(threadId: contactThread2.uniqueId, transaction: transaction))
+            XCTAssertEqual(0, finder1.count(transaction: transaction))
+            XCTAssertEqual(0, finder2.count(transaction: transaction))
         }
 
         self.write { transaction in
@@ -90,16 +66,11 @@ class InteractionFinderTest: SSKBaseTestSwift {
             outgoingMessage3.anyInsert(transaction: transaction)
             errorMessage1.anyInsert(transaction: transaction)
             errorMessage2.anyInsert(transaction: transaction)
-
-            let envelope = self.envelopeForThread(thread: contactThread1)
-            let errorMessage3 = TSInvalidIdentityKeyReceivingErrorMessage.untrustedKey(with: envelope,
-                                                                                       with: transaction)!
-            errorMessage3.anyInsert(transaction: transaction)
         }
 
         self.read { transaction in
-            XCTAssertEqual(2, self.specialMessageCount(threadId: contactThread1.uniqueId, transaction: transaction))
-            XCTAssertEqual(0, self.specialMessageCount(threadId: contactThread2.uniqueId, transaction: transaction))
+            XCTAssertEqual(3, finder1.count(transaction: transaction))
+            XCTAssertEqual(2, finder2.count(transaction: transaction))
         }
     }
 }

@@ -1,21 +1,26 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "ConversationViewController.h"
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class OnboardingController;
 @class SignalServiceAddress;
 @class TSThread;
 
 @interface SignalApp : NSObject
 
++ (instancetype)new NS_UNAVAILABLE;
 - (instancetype)init NS_UNAVAILABLE;
 
 + (instancetype)sharedApp;
 
 - (void)setup;
+
+@property (nonatomic, readonly) BOOL hasSelectedThread;
+@property (nonatomic, readonly) BOOL didLastLaunchNotTerminate;
 
 #pragma mark - Conversation Presentation
 
@@ -44,10 +49,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (void)resetAppData;
 
-- (void)showOnboardingView;
+- (void)showOnboardingView:(OnboardingController *)onboardingController;
 - (void)showConversationSplitView;
 - (void)ensureRootViewController:(NSTimeInterval)launchStartedAt;
 - (BOOL)receivedVerificationCode:(NSString *)verificationCode;
+- (void)applicationWillTerminate;
+
+- (nullable UIView *)snapshotSplitViewControllerAfterScreenUpdates:(BOOL)afterScreenUpdates;
 
 @end
 

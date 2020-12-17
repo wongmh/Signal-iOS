@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -91,13 +91,6 @@ class ImagePickerGridController: UICollectionViewController, PhotoLibraryDelegat
         let titleView = TitleView()
         titleView.delegate = self
         titleView.text = photoCollection.localizedTitle()
-
-        if #available(iOS 11, *) {
-            // do nothing
-        } else {
-            // must assign titleView frame manually on older iOS
-            titleView.frame = CGRect(origin: .zero, size: titleView.systemLayoutSizeFitting(UIView.layoutFittingCompressedSize))
-        }
 
         navigationItem.titleView = titleView
         self.titleView = titleView
@@ -277,10 +270,7 @@ class ImagePickerGridController: UICollectionViewController, PhotoLibraryDelegat
     // MARK: 
 
     var lastPageYOffset: CGFloat {
-        var yOffset = collectionView.contentSize.height - collectionView.frame.height + collectionView.contentInset.bottom
-        if #available(iOS 11.0, *) {
-            yOffset += view.safeAreaInsets.bottom
-        }
+        var yOffset = collectionView.contentSize.height - collectionView.frame.height + collectionView.contentInset.bottom + view.safeAreaInsets.bottom
         return yOffset
     }
 
@@ -339,9 +329,7 @@ class ImagePickerGridController: UICollectionViewController, PhotoLibraryDelegat
     private class func buildLayout() -> UICollectionViewFlowLayout {
         let layout = UICollectionViewFlowLayout()
 
-        if #available(iOS 11, *) {
-            layout.sectionInsetReference = .fromSafeArea
-        }
+        layout.sectionInsetReference = .fromSafeArea
         layout.minimumInteritemSpacing = kInterItemSpacing
         layout.minimumLineSpacing = kInterItemSpacing
         layout.sectionHeadersPinToVisibleBounds = true
@@ -350,12 +338,8 @@ class ImagePickerGridController: UICollectionViewController, PhotoLibraryDelegat
     }
 
     func updateLayout() {
-        let containerWidth: CGFloat
-        if #available(iOS 11.0, *) {
-            containerWidth = self.view.safeAreaLayoutGuide.layoutFrame.size.width
-        } else {
-            containerWidth = self.view.frame.size.width
-        }
+        let containerWidth = self.view.safeAreaLayoutGuide.layoutFrame.size.width
+
         let minItemWidth: CGFloat = 100
         let itemCount = floor(containerWidth / minItemWidth)
         let interSpaceWidth = (itemCount - 1) * type(of: self).kInterItemSpacing
@@ -363,10 +347,10 @@ class ImagePickerGridController: UICollectionViewController, PhotoLibraryDelegat
         let availableWidth = containerWidth - interSpaceWidth
 
         let itemWidth = floor(availableWidth / CGFloat(itemCount))
-        let newItemSize = CGSize(width: itemWidth, height: itemWidth)
+        let newItemSize = CGSize(square: itemWidth)
         let remainingSpace = availableWidth - (itemCount * itemWidth)
 
-        if (newItemSize != collectionViewFlowLayout.itemSize) {
+        if newItemSize != collectionViewFlowLayout.itemSize {
             collectionViewFlowLayout.itemSize = newItemSize
             // Inset any remaining space around the outside edges to ensure all inter-item spacing is exactly equal, otherwise
             // we may get slightly different gaps between rows vs. columns
@@ -442,7 +426,7 @@ class ImagePickerGridController: UICollectionViewController, PhotoLibraryDelegat
         UIView.animate(.promise, duration: 0.25, delay: 0, options: .curveEaseInOut) {
             collectionPickerView.superview?.layoutIfNeeded()
             self.titleView.rotateIcon(.up)
-        }.retainUntilComplete()
+        }
     }
 
     func hideCollectionPicker() {
@@ -452,12 +436,15 @@ class ImagePickerGridController: UICollectionViewController, PhotoLibraryDelegat
         isShowingCollectionPickerController = false
 
         UIView.animate(.promise, duration: 0.25, delay: 0, options: .curveEaseInOut) {
-            self.collectionPickerController.view.frame = self.view.frame.offsetBy(dx: 0, dy: self.view.frame.height)
+            self.collectionPickerController.view.frame = self.collectionPickerController.view.frame.offsetBy(
+                dx: 0,
+                dy: self.collectionPickerController.view.height
+            )
             self.titleView.rotateIcon(.down)
         }.done { _ in
             self.collectionPickerController.view.removeFromSuperview()
             self.collectionPickerController.removeFromParent()
-        }.retainUntilComplete()
+        }
     }
 
     // MARK: - PhotoCollectionPickerDelegate
@@ -620,7 +607,7 @@ class TitleView: UIView {
         stackView.autoPinEdgesToSuperviewEdges()
 
         label.textColor = .ows_gray05
-        label.font = UIFont.ows_dynamicTypeBody.ows_semibold()
+        label.font = UIFont.ows_dynamicTypeBody.ows_semibold
 
         iconView.tintColor = .ows_gray05
         iconView.image = UIImage(named: "navbar_disclosure_down")?.withRenderingMode(.alwaysTemplate)

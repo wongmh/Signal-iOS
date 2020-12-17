@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSMessageTimerView.h"
@@ -55,7 +55,7 @@ const CGFloat kDisappearingMessageIconSize = 12.f;
 {
     self.imageView = [UIImageView new];
     [self addSubview:self.imageView];
-    [self.imageView ows_autoPinToSuperviewEdges];
+    [self.imageView autoPinEdgesToSuperviewEdges];
     [self.imageView autoSetDimension:ALDimensionWidth toSize:kDisappearingMessageIconSize];
     [self.imageView autoSetDimension:ALDimensionHeight toSize:kDisappearingMessageIconSize];
 }
@@ -115,49 +115,7 @@ const CGFloat kDisappearingMessageIconSize = 12.f;
     OWSAssertDebug(self.progress12 >= 0);
     OWSAssertDebug(self.progress12 <= 12);
 
-    UIImage *_Nullable image;
-    switch (self.progress12) {
-        default:
-        case 0:
-            image = [UIImage imageNamed:@"disappearing_message_00"];
-            break;
-        case 1:
-            image = [UIImage imageNamed:@"disappearing_message_05"];
-            break;
-        case 2:
-            image = [UIImage imageNamed:@"disappearing_message_10"];
-            break;
-        case 3:
-            image = [UIImage imageNamed:@"disappearing_message_15"];
-            break;
-        case 4:
-            image = [UIImage imageNamed:@"disappearing_message_20"];
-            break;
-        case 5:
-            image = [UIImage imageNamed:@"disappearing_message_25"];
-            break;
-        case 6:
-            image = [UIImage imageNamed:@"disappearing_message_30"];
-            break;
-        case 7:
-            image = [UIImage imageNamed:@"disappearing_message_35"];
-            break;
-        case 8:
-            image = [UIImage imageNamed:@"disappearing_message_40"];
-            break;
-        case 9:
-            image = [UIImage imageNamed:@"disappearing_message_45"];
-            break;
-        case 10:
-            image = [UIImage imageNamed:@"disappearing_message_50"];
-            break;
-        case 11:
-            image = [UIImage imageNamed:@"disappearing_message_55"];
-            break;
-        case 12:
-            image = [UIImage imageNamed:@"disappearing_message_60"];
-            break;
-    }
+    UIImage *_Nullable image = [UIImage imageNamed:[NSString stringWithFormat:@"timer-%02ld-12", self.progress12 * 5]];
     OWSAssertDebug(image);
     OWSAssertDebug(image.size.width == kDisappearingMessageIconSize);
     OWSAssertDebug(image.size.height == kDisappearingMessageIconSize);
@@ -168,11 +126,12 @@ const CGFloat kDisappearingMessageIconSize = 12.f;
 {
     [self clearAnimation];
 
-    self.animationTimer = [NSTimer weakScheduledTimerWithTimeInterval:0.1f
-                                                               target:self
-                                                             selector:@selector(updateProgress12)
-                                                             userInfo:nil
-                                                              repeats:YES];
+    self.animationTimer = [NSTimer weakTimerWithTimeInterval:0.1f
+                                                      target:self
+                                                    selector:@selector(updateProgress12)
+                                                    userInfo:nil
+                                                     repeats:YES];
+    [[NSRunLoop mainRunLoop] addTimer:self.animationTimer forMode:NSRunLoopCommonModes];
 }
 
 - (void)clearAnimation

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -9,7 +9,7 @@ protocol MessageContentJobFinder {
     associatedtype ReadTransaction
     associatedtype WriteTransaction
 
-    func addJob(envelopeData: Data, plaintextData: Data?, wasReceivedByUD: Bool, transaction: WriteTransaction)
+    func addJob(envelopeData: Data, plaintextData: Data?, wasReceivedByUD: Bool, serverDeliveryTimestamp: UInt64, transaction: WriteTransaction)
     func nextJobs(batchSize: UInt, transaction: ReadTransaction) -> [OWSMessageContentJob]
     func removeJobs(withUniqueIds uniqueIds: [String], transaction: WriteTransaction)
 }
@@ -23,12 +23,12 @@ public class AnyMessageContentJobFinder: NSObject, MessageContentJobFinder {
     let grdbAdapter = GRDBMessageContentJobFinder()
 
     @objc
-    public func addJob(envelopeData: Data, plaintextData: Data?, wasReceivedByUD: Bool, transaction: SDSAnyWriteTransaction) {
+    public func addJob(envelopeData: Data, plaintextData: Data?, wasReceivedByUD: Bool, serverDeliveryTimestamp: UInt64, transaction: SDSAnyWriteTransaction) {
         switch transaction.writeTransaction {
         case .yapWrite(let yapWrite):
-            yapAdapter.addJob(withEnvelopeData: envelopeData, plaintextData: plaintextData, wasReceivedByUD: wasReceivedByUD, transaction: yapWrite)
+            yapAdapter.addJob(withEnvelopeData: envelopeData, plaintextData: plaintextData, wasReceivedByUD: wasReceivedByUD, serverDeliveryTimestamp: serverDeliveryTimestamp, transaction: yapWrite)
         case .grdbWrite(let grdbWrite):
-            grdbAdapter.addJob(envelopeData: envelopeData, plaintextData: plaintextData, wasReceivedByUD: wasReceivedByUD, transaction: grdbWrite)
+            grdbAdapter.addJob(envelopeData: envelopeData, plaintextData: plaintextData, wasReceivedByUD: wasReceivedByUD, serverDeliveryTimestamp: serverDeliveryTimestamp, transaction: grdbWrite)
         }
     }
 
@@ -62,8 +62,8 @@ class GRDBMessageContentJobFinder: MessageContentJobFinder {
     typealias ReadTransaction = GRDBReadTransaction
     typealias WriteTransaction = GRDBWriteTransaction
 
-    func addJob(envelopeData: Data, plaintextData: Data?, wasReceivedByUD: Bool, transaction: GRDBWriteTransaction) {
-        let job = OWSMessageContentJob(envelopeData: envelopeData, plaintextData: plaintextData, wasReceivedByUD: wasReceivedByUD)
+    func addJob(envelopeData: Data, plaintextData: Data?, wasReceivedByUD: Bool, serverDeliveryTimestamp: UInt64, transaction: GRDBWriteTransaction) {
+        let job = OWSMessageContentJob(envelopeData: envelopeData, plaintextData: plaintextData, wasReceivedByUD: wasReceivedByUD, serverDeliveryTimestamp: serverDeliveryTimestamp)
         job.anyInsert(transaction: transaction.asAnyWrite)
     }
 
@@ -92,6 +92,6 @@ class GRDBMessageContentJobFinder: MessageContentJobFinder {
             WHERE \(messageContentJobColumn: .uniqueId) in (\(commaSeparatedIds))
         """
 
-        transaction.executeWithCachedStatement(sql: sql)
+        transaction.executeUpdate(sql: sql)
     }
 }

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSMessageStickerView.h"
@@ -38,34 +38,20 @@ NS_ASSUME_NONNULL_BEGIN
 
 @implementation OWSMessageStickerView
 
-#pragma mark - Dependencies
-
-- (OWSAttachmentDownloads *)attachmentDownloads
+- (instancetype)init
 {
-    return SSKEnvironment.shared.attachmentDownloads;
-}
-
-- (SDSDatabaseStorage *)databaseStorage
-{
-    return SDSDatabaseStorage.shared;
-}
-
-#pragma mark -
-
-- (instancetype)initWithFrame:(CGRect)frame
-{
-    self = [super initWithFrame:frame];
+    self = [super initWithFrame:CGRectZero];
 
     if (!self) {
         return self;
     }
 
-    [self commontInit];
+    [self commonInit];
 
     return self;
 }
 
-- (void)commontInit
+- (void)commonInit
 {
     // Ensure only called once.
     OWSAssertDebug(!self.stackView);
@@ -87,7 +73,7 @@ NS_ASSUME_NONNULL_BEGIN
     self.senderNameContainer = [UIView new];
     self.senderNameContainer.layoutMargins = UIEdgeInsetsMake(0, 0, self.senderNameBottomSpacing, 0);
     [self.senderNameContainer addSubview:self.senderNameLabel];
-    [self.senderNameLabel ows_autoPinToSuperviewMargins];
+    [self.senderNameLabel autoPinEdgesToSuperviewMargins];
 
     self.footerView = [OWSMessageFooterView new];
 }
@@ -112,6 +98,11 @@ NS_ASSUME_NONNULL_BEGIN
 }
 
 #pragma mark - Load
+
+- (BOOL)isBorderless
+{
+    return YES;
+}
 
 - (void)configureViews
 {
@@ -242,25 +233,45 @@ NS_ASSUME_NONNULL_BEGIN
     OWSAssertDebug(self.viewItem.stickerAttachment != nil);
 
     TSAttachmentStream *stickerAttachment = self.viewItem.stickerAttachment;
-    YYAnimatedImageView *stickerView = [YYAnimatedImageView new];
+    if (stickerAttachment.shouldBeRenderedByYY) {
+        YYAnimatedImageView *stickerView = [YYAnimatedImageView new];
+        stickerView.contentMode = UIViewContentModeScaleAspectFit;
 
-    stickerView.accessibilityLabel =
-        [OWSMessageView accessibilityLabelWithDescription:NSLocalizedString(@"ACCESSIBILITY_LABEL_STICKER",
-                                                              @"Accessibility label for stickers.")
-                                               authorName:self.viewItem.accessibilityAuthorName];
+        stickerView.accessibilityLabel =
+            [OWSMessageView accessibilityLabelWithDescription:NSLocalizedString(@"ACCESSIBILITY_LABEL_STICKER",
+                                                                  @"Accessibility label for stickers.")
+                                                   authorName:self.viewItem.accessibilityAuthorName];
 
-    self.loadCellContentBlock = ^{
-        NSString *_Nullable filePath = stickerAttachment.originalFilePath;
-        OWSCAssertDebug(filePath);
-        YYImage *_Nullable image = [[YYImage alloc] initWithContentsOfFile:filePath];
-        OWSCAssertDebug(image);
-        stickerView.image = image;
-    };
-    self.unloadCellContentBlock = ^{
-        stickerView.image = nil;
-    };
+        self.loadCellContentBlock = ^{
+            NSString *_Nullable filePath = stickerAttachment.originalFilePath;
+            OWSCAssertDebug(filePath);
+            YYImage *_Nullable image = [[YYImage alloc] initWithContentsOfFile:filePath];
+            OWSCAssertDebug(image);
+            stickerView.image = image;
+        };
+        self.unloadCellContentBlock = ^{ stickerView.image = nil; };
 
-    return stickerView;
+        return stickerView;
+    } else {
+        UIImageView *stickerView = [UIImageView new];
+        stickerView.contentMode = UIViewContentModeScaleAspectFit;
+
+        stickerView.accessibilityLabel =
+            [OWSMessageView accessibilityLabelWithDescription:NSLocalizedString(@"ACCESSIBILITY_LABEL_STICKER",
+                                                                  @"Accessibility label for stickers.")
+                                                   authorName:self.viewItem.accessibilityAuthorName];
+
+        self.loadCellContentBlock = ^{
+            NSString *_Nullable filePath = stickerAttachment.originalFilePath;
+            OWSCAssertDebug(filePath);
+            UIImage *_Nullable image = [UIImage imageWithContentsOfFile:filePath];
+            OWSCAssertDebug(image);
+            stickerView.image = image;
+        };
+        self.unloadCellContentBlock = ^{ stickerView.image = nil; };
+
+        return stickerView;
+    }
 }
 
 - (UIView *)loadFailedStickerView
@@ -322,7 +333,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (CGFloat)stickerSize
 {
-    return 128;
+    return 175;
 }
 
 - (CGSize)bodyMediaSize
@@ -332,7 +343,7 @@ NS_ASSUME_NONNULL_BEGIN
     return CGSizeMake(self.stickerSize, self.stickerSize);
 }
 
-- (nullable NSValue *)senderNameSize
+- (nullable NSValue *)senderNameSize:(CGFloat)maxContentWidth
 {
     OWSAssertDebug(self.conversationStyle);
     OWSAssertDebug(self.conversationStyle.maxMessageWidth > 0);
@@ -342,7 +353,7 @@ NS_ASSUME_NONNULL_BEGIN
     }
 
     CGFloat hMargins = OWSMessageStickerView.textInsetHorizontal * 2;
-    const int maxTextWidth = (int)floor(self.conversationStyle.maxMessageWidth - hMargins);
+    const int maxTextWidth = (int)floor(maxContentWidth - hMargins);
     [self configureSenderNameLabel];
     CGSize result = CGSizeCeil([self.senderNameLabel sizeThatFits:CGSizeMake(maxTextWidth, CGFLOAT_MAX)]);
     result.width = MIN(result.width, maxTextWidth);
@@ -359,10 +370,12 @@ NS_ASSUME_NONNULL_BEGIN
     OWSAssertDebug(self.viewItem.stickerAttachment != nil || self.viewItem.isFailedSticker);
 
     CGSize cellSize = CGSizeZero;
+    CGFloat margin = OWSMessageStickerView.marginAndSpacing;
+    CGFloat maxContentWidth = self.conversationStyle.maxMessageWidth - margin * 2;
 
     NSMutableArray<NSValue *> *textViewSizes = [NSMutableArray new];
 
-    NSValue *_Nullable senderNameSize = [self senderNameSize];
+    NSValue *_Nullable senderNameSize = [self senderNameSize:maxContentWidth];
     if (senderNameSize) {
         [textViewSizes addObject:senderNameSize];
     }
@@ -379,7 +392,7 @@ NS_ASSUME_NONNULL_BEGIN
     }
 
     CGSize footerSize = [self.footerView measureWithConversationViewItem:self.viewItem];
-    footerSize.width = MIN(footerSize.width, self.conversationStyle.maxMessageWidth);
+    footerSize.width = MIN(footerSize.width, maxContentWidth);
     [textViewSizes addObject:[NSValue valueWithCGSize:footerSize]];
 
     if (textViewSizes.count > 0) {
@@ -390,7 +403,6 @@ NS_ASSUME_NONNULL_BEGIN
 
     OWSAssertDebug(cellSize.width > 0 && cellSize.height > 0);
 
-    CGFloat margin = OWSMessageStickerView.marginAndSpacing;
     cellSize.width += margin * 2;
     cellSize.height += margin;
 
@@ -464,18 +476,6 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Gestures
 
-- (void)addGestureHandlers
-{
-    UITapGestureRecognizer *tap =
-        [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleTapGesture:)];
-    [self addGestureRecognizer:tap];
-
-    UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self
-                                                                          action:@selector(handlePanGesture:)];
-    [self addGestureRecognizer:pan];
-    [tap requireGestureRecognizerToFail:pan];
-}
-
 - (BOOL)willHandleTapGesture:(UITapGestureRecognizer *)sender
 {
     return YES;
@@ -500,16 +500,18 @@ NS_ASSUME_NONNULL_BEGIN
 
     if (self.viewItem.isFailedSticker) {
         TSMessage *message = (TSMessage *)self.viewItem.interaction;
-        [self.databaseStorage uiReadWithBlock:^(SDSAnyReadTransaction *transaction) {
+        [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
+            NSArray<TSAttachment *> *attachments = [message allAttachmentsWithTransaction:transaction.unwrapGrdbRead];
             [self.attachmentDownloads
-                downloadAllAttachmentsForMessage:message
-                                     transaction:transaction
-                                         success:^(NSArray<TSAttachmentStream *> *_Nonnull attachmentStreams) {
-                                             // Do nothing.
-                                         }
-                                         failure:^(NSError *_Nonnull error){
-                                             // Do nothing.
-                                         }];
+                downloadAttachmentsForMessage:message
+                  bypassPendingMessageRequest:NO
+                                  attachments:attachments
+                                      success:^(NSArray<TSAttachmentStream *> *attachmentStreams) {
+                                          // Do nothing.
+                                      }
+                                      failure:^(NSError *error) {
+                                          // Do nothing.
+                                      }];
         }];
         return;
     }

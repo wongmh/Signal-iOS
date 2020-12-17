@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSThread.h"
@@ -9,6 +9,26 @@ NS_ASSUME_NONNULL_BEGIN
 @class SignalServiceAddress;
 
 @interface TSContactThread : TSThread
+
+- (instancetype)initWithGrdbId:(int64_t)grdbId
+                      uniqueId:(NSString *)uniqueId
+         conversationColorName:(ConversationColorName)conversationColorName
+                  creationDate:(nullable NSDate *)creationDate
+                    isArchived:(BOOL)isArchived
+          lastInteractionRowId:(int64_t)lastInteractionRowId
+                  messageDraft:(nullable NSString *)messageDraft
+                mutedUntilDate:(nullable NSDate *)mutedUntilDate
+         shouldThreadBeVisible:(BOOL)shouldThreadBeVisible NS_UNAVAILABLE;
+
++ (instancetype)new NS_UNAVAILABLE;
+- (instancetype)init NS_UNAVAILABLE;
+- (instancetype)initWithUniqueId:(NSString *)uniqueId NS_UNAVAILABLE;
+
+- (nullable instancetype)initWithCoder:(NSCoder *)coder NS_DESIGNATED_INITIALIZER;
+
+// TODO: We might want to make this initializer private once we
+//       convert getOrCreateThreadWithContactAddress to take "any" transaction.
+- (instancetype)initWithContactAddress:(SignalServiceAddress *)contactAddress NS_DESIGNATED_INITIALIZER;
 
 // --- CODE GENERATION MARKER
 
@@ -21,22 +41,23 @@ NS_ASSUME_NONNULL_BEGIN
            conversationColorName:(ConversationColorName)conversationColorName
                     creationDate:(nullable NSDate *)creationDate
                       isArchived:(BOOL)isArchived
+                  isMarkedUnread:(BOOL)isMarkedUnread
             lastInteractionRowId:(int64_t)lastInteractionRowId
+               lastVisibleSortId:(uint64_t)lastVisibleSortId
+lastVisibleSortIdOnScreenPercentage:(double)lastVisibleSortIdOnScreenPercentage
+         mentionNotificationMode:(TSThreadMentionNotificationMode)mentionNotificationMode
                     messageDraft:(nullable NSString *)messageDraft
+          messageDraftBodyRanges:(nullable MessageBodyRanges *)messageDraftBodyRanges
                   mutedUntilDate:(nullable NSDate *)mutedUntilDate
            shouldThreadBeVisible:(BOOL)shouldThreadBeVisible
               contactPhoneNumber:(nullable NSString *)contactPhoneNumber
                      contactUUID:(nullable NSString *)contactUUID
               hasDismissedOffers:(BOOL)hasDismissedOffers
-NS_SWIFT_NAME(init(grdbId:uniqueId:conversationColorName:creationDate:isArchived:lastInteractionRowId:messageDraft:mutedUntilDate:shouldThreadBeVisible:contactPhoneNumber:contactUUID:hasDismissedOffers:));
+NS_DESIGNATED_INITIALIZER NS_SWIFT_NAME(init(grdbId:uniqueId:conversationColorName:creationDate:isArchived:isMarkedUnread:lastInteractionRowId:lastVisibleSortId:lastVisibleSortIdOnScreenPercentage:mentionNotificationMode:messageDraft:messageDraftBodyRanges:mutedUntilDate:shouldThreadBeVisible:contactPhoneNumber:contactUUID:hasDismissedOffers:));
 
 // clang-format on
 
 // --- CODE GENERATION MARKER
-
-// TODO: We might want to make this initializer private once we
-//       convert getOrCreateThreadWithContactAddress to take "any" transaction.
-- (instancetype)initWithContactAddress:(SignalServiceAddress *)contactAddress;
 
 @property (nonatomic, readonly) SignalServiceAddress *contactAddress;
 @property (nonatomic) BOOL hasDismissedOffers;
@@ -60,8 +81,8 @@ NS_SWIFT_NAME(init(grdbId:uniqueId:conversationColorName:creationDate:isArchived
 // This method can be used to get the conversation color for a given
 // recipient without using a read/write transaction to create a
 // contact thread.
-+ (NSString *)conversationColorNameForContactAddress:(SignalServiceAddress *)address
-                                         transaction:(SDSAnyReadTransaction *)transaction;
++ (ConversationColorName)conversationColorNameForContactAddress:(SignalServiceAddress *)address
+                                                    transaction:(SDSAnyReadTransaction *)transaction;
 
 @end
 

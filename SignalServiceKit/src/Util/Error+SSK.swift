@@ -1,46 +1,54 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
 
 extension NSError {
+    // Only HTTPStatusCodeForError() or hasFatalAFStatusCode()
+    // should use this method.
+    // It only works for AFNetworking errors.
+    // Use HTTPStatusCodeForError() instead.
     @objc
-    public func httpResponseCodeObjc() -> NSNumber? {
-        guard let value = httpResponseCode() else {
+    public func afHttpStatusCode() -> NSNumber? {
+        guard let statusCode = afFailingHTTPURLResponse?.statusCode else {
             return nil
         }
-        return NSNumber(value: value)
-    }
-
-    // TODO: Currently this method only works for AFNetworking errors.
-    //       We could generalize it.
-    public func httpResponseCode() -> Int? {
-        guard domain == AFURLResponseSerializationErrorDomain else {
-            return nil
-        }
-        guard let response = userInfo[AFNetworkingOperationFailingURLResponseErrorKey] as? HTTPURLResponse else {
-            return nil
-        }
-        return response.statusCode
+        return NSNumber(value: statusCode)
     }
 
     @objc
-    public func hasFatalResponseCode() -> Bool {
-        guard let responseCode = httpResponseCode() else {
+    public func hasFatalAFStatusCode() -> Bool {
+        guard let statusCode = afHttpStatusCode()?.intValue else {
             return false
         }
-        if responseCode == 429 {
+        if statusCode == 429 {
             // "Too Many Requests", retry with backoff.
             return false
         }
-        return 400 <= responseCode && responseCode <= 499
+        return 400 <= statusCode && statusCode <= 499
+    }
+
+    @objc
+    public func afRetryAfterDate() -> Date? {
+        return afFailingHTTPURLResponse?.retryAfterDate()
+    }
+
+    private var afFailingHTTPURLResponse: HTTPURLResponse? {
+        guard domain == AFURLResponseSerializationErrorDomain else {
+            return nil
+        }
+        return userInfo[AFNetworkingOperationFailingURLResponseErrorKey] as? HTTPURLResponse
     }
 }
+
+// MARK: -
 
 public protocol OperationError: CustomNSError {
     var isRetryable: Bool { get }
 }
+
+// MARK: -
 
 public extension OperationError {
     var errorUserInfo: [String: Any] {
@@ -51,6 +59,12 @@ public extension OperationError {
 extension NSError: OperationError { }
 
 extension OWSAssertionError: OperationError {
+    public var isRetryable: Bool {
+        return false
+    }
+}
+
+extension OWSGenericError: OperationError {
     public var isRetryable: Bool {
         return false
     }
@@ -94,5 +108,33 @@ extension OWSOperation {
     /// @param `error` may or may not have defined it's retry behavior.
     public func reportError(withUndefinedRetry error: Error) {
         __reportError(error)
+    }
+}
+
+// MARK: -
+
+public extension Error {
+
+    // This only only handles the common case wherein:
+    //
+    // * Only network failures should be retried.
+    // * Network failures can be discriminated using IsNetworkConnectivityFailure().
+    //
+    // There are some cases where those assumptions don't hold
+    // and withDefaultRetry() should not be used in those cases.
+    var withDefaultRetry: NSError {
+        IsNetworkConnectivityFailure(self) ? asRetryableError : asUnretryableError
+    }
+
+    var asRetryableError: NSError {
+        let nsError = self as NSError
+        nsError.isRetryable = true
+        return nsError
+    }
+
+    var asUnretryableError: NSError {
+        let nsError = self as NSError
+        nsError.isRetryable = false
+        return nsError
     }
 }

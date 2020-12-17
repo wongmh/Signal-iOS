@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import <UIKit/UIKit.h>
@@ -31,11 +31,12 @@ FOUNDATION_EXPORT const unsigned char SignalMessagingVersionString[];
 #import <SignalMessaging/OWS109OutgoingMessageState.h>
 #import <SignalMessaging/OWSAnyTouchGestureRecognizer.h>
 #import <SignalMessaging/OWSAudioPlayer.h>
+#import <SignalMessaging/OWSBubbleShapeView.h>
+#import <SignalMessaging/OWSBubbleView.h>
 #import <SignalMessaging/OWSContactAvatarBuilder.h>
 #import <SignalMessaging/OWSContactsManager.h>
 #import <SignalMessaging/OWSConversationColor.h>
 #import <SignalMessaging/OWSDatabaseMigration.h>
-#import <SignalMessaging/OWSFormat.h>
 #import <SignalMessaging/OWSGroupAvatarBuilder.h>
 #import <SignalMessaging/OWSNavigationController.h>
 #import <SignalMessaging/OWSOrphanDataCleaner.h>
@@ -48,7 +49,6 @@ FOUNDATION_EXPORT const unsigned char SignalMessagingVersionString[];
 #import <SignalMessaging/OWSTableViewController.h>
 #import <SignalMessaging/OWSTextField.h>
 #import <SignalMessaging/OWSTextView.h>
-#import <SignalMessaging/OWSUnreadIndicator.h>
 #import <SignalMessaging/OWSWindowManager.h>
 #import <SignalMessaging/PrivateMethodsForMigration.h>
 #import <SignalMessaging/ScreenLockViewController.h>

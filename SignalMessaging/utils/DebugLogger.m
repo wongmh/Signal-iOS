@@ -1,17 +1,17 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "DebugLogger.h"
 #import "OWSPreferences.h"
 #import "OWSScrubbingLogFormatter.h"
 #import <AudioToolbox/AudioServices.h>
+#import <CocoaLumberjack/DDTTYLogger.h>
 #import <SignalCoreKit/NSDate+OWS.h>
 #import <SignalServiceKit/AppContext.h>
 #import <SignalServiceKit/OWSFileSystem.h>
-
-#pragma mark Logging - Production logging wants us to write some logs to a file in case we need it for debugging.
-#import <CocoaLumberjack/DDTTYLogger.h>
+#import <SignalServiceKit/SignalServiceKit-Swift.h>
+#import <SignalServiceKit/TestAppContext.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -29,22 +29,20 @@ const NSUInteger kMaxDebugLogFileSize = 1024 * 1024 * 3;
 
 + (instancetype)sharedLogger
 {
-    static DebugLogger *sharedManager = nil;
+    static DebugLogger *shared = nil;
     static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        sharedManager = [self new];
-    });
-    return sharedManager;
+    dispatch_once(&onceToken, ^{ shared = [self new]; });
+    return shared;
 }
 
-+ (NSString *)mainAppLogsDirPath
++ (NSString *)mainAppDebugLogsDirPath
 {
     NSString *dirPath = [[OWSFileSystem cachesDirectoryPath] stringByAppendingPathComponent:@"Logs"];
     [OWSFileSystem ensureDirectoryExists:dirPath];
     return dirPath;
 }
 
-+ (NSString *)shareExtensionLogsDirPath
++ (NSString *)shareExtensionDebugLogsDirPath
 {
     NSString *dirPath =
         [[OWSFileSystem appSharedDataDirectoryPath] stringByAppendingPathComponent:@"ShareExtensionLogs"];
@@ -52,10 +50,34 @@ const NSUInteger kMaxDebugLogFileSize = 1024 * 1024 * 3;
     return dirPath;
 }
 
++ (NSString *)nseDebugLogsDirPath
+{
+    NSString *dirPath = [[OWSFileSystem appSharedDataDirectoryPath] stringByAppendingPathComponent:@"NSELogs"];
+    [OWSFileSystem ensureDirectoryExists:dirPath];
+    return dirPath;
+}
+
+#ifdef TESTABLE_BUILD
++ (NSString *)testDebugLogsDirPath
+{
+    return TestAppContext.testDebugLogsDirPath;
+}
+#endif
+
++ (NSArray<NSString *> *)allLogsDirPaths
+{
+    // We don't need to include testDebugLogsDirPath when
+    // we upload debug logs.
+    return @[
+        DebugLogger.mainAppDebugLogsDirPath,
+        DebugLogger.shareExtensionDebugLogsDirPath,
+        DebugLogger.nseDebugLogsDirPath,
+    ];
+}
+
 - (NSString *)logsDirPath
 {
-    // This assumes that the only app extension is the share app extension.
-    return (CurrentAppContext().isMainApp ? DebugLogger.mainAppLogsDirPath : DebugLogger.shareExtensionLogsDirPath);
+    return CurrentAppContext().debugLogsDirPath;
 }
 
 - (void)enableFileLogging
@@ -69,8 +91,15 @@ const NSUInteger kMaxDebugLogFileSize = 1024 * 1024 * 3;
 
     // 24 hour rolling.
     self.fileLogger.rollingFrequency = kDayInterval;
-    // Keep last 3 days of logs - or last 3 logs (if logs rollover due to max file size).
-    self.fileLogger.logFileManager.maximumNumberOfLogFiles = 3;
+
+    if (SSKDebugFlags.extraDebugLogs) {
+        // Keep extra log files in internal/QA builds.
+        self.fileLogger.logFileManager.maximumNumberOfLogFiles = 15;
+    } else {
+        // Keep last 3 days of logs - or last 3 logs (if logs rollover due to max file size).
+        self.fileLogger.logFileManager.maximumNumberOfLogFiles = 3;
+    }
+
     self.fileLogger.maximumFileSize = kMaxDebugLogFileSize;
     self.fileLogger.logFormatter = [OWSScrubbingLogFormatter new];
 
@@ -118,10 +147,7 @@ const NSUInteger kMaxDebugLogFileSize = 1024 * 1024 * 3;
 {
     NSFileManager *fileManager = [NSFileManager defaultManager];
     NSMutableSet<NSString *> *logPathSet = [NSMutableSet new];
-    for (NSString *logDirPath in @[
-             DebugLogger.mainAppLogsDirPath,
-             DebugLogger.shareExtensionLogsDirPath,
-         ]) {
+    for (NSString *logDirPath in DebugLogger.allLogsDirPaths) {
         NSError *error;
         for (NSString *filename in [fileManager contentsOfDirectoryAtPath:logDirPath error:&error]) {
             NSString *logPath = [logDirPath stringByAppendingPathComponent:filename];

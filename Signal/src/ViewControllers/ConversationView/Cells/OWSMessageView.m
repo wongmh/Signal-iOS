@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSMessageView.h"
@@ -8,6 +8,13 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @implementation OWSMessageView
+
+- (BOOL)isBorderless
+{
+    OWSAbstractMethod();
+
+    return NO;
+}
 
 - (void)configureViews
 {
@@ -87,6 +94,7 @@ NS_ASSUME_NONNULL_BEGIN
 
     UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self
                                                                           action:@selector(handlePanGesture:)];
+    _panGesture = pan;
     [self addGestureRecognizer:pan];
     [tap requireGestureRecognizerToFail:pan];
 }

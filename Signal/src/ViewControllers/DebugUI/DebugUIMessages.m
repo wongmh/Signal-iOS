@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "DebugUIMessages.h"
@@ -9,6 +9,7 @@
 #import "DebugUIMessagesAssetLoader.h"
 #import "OWSTableViewController.h"
 #import "Signal-Swift.h"
+#import <MobileCoreServices/UTCoreTypes.h>
 #import <SignalCoreKit/NSDate+OWS.h>
 #import <SignalCoreKit/Randomness.h>
 #import <SignalMessaging/Environment.h>
@@ -33,14 +34,6 @@ NS_ASSUME_NONNULL_BEGIN
 @interface TSIncomingMessage (DebugUI)
 
 @property (nonatomic, getter=wasRead) BOOL read;
-
-@end
-
-#pragma mark -
-
-@interface TSOutgoingMessage (PostDatingDebug)
-
-- (void)setReceivedAtTimestamp:(uint64_t)value;
 
 @end
 
@@ -85,15 +78,35 @@ NS_ASSUME_NONNULL_BEGIN
 
     NSMutableArray<OWSTableItem *> *items = [NSMutableArray new];
 
-    [items addObject:[OWSTableItem itemWithTitle:@"Delete all messages in thread"
-                                     actionBlock:^{
-                                         [DebugUIMessages deleteAllMessagesInThread:thread];
-                                     }]];
-    [items addObject:[OWSTableItem itemWithTitle:@"Thrash insert/deletes"
-                                     actionBlock:^{
-                                         [DebugUIMessages thrashInsertAndDeleteForThread:(TSThread *)thread
-                                                                                 counter:300];
-                                     }]];
+    [items addObjectsFromArray:@[
+        [OWSTableItem itemWithTitle:@"Delete all messages in thread"
+                        actionBlock:^{
+                            [DebugUIMessages deleteAllMessagesInThread:thread];
+                        }],
+        [OWSTableItem itemWithTitle:@"👷 Create Fake Messages"
+                        actionBlock:^{
+                            [DebugUIMessages askForQuantityWithTitle:@"How many messages?"
+                                                          completion:^(NSUInteger quantity) {
+                                                              [DebugUIMessages createFakeMessagesInBatches:quantity
+                                                                                                    thread:thread
+                                                                                                isTextOnly:NO];
+                                                          }];
+                        }],
+        [OWSTableItem itemWithTitle:@"Create Fake Messages (textonly)"
+                        actionBlock:^{
+                            [DebugUIMessages askForQuantityWithTitle:@"How many messages?"
+                                                          completion:^(NSUInteger messageQuantity) {
+                                                              [DebugUIMessages
+                                                                  createFakeMessagesInBatches:messageQuantity
+                                                                                       thread:thread
+                                                                                   isTextOnly:YES];
+                                                          }];
+                        }],
+        [OWSTableItem itemWithTitle:@"Thrash insert/deletes"
+                        actionBlock:^{
+                            [DebugUIMessages thrashInsertAndDeleteForThread:(TSThread *)thread counter:300];
+                        }]
+    ]];
 
     [items addObjectsFromArray:[self itemsForActions:@[
         [DebugUIMessages fakeAllContactShareAction:thread],
@@ -124,7 +137,7 @@ NS_ASSUME_NONNULL_BEGIN
                         actionBlock:^{
                             [DebugUIMessages sendNTextMessagesInThread:thread];
                         }],
-        [OWSTableItem itemWithTitle:@"👷 Receive UUID message"
+        [OWSTableItem itemWithTitle:@"Receive UUID message"
                         actionBlock:^{
                             [DebugUIMessages receiveUUIDEnvelopeInNewThread];
                         }],
@@ -163,85 +176,27 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Misc.
 
-        [OWSTableItem itemWithTitle:@"Perform 100 random actions"
+        [OWSTableItem itemWithTitle:@"Perform random actions"
                         actionBlock:^{
-                            [DebugUIMessages performRandomActions:100 thread:thread];
+                            [DebugUIMessages askForQuantityWithTitle:@"How many actions?"
+                                                          completion:^(NSUInteger quantity) {
+                                                              [DebugUIMessages performRandomActions:quantity
+                                                                                             thread:thread];
+                                                          }];
                         }],
-        [OWSTableItem itemWithTitle:@"Perform 1,000 random actions"
+        [OWSTableItem itemWithTitle:@"Create Threads"
                         actionBlock:^{
-                            [DebugUIMessages performRandomActions:1000 thread:thread];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 10 fake messages"
-                        actionBlock:^{
-                            [DebugUIMessages sendFakeMessages:10 thread:thread];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 1 fake thread with 1 message"
-                        actionBlock:^{
-                            [DebugUIMessages createFakeThreads:1 withFakeMessages:1];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 100 fake threads with 10 messages"
-                        actionBlock:^{
-                            [DebugUIMessages createFakeThreads:100 withFakeMessages:10];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 10 fake threads with 100 messages"
-                        actionBlock:^{
-                            [DebugUIMessages createFakeThreads:10 withFakeMessages:100];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 10 fake threads with 10 messages"
-                        actionBlock:^{
-                            [DebugUIMessages createFakeThreads:10 withFakeMessages:10];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 100 fake threads with 100 messages"
-                        actionBlock:^{
-                            [DebugUIMessages createFakeThreads:100 withFakeMessages:100];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 1k fake threads with 1 message"
-                        actionBlock:^{
-                            [DebugUIMessages createFakeThreads:1000 withFakeMessages:1];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 10 fake threads with 1k messages"
-                        actionBlock:^{
-                            [DebugUIMessages createFakeThreads:10 withFakeMessages:1 * 1000];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 1k fake threads with 1k messages"
-                        actionBlock:^{
-                            [DebugUIMessages createFakeThreads:1000 withFakeMessages:1 * 1000];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 5 fake threads with 10k messages"
-                        actionBlock:^{
-                            [DebugUIMessages createFakeThreads:5 withFakeMessages:10 * 1000];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 1k fake threads with 10k messages"
-                        actionBlock:^{
-                            [DebugUIMessages createFakeThreads:1000 withFakeMessages:10 * 1000];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 1k fake messages"
-                        actionBlock:^{
-                            [DebugUIMessages sendFakeMessages:1000 thread:thread];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 10 fake text messages"
-                        actionBlock:^{
-                            [DebugUIMessages sendFakeMessages:10 thread:thread isTextOnly:YES];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 1k fake text messages"
-                        actionBlock:^{
-                            [DebugUIMessages sendFakeMessages:1 * 1000 thread:thread isTextOnly:YES];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 10k fake messages"
-                        actionBlock:^{
-                            [DebugUIMessages sendFakeMessages:10 * 1000 thread:thread];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 10k fake text messages"
-                        actionBlock:^{
-                            [DebugUIMessages sendFakeMessages:10 * 1000 thread:thread isTextOnly:YES];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 100k fake messages"
-                        actionBlock:^{
-                            [DebugUIMessages sendFakeMessages:100 * 1000 thread:thread];
-                        }],
-        [OWSTableItem itemWithTitle:@"Create 100k fake text messages"
-                        actionBlock:^{
-                            [DebugUIMessages sendFakeMessages:100 * 1000 thread:thread isTextOnly:YES];
+                            [DebugUIMessages
+                                askForQuantityWithTitle:@"How many threads?"
+                                             completion:^(NSUInteger threadQuantity) {
+                                                 [DebugUIMessages
+                                                     askForQuantityWithTitle:@"How many messages in each thread?"
+                                                                  completion:^(NSUInteger messageQuantity) {
+                                                                      [DebugUIMessages
+                                                                          createFakeThreads:threadQuantity
+                                                                           withFakeMessages:messageQuantity];
+                                                                  }];
+                                             }];
                         }],
         [OWSTableItem itemWithTitle:@"Send text/x-signal-plain"
                         actionBlock:^{
@@ -263,46 +218,37 @@ NS_ASSUME_NONNULL_BEGIN
                         actionBlock:^{
                             [DebugUIMessages createTimestampMessagesInThread:thread];
                         }],
-
-        [OWSTableItem itemWithTitle:@"Send 10 text and system messages"
+        [OWSTableItem itemWithTitle:@"Send text and system messages"
                         actionBlock:^{
-                            [DebugUIMessages sendTextAndSystemMessages:10 thread:thread];
+                            [DebugUIMessages askForQuantityWithTitle:@"How many messages?"
+                                                          completion:^(NSUInteger quantity) {
+                                                              [DebugUIMessages sendTextAndSystemMessages:quantity
+                                                                                                  thread:thread];
+                                                          }];
                         }],
-        [OWSTableItem itemWithTitle:@"Send 100 text and system messages"
+        [OWSTableItem itemWithTitle:@"Request Bogus group info"
                         actionBlock:^{
-                            [DebugUIMessages sendTextAndSystemMessages:100 thread:thread];
+                            OWSLogInfo(@"Requesting bogus group info for thread: %@", thread);
+                            OWSGroupInfoRequestMessage *groupInfoRequestMessage = [[OWSGroupInfoRequestMessage alloc]
+                                initWithThread:thread
+                                       groupId:[TSGroupModel generateRandomV1GroupId]];
+                            DatabaseStorageWrite(
+                                SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *_Nonnull transaction) {
+                                    [self.messageSenderJobQueue addMessage:groupInfoRequestMessage.asPreparer
+                                                               transaction:transaction];
+                                });
                         }],
-        [OWSTableItem itemWithTitle:@"Send 1,000 text and system messages"
-                        actionBlock:^{
-                            [DebugUIMessages sendTextAndSystemMessages:1000 thread:thread];
-                        }],
-        [OWSTableItem
-            itemWithTitle:@"Request Bogus group info"
-              actionBlock:^{
-                  OWSLogInfo(@"Requesting bogus group info for thread: %@", thread);
-                  OWSGroupInfoRequestMessage *groupInfoRequestMessage =
-                      [[OWSGroupInfoRequestMessage alloc] initWithThread:thread
-                                                                  groupId:[TSGroupModel generateRandomGroupId]];
-                  [self writeWithBlock:^(SDSAnyWriteTransaction *_Nonnull transaction) {
-                      [self.messageSenderJobQueue addMessage:groupInfoRequestMessage.asPreparer
-                                                 transaction:transaction];
-                  }];
-              }],
         [OWSTableItem itemWithTitle:@"Message with stalled timer"
                         actionBlock:^{
                             [DebugUIMessages createDisappearingMessagesWhichFailedToStartInThread:thread];
                         }],
-        [OWSTableItem itemWithTitle:@"Inject 10 fake incoming messages"
+        [OWSTableItem itemWithTitle:@"Inject fake incoming messages"
                         actionBlock:^{
-                            [DebugUIMessages injectFakeIncomingMessages:10 thread:thread];
-                        }],
-        [OWSTableItem itemWithTitle:@"Inject 100 fake incoming messages"
-                        actionBlock:^{
-                            [DebugUIMessages injectFakeIncomingMessages:100 thread:thread];
-                        }],
-        [OWSTableItem itemWithTitle:@"Inject 1,000 fake incoming messages"
-                        actionBlock:^{
-                            [DebugUIMessages injectFakeIncomingMessages:1000 thread:thread];
+                            [DebugUIMessages askForQuantityWithTitle:@"How many messages?"
+                                                          completion:^(NSUInteger quantity) {
+                                                              [DebugUIMessages injectFakeIncomingMessages:quantity
+                                                                                                   thread:thread];
+                                                          }];
                         }],
         [OWSTableItem itemWithTitle:@"Test Indic Scripts"
                         actionBlock:^{
@@ -326,17 +272,14 @@ NS_ASSUME_NONNULL_BEGIN
     if ([thread isKindOfClass:[TSContactThread class]]) {
         TSContactThread *contactThread = (TSContactThread *)thread;
         SignalServiceAddress *recipientAddress = contactThread.contactAddress;
-        [items addObject:[OWSTableItem itemWithTitle:@"Create 10 new groups"
+        [items addObject:[OWSTableItem itemWithTitle:@"Create new groups"
                                          actionBlock:^{
-                                             [DebugUIMessages createNewGroups:10 recipientAddress:recipientAddress];
-                                         }]];
-        [items addObject:[OWSTableItem itemWithTitle:@"Create 100 new groups"
-                                         actionBlock:^{
-                                             [DebugUIMessages createNewGroups:100 recipientAddress:recipientAddress];
-                                         }]];
-        [items addObject:[OWSTableItem itemWithTitle:@"Create 1,000 new groups"
-                                         actionBlock:^{
-                                             [DebugUIMessages createNewGroups:1000 recipientAddress:recipientAddress];
+                                             [DebugUIMessages askForQuantityWithTitle:@"How many Groups?"
+                                                                           completion:^(NSUInteger quantity) {
+                                                                               [DebugUIMessages
+                                                                                    createNewGroups:quantity
+                                                                                   recipientAddress:recipientAddress];
+                                                                           }];
                                          }]];
     }
     if ([thread isKindOfClass:[TSGroupThread class]]) {
@@ -386,14 +329,9 @@ NS_ASSUME_NONNULL_BEGIN
     [self.class readWithBlock:block];
 }
 
-+ (void)writeWithBlock:(void (^)(SDSAnyWriteTransaction *transaction))block
++ (id<GroupsV2>)groupsV2
 {
-    [self.databaseStorage writeWithBlock:block];
-}
-
-- (void)writeWithBlock:(void (^)(SDSAnyWriteTransaction *transaction))block
-{
-    [self.class writeWithBlock:block];
+    return SSKEnvironment.shared.groupsV2;
 }
 
 #pragma mark -
@@ -414,13 +352,14 @@ NS_ASSUME_NONNULL_BEGIN
     NSString *randomText = [self randomText];
     NSString *text = [[[@(counter) description] stringByAppendingString:@" "] stringByAppendingString:randomText];
     __block TSOutgoingMessage *message;
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        message = [ThreadUtil enqueueMessageWithText:text
-                                            inThread:thread
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
+        message = [ThreadUtil enqueueMessageWithBody:[[MessageBody alloc] initWithText:text
+                                                                                ranges:MessageBodyRanges.empty]
+                                              thread:thread
                                     quotedReplyModel:nil
                                     linkPreviewDraft:nil
                                          transaction:transaction];
-    }];
+    });
     OWSLogInfo(@"sendTextMessageInThread timestamp: %llu.", message.timestamp);
 }
 
@@ -469,8 +408,9 @@ NS_ASSUME_NONNULL_BEGIN
     }
 
     [dataSource setSourceFilename:filename];
-    SignalAttachment *attachment =
-        [SignalAttachment attachmentWithDataSource:dataSource dataUTI:utiType imageQuality:TSImageQualityOriginal];
+    SignalAttachment *attachment = [SignalAttachment attachmentWithDataSource:dataSource
+                                                                      dataUTI:utiType
+                                                                 imageQuality:TSImageQualityOriginal];
 
     NSString *messageBody = nil;
     if (hasCaption) {
@@ -498,30 +438,39 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark - Infrastructure
 
-+ (void)performActionNTimes:(DebugUIMessagesAction *)action
++ (void)askForQuantityWithTitle:(NSString *)title completion:(void (^)(NSUInteger))completion
 {
     OWSAssertIsOnMainThread();
-    OWSAssertDebug(action);
-
-    ActionSheetController *alert = [[ActionSheetController alloc] initWithTitle:@"How many?" message:nil];
+    ActionSheetController *alert = [[ActionSheetController alloc] initWithTitle:title message:nil];
     for (NSNumber *countValue in @[
              @(1),
              @(10),
+             @(25),
              @(100),
              @(1 * 1000),
              @(10 * 1000),
          ]) {
-        [alert addAction:[[ActionSheetAction alloc]
-                             initWithTitle:countValue.stringValue
-                                     style:ActionSheetActionStyleDefault
-                                   handler:^(ActionSheetAction *ignore) {
-                                       [action prepareAndPerformNTimes:countValue.unsignedIntegerValue];
-                                   }]];
+        [alert addAction:[[ActionSheetAction alloc] initWithTitle:countValue.stringValue
+                                                            style:ActionSheetActionStyleDefault
+                                                          handler:^(ActionSheetAction *ignore) {
+                                                              completion(countValue.unsignedIntegerValue);
+                                                          }]];
     }
 
     [alert addAction:[OWSActionSheets cancelAction]];
     UIViewController *fromViewController = [[UIApplication sharedApplication] frontmostViewController];
     [fromViewController presentActionSheet:alert];
+}
+
++ (void)performActionNTimes:(DebugUIMessagesAction *)action
+{
+    OWSAssertIsOnMainThread();
+    OWSAssertDebug(action);
+
+    [self askForQuantityWithTitle:@"How many?"
+                       completion:^(NSUInteger quantity) {
+                           [action prepareAndPerformNTimes:quantity];
+                       }];
 }
 
 #pragma mark - Send Media
@@ -609,23 +558,22 @@ NS_ASSUME_NONNULL_BEGIN
         label = [label stringByAppendingString:@" 🔤"];
     }
 
-    return [DebugUIMessagesSingleAction
-             actionWithLabel:label
-        staggeredActionBlock:^(NSUInteger index,
-            SDSAnyWriteTransaction *transaction,
-            ActionSuccessBlock success,
-            ActionFailureBlock failure) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                OWSAssertDebug(fakeAssetLoader.filePath.length > 0);
-                [self sendAttachmentWithFilePath:fakeAssetLoader.filePath
-                                          thread:thread
-                                           label:label
-                                      hasCaption:hasCaption
-                                         success:success
-                                         failure:failure];
-            });
-        }
-                prepareBlock:fakeAssetLoader.prepareBlock];
+    return [DebugUIMessagesSingleAction actionWithLabel:label
+                                   staggeredActionBlock:^(NSUInteger index,
+                                       SDSAnyWriteTransaction *transaction,
+                                       ActionSuccessBlock success,
+                                       ActionFailureBlock failure) {
+                                       dispatch_async(dispatch_get_main_queue(), ^{
+                                           OWSAssertDebug(fakeAssetLoader.filePath.length > 0);
+                                           [self sendAttachmentWithFilePath:fakeAssetLoader.filePath
+                                                                     thread:thread
+                                                                      label:label
+                                                                 hasCaption:hasCaption
+                                                                    success:success
+                                                                    failure:failure];
+                                       });
+                                   }
+                                           prepareBlock:fakeAssetLoader.prepareBlock];
 }
 
 + (DebugUIMessagesAction *)sendAllMediaAction:(TSThread *)thread
@@ -897,18 +845,17 @@ NS_ASSUME_NONNULL_BEGIN
                                                                              isDelivered:NO
                                                                                   isRead:NO]];
 
-    return
-        [DebugUIMessagesSingleAction actionWithLabel:label
-                              unstaggeredActionBlock:^(NSUInteger index, SDSAnyWriteTransaction *transaction) {
-                                  OWSAssertDebug(fakeAssetLoader.filePath.length > 0);
-                                  [self createFakeOutgoingMedia:index
-                                                   messageState:messageState
-                                                     hasCaption:hasCaption
-                                                fakeAssetLoader:fakeAssetLoader
-                                                         thread:thread
-                                                    transaction:transaction];
-                              }
-                                        prepareBlock:fakeAssetLoader.prepareBlock];
+    return [DebugUIMessagesSingleAction actionWithLabel:label
+                                 unstaggeredActionBlock:^(NSUInteger index, SDSAnyWriteTransaction *transaction) {
+                                     OWSAssertDebug(fakeAssetLoader.filePath.length > 0);
+                                     [self createFakeOutgoingMedia:index
+                                                      messageState:messageState
+                                                        hasCaption:hasCaption
+                                                   fakeAssetLoader:fakeAssetLoader
+                                                            thread:thread
+                                                       transaction:transaction];
+                                 }
+                                           prepareBlock:fakeAssetLoader.prepareBlock];
 }
 
 + (void)createFakeOutgoingMedia:(NSUInteger)index
@@ -954,9 +901,7 @@ NS_ASSUME_NONNULL_BEGIN
                                                      transaction:transaction];
 
     // This is a hack to "back-date" the message.
-    [message setReceivedAtTimestamp:timestamp];
-
-    [message anyInsertWithTransaction:transaction];
+    [message replaceReceivedAtTimestamp:timestamp transaction:transaction];
 }
 
 #pragma mark - Fake Incoming Media
@@ -1209,18 +1154,17 @@ NS_ASSUME_NONNULL_BEGIN
         label = [label stringByAppendingString:@" 👍"];
     }
 
-    return
-        [DebugUIMessagesSingleAction actionWithLabel:label
-                              unstaggeredActionBlock:^(NSUInteger index, SDSAnyWriteTransaction *transaction) {
-                                  OWSAssertDebug(fakeAssetLoader.filePath.length > 0);
-                                  [self createFakeIncomingMedia:index
-                                         isAttachmentDownloaded:isAttachmentDownloaded
-                                                     hasCaption:hasCaption
-                                                fakeAssetLoader:fakeAssetLoader
-                                                         thread:thread
-                                                    transaction:transaction];
-                              }
-                                        prepareBlock:fakeAssetLoader.prepareBlock];
+    return [DebugUIMessagesSingleAction actionWithLabel:label
+                                 unstaggeredActionBlock:^(NSUInteger index, SDSAnyWriteTransaction *transaction) {
+                                     OWSAssertDebug(fakeAssetLoader.filePath.length > 0);
+                                     [self createFakeIncomingMedia:index
+                                            isAttachmentDownloaded:isAttachmentDownloaded
+                                                        hasCaption:hasCaption
+                                                   fakeAssetLoader:fakeAssetLoader
+                                                            thread:thread
+                                                       transaction:transaction];
+                                 }
+                                           prepareBlock:fakeAssetLoader.prepareBlock];
 }
 
 + (TSIncomingMessage *)createFakeIncomingMedia:(NSUInteger)index
@@ -1419,7 +1363,7 @@ NS_ASSUME_NONNULL_BEGIN
                         actionLabel:@"Fake Outgoing White Png"
                           imageSize:CGSizeMake(200.f, 200.f)
                     backgroundColor:[UIColor whiteColor]
-                          textColor:UIColor.ows_signalBlueColor
+                          textColor:Theme.accentBlueColor
                          imageLabel:@"W"
                        messageState:TSOutgoingMessageStateFailed
                          hasCaption:YES],
@@ -1427,7 +1371,7 @@ NS_ASSUME_NONNULL_BEGIN
                         actionLabel:@"Fake Outgoing White Png"
                           imageSize:CGSizeMake(200.f, 200.f)
                     backgroundColor:[UIColor whiteColor]
-                          textColor:UIColor.ows_signalBlueColor
+                          textColor:Theme.accentBlueColor
                          imageLabel:@"W"
                        messageState:TSOutgoingMessageStateSending
                          hasCaption:YES],
@@ -1435,7 +1379,7 @@ NS_ASSUME_NONNULL_BEGIN
                         actionLabel:@"Fake Outgoing White Png"
                           imageSize:CGSizeMake(200.f, 200.f)
                     backgroundColor:[UIColor whiteColor]
-                          textColor:UIColor.ows_signalBlueColor
+                          textColor:Theme.accentBlueColor
                          imageLabel:@"W"
                        messageState:TSOutgoingMessageStateSent
                          hasCaption:YES],
@@ -1550,8 +1494,8 @@ NS_ASSUME_NONNULL_BEGIN
         [self fakeIncomingMp4Action:thread isAttachmentDownloaded:YES hasCaption:YES],
     ]];
     if (includeLabels) {
-        [actions
-            addObject:[self fakeIncomingTextMessageAction:thread text:@"⚠️ Incoming Compact Landscape Png ⚠️"]];
+        [actions addObject:[self fakeIncomingTextMessageAction:thread
+                                                          text:@"⚠️ Incoming Compact Landscape Png ⚠️"]];
     }
     [actions addObjectsFromArray:@[
         [self fakeIncomingCompactLandscapePngAction:thread isAttachmentDownloaded:NO hasCaption:NO],
@@ -1560,8 +1504,8 @@ NS_ASSUME_NONNULL_BEGIN
         [self fakeIncomingCompactLandscapePngAction:thread isAttachmentDownloaded:YES hasCaption:YES],
     ]];
     if (includeLabels) {
-        [actions
-            addObject:[self fakeIncomingTextMessageAction:thread text:@"⚠️ Incoming Compact Portrait Png ⚠️"]];
+        [actions addObject:[self fakeIncomingTextMessageAction:thread
+                                                          text:@"⚠️ Incoming Compact Portrait Png ⚠️"]];
     }
     [actions addObjectsFromArray:@[
         [self fakeIncomingCompactPortraitPngAction:thread isAttachmentDownloaded:NO hasCaption:NO],
@@ -1570,8 +1514,8 @@ NS_ASSUME_NONNULL_BEGIN
         [self fakeIncomingCompactPortraitPngAction:thread isAttachmentDownloaded:YES hasCaption:YES],
     ]];
     if (includeLabels) {
-        [actions
-            addObject:[self fakeIncomingTextMessageAction:thread text:@"⚠️ Incoming Wide Landscape Png ⚠️"]];
+        [actions addObject:[self fakeIncomingTextMessageAction:thread
+                                                          text:@"⚠️ Incoming Wide Landscape Png ⚠️"]];
     }
     [actions addObjectsFromArray:@[
         [self fakeIncomingWideLandscapePngAction:thread isAttachmentDownloaded:NO hasCaption:NO],
@@ -1580,8 +1524,8 @@ NS_ASSUME_NONNULL_BEGIN
         [self fakeIncomingWideLandscapePngAction:thread isAttachmentDownloaded:YES hasCaption:YES],
     ]];
     if (includeLabels) {
-        [actions
-            addObject:[self fakeIncomingTextMessageAction:thread text:@"⚠️ Incoming Tall Portrait Png ⚠️"]];
+        [actions addObject:[self fakeIncomingTextMessageAction:thread
+                                                          text:@"⚠️ Incoming Tall Portrait Png ⚠️"]];
     }
     [actions addObjectsFromArray:@[
         [self fakeIncomingTallPortraitPngAction:thread isAttachmentDownloaded:NO hasCaption:NO],
@@ -1604,15 +1548,15 @@ NS_ASSUME_NONNULL_BEGIN
         [self fakeIncomingTinyPngAction:thread isAttachmentDownloaded:YES hasCaption:YES],
     ]];
     if (includeLabels) {
-        [actions
-            addObject:[self fakeIncomingTextMessageAction:thread text:@"⚠️ Incoming Reserved Color Png ⚠️"]];
+        [actions addObject:[self fakeIncomingTextMessageAction:thread
+                                                          text:@"⚠️ Incoming Reserved Color Png ⚠️"]];
     }
     [actions addObjectsFromArray:@[
         [self fakeIncomingPngAction:thread
                         actionLabel:@"Fake Incoming White Png"
                           imageSize:CGSizeMake(200.f, 200.f)
                     backgroundColor:[UIColor whiteColor]
-                          textColor:UIColor.ows_signalBlueColor
+                          textColor:Theme.accentBlueColor
                          imageLabel:@"W"
              isAttachmentDownloaded:YES
                          hasCaption:YES],
@@ -1620,7 +1564,7 @@ NS_ASSUME_NONNULL_BEGIN
                         actionLabel:@"Fake Incoming White Png"
                           imageSize:CGSizeMake(200.f, 200.f)
                     backgroundColor:[UIColor whiteColor]
-                          textColor:UIColor.ows_signalBlueColor
+                          textColor:Theme.accentBlueColor
                          imageLabel:@"W"
              isAttachmentDownloaded:NO
                          hasCaption:YES],
@@ -1762,18 +1706,17 @@ NS_ASSUME_NONNULL_BEGIN
 {
     OWSAssertDebug(thread);
 
-    return [DebugUIMessagesSingleAction
-               actionWithLabel:@"Fake Short Incoming Text Message"
-        unstaggeredActionBlock:^(NSUInteger index, SDSAnyWriteTransaction *transaction) {
-            NSString *messageBody =
-                [[@(index).stringValue stringByAppendingString:@" "] stringByAppendingString:[self randomText]];
-            [self createFakeIncomingMessage:thread
-                                messageBody:messageBody
-                            fakeAssetLoader:nil
-                     isAttachmentDownloaded:NO
-                              quotedMessage:nil
-                                transaction:transaction];
-        }];
+    return [DebugUIMessagesSingleAction actionWithLabel:@"Fake Short Incoming Text Message"
+                                 unstaggeredActionBlock:^(NSUInteger index, SDSAnyWriteTransaction *transaction) {
+                                     NSString *messageBody = [[@(index).stringValue stringByAppendingString:@" "]
+                                         stringByAppendingString:[self randomText]];
+                                     [self createFakeIncomingMessage:thread
+                                                         messageBody:messageBody
+                                                     fakeAssetLoader:nil
+                                              isAttachmentDownloaded:NO
+                                                       quotedMessage:nil
+                                                         transaction:transaction];
+                                 }];
 }
 
 + (SignalAttachment *)signalAttachmentForFilePath:(NSString *)filePath
@@ -1788,8 +1731,9 @@ NS_ASSUME_NONNULL_BEGIN
                                                                            error:&error];
     OWSAssertDebug(dataSource != nil);
     [dataSource setSourceFilename:filename];
-    SignalAttachment *attachment =
-        [SignalAttachment attachmentWithDataSource:dataSource dataUTI:utiType imageQuality:TSImageQualityOriginal];
+    SignalAttachment *attachment = [SignalAttachment attachmentWithDataSource:dataSource
+                                                                      dataUTI:utiType
+                                                                 imageQuality:TSImageQualityOriginal];
     if (arc4random_uniform(100) > 50) {
         attachment.captionText = [self randomCaptionText];
     }
@@ -1812,9 +1756,9 @@ NS_ASSUME_NONNULL_BEGIN
         if (attachment != nil) {
             attachments = @[ attachment ];
         }
-        [ThreadUtil enqueueMessageWithText:messageBody
+        [ThreadUtil enqueueMessageWithBody:[[MessageBody alloc] initWithText:messageBody ranges:MessageBodyRanges.empty]
                           mediaAttachments:attachments
-                                  inThread:thread
+                                    thread:thread
                           quotedReplyModel:nil
                           linkPreviewDraft:nil
                                transaction:transaction];
@@ -1987,19 +1931,19 @@ NS_ASSUME_NONNULL_BEGIN
 #pragma mark - Fake Quoted Replies
 
 + (DebugUIMessagesAction *)
-              fakeQuotedReplyAction:(TSThread *)thread
-                 quotedMessageLabel:(NSString *)quotedMessageLabel
-            isQuotedMessageIncoming:(BOOL)isQuotedMessageIncoming
-                  // Optional. At least one of quotedMessageBody and quotedMessageAssetLoader should be non-nil.
-                  quotedMessageBody:(nullable NSString *)quotedMessageBody
+       fakeQuotedReplyAction:(TSThread *)thread
+          quotedMessageLabel:(NSString *)quotedMessageLabel
+     isQuotedMessageIncoming:(BOOL)isQuotedMessageIncoming
            // Optional. At least one of quotedMessageBody and quotedMessageAssetLoader should be non-nil.
-           quotedMessageAssetLoader:(nullable DebugUIMessagesAssetLoader *)quotedMessageAssetLoader
-                         replyLabel:(NSString *)replyLabel
-                    isReplyIncoming:(BOOL)isReplyIncoming
-                   replyMessageBody:(nullable NSString *)replyMessageBody
-                   replyAssetLoader:(nullable DebugUIMessagesAssetLoader *)replyAssetLoader
-                  // Only applies if !isReplyIncoming.
-                  replyMessageState:(TSOutgoingMessageState)replyMessageState
+           quotedMessageBody:(nullable NSString *)quotedMessageBody
+    // Optional. At least one of quotedMessageBody and quotedMessageAssetLoader should be non-nil.
+    quotedMessageAssetLoader:(nullable DebugUIMessagesAssetLoader *)quotedMessageAssetLoader
+                  replyLabel:(NSString *)replyLabel
+             isReplyIncoming:(BOOL)isReplyIncoming
+            replyMessageBody:(nullable NSString *)replyMessageBody
+            replyAssetLoader:(nullable DebugUIMessagesAssetLoader *)replyAssetLoader
+           // Only applies if !isReplyIncoming.
+           replyMessageState:(TSOutgoingMessageState)replyMessageState
 {
     OWSAssertDebug(thread);
 
@@ -2080,8 +2024,8 @@ NS_ASSUME_NONNULL_BEGIN
                                                                           thread:thread
                                                                      transaction:transaction
                                                                conversationStyle:conversationStyle];
-                quotedMessage = [
-                    [OWSQuotedReplyModel quotedReplyForSendingWithConversationViewItem:viewItem transaction:transaction]
+                quotedMessage = [[OWSQuotedReplyModel quotedReplyForSendingWithConversationViewItem:viewItem
+                                                                                        transaction:transaction]
                     buildQuotedMessageForSending];
             } else {
                 TSOutgoingMessage *_Nullable messageToQuote = [self createFakeOutgoingMessage:thread
@@ -2102,8 +2046,8 @@ NS_ASSUME_NONNULL_BEGIN
                                                                           thread:thread
                                                                      transaction:transaction
                                                                conversationStyle:conversationStyle];
-                quotedMessage = [
-                    [OWSQuotedReplyModel quotedReplyForSendingWithConversationViewItem:viewItem transaction:transaction]
+                quotedMessage = [[OWSQuotedReplyModel quotedReplyForSendingWithConversationViewItem:viewItem
+                                                                                        transaction:transaction]
                     buildQuotedMessageForSending];
             }
             OWSAssertDebug(quotedMessage);
@@ -2751,9 +2695,9 @@ NS_ASSUME_NONNULL_BEGIN
 {
     OWSAssertDebug(thread);
 
-    return
-        [DebugUIMessagesGroupAction allGroupActionWithLabel:@"All Quoted Reply"
-                                                 subactions:[self allFakeQuotedReplyActions:thread includeLabels:YES]];
+    return [DebugUIMessagesGroupAction allGroupActionWithLabel:@"All Quoted Reply"
+                                                    subactions:[self allFakeQuotedReplyActions:thread
+                                                                                 includeLabels:YES]];
 }
 
 + (void)selectQuotedReplyAction:(TSThread *)thread
@@ -2768,9 +2712,9 @@ NS_ASSUME_NONNULL_BEGIN
 {
     OWSAssertDebug(thread);
 
-    return [DebugUIMessagesGroupAction
-        randomGroupActionWithLabel:@"Random Quoted Reply"
-                        subactions:[self allFakeQuotedReplyActions:thread includeLabels:NO]];
+    return [DebugUIMessagesGroupAction randomGroupActionWithLabel:@"Random Quoted Reply"
+                                                       subactions:[self allFakeQuotedReplyActions:thread
+                                                                                    includeLabels:NO]];
 }
 
 #pragma mark - Exemplary
@@ -2838,8 +2782,9 @@ NS_ASSUME_NONNULL_BEGIN
     }
 
     [actions addObject:[self fakeIncomingTextMessageAction:thread text:@"Incoming"]];
-    [actions
-        addObject:[self fakeOutgoingTextMessageAction:thread messageState:TSOutgoingMessageStateSent text:@"Outgoing"]];
+    [actions addObject:[self fakeOutgoingTextMessageAction:thread
+                                              messageState:TSOutgoingMessageStateSent
+                                                      text:@"Outgoing"]];
     [actions addObject:[self fakeIncomingTextMessageAction:thread text:@"Incoming 1"]];
     [actions addObject:[self fakeIncomingTextMessageAction:thread text:@"Incoming 2"]];
     [actions addObject:[self fakeIncomingTextMessageAction:thread text:@"Incoming 3"]];
@@ -2896,12 +2841,12 @@ NS_ASSUME_NONNULL_BEGIN
     [actions addObject:[self fakeOutgoingTextMessageAction:thread
                                               messageState:TSOutgoingMessageStateSent
                                                       text:[@"Outgoing" stringByAppendingString:longText]]];
-    [actions
-        addObject:[self fakeIncomingTextMessageAction:thread text:[@"Incoming 1" stringByAppendingString:longText]]];
-    [actions
-        addObject:[self fakeIncomingTextMessageAction:thread text:[@"Incoming 2" stringByAppendingString:longText]]];
-    [actions
-        addObject:[self fakeIncomingTextMessageAction:thread text:[@"Incoming 3" stringByAppendingString:longText]]];
+    [actions addObject:[self fakeIncomingTextMessageAction:thread
+                                                      text:[@"Incoming 1" stringByAppendingString:longText]]];
+    [actions addObject:[self fakeIncomingTextMessageAction:thread
+                                                      text:[@"Incoming 2" stringByAppendingString:longText]]];
+    [actions addObject:[self fakeIncomingTextMessageAction:thread
+                                                      text:[@"Incoming 3" stringByAppendingString:longText]]];
     [actions addObject:[self fakeOutgoingTextMessageAction:thread
                                               messageState:TSOutgoingMessageStateFailed
                                                       text:[@"Outgoing Unsent 1" stringByAppendingString:longText]]];
@@ -2979,8 +2924,8 @@ NS_ASSUME_NONNULL_BEGIN
                                                              linkPreview:nil
                                                           messageSticker:nil
                                                              transaction:transaction];
-            [message setReceivedAtTimestamp:(uint64_t)((int64_t)[NSDate ows_millisecondTimeStamp] + dateOffset)];
-            [message anyInsertWithTransaction:transaction];
+            [message replaceReceivedAtTimestamp:(uint64_t)((int64_t)[NSDate ows_millisecondTimeStamp] + dateOffset)
+                                    transaction:transaction];
         }];
 }
 
@@ -2996,16 +2941,20 @@ NS_ASSUME_NONNULL_BEGIN
                                                           text:@"⚠️ Back-Dated ⚠️"]];
     }
 
-    [actions
-        addObject:[self fakeBackDatedMessageAction:thread label:@"One Minute Ago" dateOffset:-(int64_t)kMinuteInMs]];
+    [actions addObject:[self fakeBackDatedMessageAction:thread
+                                                  label:@"One Minute Ago"
+                                             dateOffset:-(int64_t)kMinuteInMs]];
     [actions addObject:[self fakeBackDatedMessageAction:thread label:@"One Hour Ago" dateOffset:-(int64_t)kHourInMs]];
     [actions addObject:[self fakeBackDatedMessageAction:thread label:@"One Day Ago" dateOffset:-(int64_t)kDayInMs]];
-    [actions
-        addObject:[self fakeBackDatedMessageAction:thread label:@"Two Days Ago" dateOffset:-(int64_t)kDayInMs * 2]];
-    [actions
-        addObject:[self fakeBackDatedMessageAction:thread label:@"Ten Days Ago" dateOffset:-(int64_t)kDayInMs * 10]];
-    [actions
-        addObject:[self fakeBackDatedMessageAction:thread label:@"400 Days Ago" dateOffset:-(int64_t)kDayInMs * 400]];
+    [actions addObject:[self fakeBackDatedMessageAction:thread
+                                                  label:@"Two Days Ago"
+                                             dateOffset:-(int64_t)kDayInMs * 2]];
+    [actions addObject:[self fakeBackDatedMessageAction:thread
+                                                  label:@"Ten Days Ago"
+                                             dateOffset:-(int64_t)kDayInMs * 10]];
+    [actions addObject:[self fakeBackDatedMessageAction:thread
+                                                  label:@"400 Days Ago"
+                                             dateOffset:-(int64_t)kDayInMs * 400]];
 
     return actions;
 }
@@ -3036,11 +2985,11 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 {
     OWSAssertDebug(thread);
 
-    return [DebugUIMessagesSingleAction
-               actionWithLabel:[NSString stringWithFormat:@"Fake Contact Share (%@)", label]
-        unstaggeredActionBlock:^(NSUInteger index, SDSAnyWriteTransaction *transaction) {
-            OWSContact *contact = contactBlock(transaction);
-            TSOutgoingMessage *message = [self createFakeOutgoingMessage:thread
+    return [DebugUIMessagesSingleAction actionWithLabel:[NSString stringWithFormat:@"Fake Contact Share (%@)", label]
+                                 unstaggeredActionBlock:^(NSUInteger index, SDSAnyWriteTransaction *transaction) {
+                                     OWSContact *contact = contactBlock(transaction);
+                                     __unused TSOutgoingMessage *message =
+                                         [self createFakeOutgoingMessage:thread
                                                              messageBody:nil
                                                          fakeAssetLoader:nil
                                                             messageState:TSOutgoingMessageStateSent
@@ -3051,8 +3000,7 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                                                              linkPreview:nil
                                                           messageSticker:nil
                                                              transaction:transaction];
-            [message anyInsertWithTransaction:transaction];
-        }];
+                                 }];
 }
 
 + (NSArray<DebugUIMessagesAction *> *)allFakeContactShareActions:(TSThread *)thread includeLabels:(BOOL)includeLabels
@@ -3184,7 +3132,7 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                                                   name.givenName = @"Add Me To Your Contacts";
                                                   OWSContactPhoneNumber *phoneNumber = [OWSContactPhoneNumber new];
                                                   phoneNumber.phoneType = OWSContactPhoneType_Work;
-                                                  phoneNumber.phoneNumber = @"+324602053911";
+                                                  phoneNumber.phoneNumber = @"+32460205391";
                                                   contact.phoneNumbers = @[
                                                       phoneNumber,
                                                   ];
@@ -3213,9 +3161,9 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 {
     OWSAssertDebug(thread);
 
-    return
-        [DebugUIMessagesGroupAction allGroupActionWithLabel:@"All Fake Contact Shares"
-                                                 subactions:[self allFakeContactShareActions:thread includeLabels:YES]];
+    return [DebugUIMessagesGroupAction allGroupActionWithLabel:@"All Fake Contact Shares"
+                                                    subactions:[self allFakeContactShareActions:thread
+                                                                                  includeLabels:YES]];
 }
 
 
@@ -3232,7 +3180,7 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                                        ActionFailureBlock failure) {
                                        OWSContact *contact = contactBlock(transaction);
                                        OWSLogVerbose(@"sending contact: %@", contact.debugDescription);
-                                       [ThreadUtil enqueueMessageWithContactShare:contact inThread:thread];
+                                       [ThreadUtil enqueueMessageWithContactShare:contact thread:thread];
 
                                        success();
                                    }];
@@ -3367,7 +3315,7 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                                                   name.givenName = @"Add Me To Your Contacts";
                                                   OWSContactPhoneNumber *phoneNumber = [OWSContactPhoneNumber new];
                                                   phoneNumber.phoneType = OWSContactPhoneType_Work;
-                                                  phoneNumber.phoneNumber = @"+324602053911";
+                                                  phoneNumber.phoneNumber = @"+32460205391";
                                                   contact.phoneNumbers = @[
                                                       phoneNumber,
                                                   ];
@@ -3395,8 +3343,8 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 + (void)sendAllContacts:(TSThread *)thread
 {
     NSArray<DebugUIMessagesAction *> *subactions = [self allSendContactShareActions:thread includeLabels:NO];
-    DebugUIMessagesAction *action =
-        [DebugUIMessagesGroupAction allGroupActionWithLabel:@"Send All Contact Shares" subactions:subactions];
+    DebugUIMessagesAction *action = [DebugUIMessagesGroupAction allGroupActionWithLabel:@"Send All Contact Shares"
+                                                                             subactions:subactions];
     [action prepareAndPerformNTimes:subactions.count];
 }
 
@@ -3446,10 +3394,11 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 
 + (void)sendRandomAttachment:(TSThread *)thread uti:(NSString *)uti length:(NSUInteger)length
 {
-    _Nullable id<DataSource> dataSource =
-        [DataSourceValue dataSourceWithData:[self createRandomNSDataOfSize:length] utiType:uti];
-    SignalAttachment *attachment =
-        [SignalAttachment attachmentWithDataSource:dataSource dataUTI:uti imageQuality:TSImageQualityOriginal];
+    _Nullable id<DataSource> dataSource = [DataSourceValue dataSourceWithData:[self createRandomNSDataOfSize:length]
+                                                                      utiType:uti];
+    SignalAttachment *attachment = [SignalAttachment attachmentWithDataSource:dataSource
+                                                                      dataUTI:uti
+                                                                 imageQuality:TSImageQualityOriginal];
 
     if (arc4random_uniform(100) > 50) {
         // give 1/2 our attachments captions, and add a hint that it's a caption since we
@@ -3495,189 +3444,176 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 {
     OWSAssertDebug(thread);
 
+    __block NSArray<TSInteraction *> *result;
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
+        result = [self unsavedSystemMessagesInThread:thread transaction:transaction];
+    });
+    return result;
+}
+
++ (NSArray<TSInteraction *> *)unsavedSystemMessagesInThread:(TSThread *)thread
+                                                transaction:(SDSAnyWriteTransaction *)transaction
+{
+    OWSAssertDebug(thread);
+
     NSMutableArray<TSInteraction *> *result = [NSMutableArray new];
 
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        if ([thread isKindOfClass:[TSContactThread class]]) {
-            TSContactThread *contactThread = (TSContactThread *)thread;
+    if ([thread isKindOfClass:[TSContactThread class]]) {
+        TSContactThread *contactThread = (TSContactThread *)thread;
 
-            [result addObject:[[TSCall alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                       callType:RPRecentCallTypeIncoming
-                                                       inThread:contactThread]];
-            [result addObject:[[TSCall alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                       callType:RPRecentCallTypeOutgoing
-                                                       inThread:contactThread]];
-            [result addObject:[[TSCall alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                       callType:RPRecentCallTypeIncomingMissed
-                                                       inThread:contactThread]];
-            [result addObject:[[TSCall alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                       callType:RPRecentCallTypeIncomingMissedBecauseOfChangedIdentity
-                                                       inThread:contactThread]];
-            [result addObject:[[TSCall alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                       callType:RPRecentCallTypeOutgoingIncomplete
-                                                       inThread:contactThread]];
-            [result addObject:[[TSCall alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                       callType:RPRecentCallTypeIncomingIncomplete
-                                                       inThread:contactThread]];
-            [result addObject:[[TSCall alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                       callType:RPRecentCallTypeIncomingDeclined
-                                                       inThread:contactThread]];
-            [result addObject:[[TSCall alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                       callType:RPRecentCallTypeOutgoingMissed
-                                                       inThread:contactThread]];
-        }
+        [result addObject:[[TSCall alloc] initWithCallType:RPRecentCallTypeIncoming
+                                                 offerType:TSRecentCallOfferTypeAudio
+                                                    thread:contactThread
+                                           sentAtTimestamp:[NSDate ows_millisecondTimeStamp]]];
+        [result addObject:[[TSCall alloc] initWithCallType:RPRecentCallTypeOutgoing
+                                                 offerType:TSRecentCallOfferTypeAudio
+                                                    thread:contactThread
+                                           sentAtTimestamp:[NSDate ows_millisecondTimeStamp]]];
+        [result addObject:[[TSCall alloc] initWithCallType:RPRecentCallTypeIncomingMissed
+                                                 offerType:TSRecentCallOfferTypeAudio
+                                                    thread:contactThread
+                                           sentAtTimestamp:[NSDate ows_millisecondTimeStamp]]];
+        [result addObject:[[TSCall alloc] initWithCallType:RPRecentCallTypeIncomingMissedBecauseOfChangedIdentity
+                                                 offerType:TSRecentCallOfferTypeAudio
+                                                    thread:contactThread
+                                           sentAtTimestamp:[NSDate ows_millisecondTimeStamp]]];
+        [result addObject:[[TSCall alloc] initWithCallType:RPRecentCallTypeOutgoingIncomplete
+                                                 offerType:TSRecentCallOfferTypeAudio
+                                                    thread:contactThread
+                                           sentAtTimestamp:[NSDate ows_millisecondTimeStamp]]];
+        [result addObject:[[TSCall alloc] initWithCallType:RPRecentCallTypeIncomingIncomplete
+                                                 offerType:TSRecentCallOfferTypeAudio
+                                                    thread:contactThread
+                                           sentAtTimestamp:[NSDate ows_millisecondTimeStamp]]];
+        [result addObject:[[TSCall alloc] initWithCallType:RPRecentCallTypeIncomingDeclined
+                                                 offerType:TSRecentCallOfferTypeAudio
+                                                    thread:contactThread
+                                           sentAtTimestamp:[NSDate ows_millisecondTimeStamp]]];
+        [result addObject:[[TSCall alloc] initWithCallType:RPRecentCallTypeOutgoingMissed
+                                                 offerType:TSRecentCallOfferTypeAudio
+                                                    thread:contactThread
+                                           sentAtTimestamp:[NSDate ows_millisecondTimeStamp]]];
+    }
 
-        {
-            NSNumber *durationSeconds = [OWSDisappearingMessagesConfiguration validDurationsSeconds][0];
-            OWSDisappearingMessagesConfiguration *disappearingMessagesConfiguration =
-                [thread disappearingMessagesConfigurationWithTransaction:transaction];
-            disappearingMessagesConfiguration = [disappearingMessagesConfiguration
-                copyAsEnabledWithDurationSeconds:(uint32_t)[durationSeconds intValue]];
+    {
+        NSNumber *durationSeconds = [OWSDisappearingMessagesConfiguration validDurationsSeconds][0];
+        OWSDisappearingMessagesConfiguration *disappearingMessagesConfiguration =
+            [thread disappearingMessagesConfigurationWithTransaction:transaction];
+        disappearingMessagesConfiguration =
+            [disappearingMessagesConfiguration copyAsEnabledWithDurationSeconds:(uint32_t)[durationSeconds intValue]];
 
-            // MJK - should be safe to remove this senderTimestamp
-            [result addObject:[[OWSDisappearingConfigurationUpdateInfoMessage alloc]
-                                       initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                  thread:thread
-                                           configuration:disappearingMessagesConfiguration
-                                     createdByRemoteName:@"Alice"
-                                  createdInExistingGroup:NO]];
-        }
+        [result addObject:[[OWSDisappearingConfigurationUpdateInfoMessage alloc]
+                                      initWithThread:thread
+                                       configuration:disappearingMessagesConfiguration
+                                 createdByRemoteName:@"Alice"
+                              createdInExistingGroup:NO]];
+    }
 
-        {
-            NSNumber *durationSeconds = [OWSDisappearingMessagesConfiguration validDurationsSeconds][0];
-            OWSDisappearingMessagesConfiguration *disappearingMessagesConfiguration =
-                [thread disappearingMessagesConfigurationWithTransaction:transaction];
-            disappearingMessagesConfiguration = [disappearingMessagesConfiguration
-                copyAsEnabledWithDurationSeconds:(uint32_t)[durationSeconds intValue]];
+    {
+        NSNumber *durationSeconds = [OWSDisappearingMessagesConfiguration validDurationsSeconds][0];
+        OWSDisappearingMessagesConfiguration *disappearingMessagesConfiguration =
+            [thread disappearingMessagesConfigurationWithTransaction:transaction];
+        disappearingMessagesConfiguration =
+            [disappearingMessagesConfiguration copyAsEnabledWithDurationSeconds:(uint32_t)[durationSeconds intValue]];
 
-            // MJK - should be safe to remove this senderTimestamp
-            [result addObject:[[OWSDisappearingConfigurationUpdateInfoMessage alloc]
-                                       initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                  thread:thread
-                                           configuration:disappearingMessagesConfiguration
-                                     createdByRemoteName:nil
-                                  createdInExistingGroup:YES]];
-        }
+        [result addObject:[[OWSDisappearingConfigurationUpdateInfoMessage alloc]
+                                      initWithThread:thread
+                                       configuration:disappearingMessagesConfiguration
+                                 createdByRemoteName:nil
+                              createdInExistingGroup:YES]];
+    }
 
-        {
-            NSNumber *durationSeconds = [[OWSDisappearingMessagesConfiguration validDurationsSeconds] lastObject];
-            OWSDisappearingMessagesConfiguration *disappearingMessagesConfiguration =
-                [thread disappearingMessagesConfigurationWithTransaction:transaction];
-            disappearingMessagesConfiguration = [disappearingMessagesConfiguration
-                copyAsEnabledWithDurationSeconds:(uint32_t)[durationSeconds intValue]];
+    {
+        NSNumber *durationSeconds = [[OWSDisappearingMessagesConfiguration validDurationsSeconds] lastObject];
+        OWSDisappearingMessagesConfiguration *disappearingMessagesConfiguration =
+            [thread disappearingMessagesConfigurationWithTransaction:transaction];
+        disappearingMessagesConfiguration =
+            [disappearingMessagesConfiguration copyAsEnabledWithDurationSeconds:(uint32_t)[durationSeconds intValue]];
 
-            // MJK TODO - remove senderTimestamp
-            [result addObject:[[OWSDisappearingConfigurationUpdateInfoMessage alloc]
-                                       initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                  thread:thread
-                                           configuration:disappearingMessagesConfiguration
-                                     createdByRemoteName:@"Alice"
-                                  createdInExistingGroup:NO]];
-        }
-        {
-            OWSDisappearingMessagesConfiguration *disappearingMessagesConfiguration =
-                [thread disappearingMessagesConfigurationWithTransaction:transaction];
-            disappearingMessagesConfiguration = [disappearingMessagesConfiguration copyWithIsEnabled:NO];
+        [result addObject:[[OWSDisappearingConfigurationUpdateInfoMessage alloc]
+                                      initWithThread:thread
+                                       configuration:disappearingMessagesConfiguration
+                                 createdByRemoteName:@"Alice"
+                              createdInExistingGroup:NO]];
+    }
+    {
+        OWSDisappearingMessagesConfiguration *disappearingMessagesConfiguration =
+            [thread disappearingMessagesConfigurationWithTransaction:transaction];
+        disappearingMessagesConfiguration = [disappearingMessagesConfiguration copyWithIsEnabled:NO];
 
-            // MJK TODO - remove senderTimestamp
-            [result addObject:[[OWSDisappearingConfigurationUpdateInfoMessage alloc]
-                                       initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                  thread:thread
-                                           configuration:disappearingMessagesConfiguration
-                                     createdByRemoteName:@"Alice"
-                                  createdInExistingGroup:NO]];
-        }
+        [result addObject:[[OWSDisappearingConfigurationUpdateInfoMessage alloc]
+                                      initWithThread:thread
+                                       configuration:disappearingMessagesConfiguration
+                                 createdByRemoteName:@"Alice"
+                              createdInExistingGroup:NO]];
+    }
 
-        [result addObject:[TSInfoMessage userNotRegisteredMessageInThread:thread
-                                                                  address:[[SignalServiceAddress alloc]
-                                                                              initWithPhoneNumber:@"+19174054215"]]];
+    [result addObject:[TSInfoMessage userNotRegisteredMessageInThread:thread
+                                                              address:[[SignalServiceAddress alloc]
+                                                                          initWithPhoneNumber:@"+19174054215"]]];
 
-        // MJK - should be safe to remove this senderTimestamp
-        [result addObject:[[TSInfoMessage alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                          inThread:thread
-                                                       messageType:TSInfoMessageTypeSessionDidEnd]];
-        // TODO: customMessage?
-        // MJK - should be safe to remove this senderTimestamp
-        [result addObject:[[TSInfoMessage alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                          inThread:thread
-                                                       messageType:TSInfoMessageTypeGroupUpdate]];
-        // TODO: customMessage?
-        // MJK - should be safe to remove this senderTimestamp
-        [result addObject:[[TSInfoMessage alloc] initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                          inThread:thread
-                                                       messageType:TSInfoMessageTypeGroupQuit]];
+    [result addObject:[[TSInfoMessage alloc] initWithThread:thread messageType:TSInfoMessageTypeSessionDidEnd]];
+    // TODO: customMessage?
+    [result addObject:[[TSInfoMessage alloc] initWithThread:thread messageType:TSInfoMessageTypeGroupUpdate]];
+    // TODO: customMessage?
+    [result addObject:[[TSInfoMessage alloc] initWithThread:thread messageType:TSInfoMessageTypeGroupQuit]];
 
-        // MJK - should be safe to remove this senderTimestamp
-        [result addObject:[[OWSVerificationStateChangeMessage alloc]
-                              initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                         thread:thread
-                               recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
-                              verificationState:OWSVerificationStateDefault
-                                  isLocalChange:YES]];
+    [result addObject:[[OWSVerificationStateChangeMessage alloc]
+                             initWithThread:thread
+                           recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
+                          verificationState:OWSVerificationStateDefault
+                              isLocalChange:YES]];
 
-        // MJK - should be safe to remove this senderTimestamp
-        [result addObject:[[OWSVerificationStateChangeMessage alloc]
-                              initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                         thread:thread
-                               recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
-                              verificationState:OWSVerificationStateVerified
-                                  isLocalChange:YES]];
-        // MJK - should be safe to remove this senderTimestamp
-        [result addObject:[[OWSVerificationStateChangeMessage alloc]
-                              initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                         thread:thread
-                               recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
-                              verificationState:OWSVerificationStateNoLongerVerified
-                                  isLocalChange:YES]];
+    [result addObject:[[OWSVerificationStateChangeMessage alloc]
+                             initWithThread:thread
+                           recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
+                          verificationState:OWSVerificationStateVerified
+                              isLocalChange:YES]];
+    [result addObject:[[OWSVerificationStateChangeMessage alloc]
+                             initWithThread:thread
+                           recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
+                          verificationState:OWSVerificationStateNoLongerVerified
+                              isLocalChange:YES]];
 
-        // MJK - should be safe to remove this senderTimestamp
-        [result addObject:[[OWSVerificationStateChangeMessage alloc]
-                              initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                         thread:thread
-                               recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
-                              verificationState:OWSVerificationStateDefault
-                                  isLocalChange:NO]];
-        // MJK - should be safe to remove this senderTimestamp
-        [result addObject:[[OWSVerificationStateChangeMessage alloc]
-                              initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                         thread:thread
-                               recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
-                              verificationState:OWSVerificationStateVerified
-                                  isLocalChange:NO]];
-        // MJK - should be safe to remove this senderTimestamp
-        [result addObject:[[OWSVerificationStateChangeMessage alloc]
-                              initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                         thread:thread
-                               recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
-                              verificationState:OWSVerificationStateNoLongerVerified
-                                  isLocalChange:NO]];
+    [result addObject:[[OWSVerificationStateChangeMessage alloc]
+                             initWithThread:thread
+                           recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
+                          verificationState:OWSVerificationStateDefault
+                              isLocalChange:NO]];
+    [result addObject:[[OWSVerificationStateChangeMessage alloc]
+                             initWithThread:thread
+                           recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
+                          verificationState:OWSVerificationStateVerified
+                              isLocalChange:NO]];
+    [result addObject:[[OWSVerificationStateChangeMessage alloc]
+                             initWithThread:thread
+                           recipientAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
+                          verificationState:OWSVerificationStateNoLongerVerified
+                              isLocalChange:NO]];
 
-        [result addObject:[TSErrorMessage missingSessionWithEnvelope:[self createEnvelopeForThread:thread]
-                                                     withTransaction:transaction]];
-        [result addObject:[TSErrorMessage invalidKeyExceptionWithEnvelope:[self createEnvelopeForThread:thread]
-                                                          withTransaction:transaction]];
-        [result addObject:[TSErrorMessage invalidVersionWithEnvelope:[self createEnvelopeForThread:thread]
-                                                     withTransaction:transaction]];
-        [result addObject:[TSErrorMessage corruptedMessageWithEnvelope:[self createEnvelopeForThread:thread]
-                                                       withTransaction:transaction]];
+    [result addObject:[TSErrorMessage missingSessionWithEnvelope:[self createEnvelopeForThread:thread]
+                                                 withTransaction:transaction]];
+    [result addObject:[TSErrorMessage invalidKeyExceptionWithEnvelope:[self createEnvelopeForThread:thread]
+                                                      withTransaction:transaction]];
+    [result addObject:[TSErrorMessage invalidVersionWithEnvelope:[self createEnvelopeForThread:thread]
+                                                 withTransaction:transaction]];
+    [result addObject:[TSErrorMessage corruptedMessageWithEnvelope:[self createEnvelopeForThread:thread]
+                                                   withTransaction:transaction]];
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-        TSInvalidIdentityKeyReceivingErrorMessage *_Nullable blockingSNChangeMessage =
-            [TSInvalidIdentityKeyReceivingErrorMessage untrustedKeyWithEnvelope:[self createEnvelopeForThread:thread]
-                                                                withTransaction:transaction];
+    TSInvalidIdentityKeyReceivingErrorMessage *_Nullable blockingSNChangeMessage =
+        [TSInvalidIdentityKeyReceivingErrorMessage untrustedKeyWithEnvelope:[self createEnvelopeForThread:thread]
+                                                            withTransaction:transaction];
 #pragma clang diagnostic pop
 
 
-        OWSAssertDebug(blockingSNChangeMessage);
-        [result addObject:blockingSNChangeMessage];
+    OWSAssertDebug(blockingSNChangeMessage);
+    [result addObject:blockingSNChangeMessage];
 
-        // MJK TODO - should be safe to remove this senderTimestamp
-        [result addObject:[[TSErrorMessage alloc]
-                              initWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                       inThread:thread
-                              failedMessageType:TSErrorMessageNonBlockingIdentityChange
-                                        address:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]]];
-    }];
+    [result addObject:[[TSErrorMessage alloc]
+                             initWithThread:thread
+                          failedMessageType:TSErrorMessageNonBlockingIdentityChange
+                                    address:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]]];
 
     return result;
 }
@@ -3687,11 +3623,11 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
     OWSAssertDebug(thread);
 
     NSArray<TSInteraction *> *messages = [self unsavedSystemMessagesInThread:thread];
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
         for (TSInteraction *message in messages) {
             [message anyInsertWithTransaction:transaction];
         }
-    }];
+    });
 }
 
 + (void)createSystemMessageInThread:(TSThread *)thread
@@ -3700,9 +3636,9 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 
     NSArray<TSInteraction *> *messages = [self unsavedSystemMessagesInThread:thread];
     TSInteraction *message = messages[(NSUInteger)arc4random_uniform((uint32_t)messages.count)];
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
         [message anyInsertWithTransaction:transaction];
-    }];
+    });
 }
 
 + (void)sendTextAndSystemMessages:(NSUInteger)counter thread:(TSThread *)thread
@@ -3743,15 +3679,16 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
          @"one that comes after it."),
         @"War against a foreign country only happens when the moneyed classes think they are going to profit from it.",
         @"People have only as much liberty as they have the intelligence to want and the courage to take.",
-        (@"You cannot buy the revolution. You cannot make the revolution. You can only be the revolution. It is in your "
-        @"spirit, or it is nowhere."),
+        (@"You cannot buy the revolution. You cannot make the revolution. You can only be the revolution. It is in "
+         @"your "
+         @"spirit, or it is nowhere."),
         (@"That is what I have always understood to be the essence of anarchism: the conviction that the burden of "
-        @"proof has to be placed on authority, and that it should be dismantled if that burden cannot be met."),
+         @"proof has to be placed on authority, and that it should be dismantled if that burden cannot be met."),
         (@"Ask for work. If they don't give you work, ask for bread. If they do not give you work or bread, then take "
-        @"bread."),
+         @"bread."),
         @"Every society has the criminals it deserves.",
         (@"Anarchism is founded on the observation that since few men are wise enough to rule themselves, even fewer "
-        @"are wise enough to rule others."),
+         @"are wise enough to rule others."),
         @"If you would know who controls you see who you may not criticise.",
         @"At one time in the world there were woods that no one owned."
     ];
@@ -3770,48 +3707,49 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                   OWSAssertDebug(phoneNumber);
                   OWSAssertDebug(phoneNumber.toE164);
 
-                  TSContactThread *contactThread =
-                      [TSContactThread getOrCreateThreadWithContactAddress:[[SignalServiceAddress alloc]
-                                                                               initWithPhoneNumber:phoneNumber.toE164]];
-                  @autoreleasepool {
-                      [self sendFakeMessages:messageCount thread:contactThread];
-                  }
-                  [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
+                  DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
+                      SignalServiceAddress *address =
+                          [[SignalServiceAddress alloc] initWithPhoneNumber:phoneNumber.toE164];
+                      TSContactThread *contactThread =
+                          [TSContactThread getOrCreateThreadWithContactAddress:address transaction:transaction];
+                      [self createFakeMessagesInBatches:messageCount
+                                                 thread:contactThread
+                                             isTextOnly:YES
+                                            transaction:transaction];
+
                       NSUInteger interactionCount = [contactThread numberOfInteractionsWithTransaction:transaction];
                       OWSLogInfo(@"Create fake thread: %@, interactions: %lu",
                           phoneNumber.toE164,
                           (unsigned long)interactionCount);
-                  }];
+                  });
               }];
 }
 
-+ (void)sendFakeMessages:(NSUInteger)counter thread:(TSThread *)thread
++ (void)createFakeMessagesInBatches:(NSUInteger)counter thread:(TSThread *)thread isTextOnly:(BOOL)isTextOnly
 {
-    [self sendFakeMessages:counter thread:thread isTextOnly:NO];
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
+        [self createFakeMessagesInBatches:counter thread:thread isTextOnly:isTextOnly transaction:transaction];
+    });
 }
 
-+ (void)sendFakeMessages:(NSUInteger)counter thread:(TSThread *)thread isTextOnly:(BOOL)isTextOnly
++ (void)createFakeMessagesInBatches:(NSUInteger)counter
+                             thread:(TSThread *)thread
+                         isTextOnly:(BOOL)isTextOnly
+                        transaction:(SDSAnyWriteTransaction *)transaction
 {
     const NSUInteger kMaxBatchSize = 200;
-    if (counter < kMaxBatchSize) {
-        [self writeWithBlock:^(SDSAnyWriteTransaction *_Nonnull transaction) {
-            [self sendFakeMessages:counter thread:thread isTextOnly:isTextOnly transaction:transaction];
-        }];
-    } else {
-        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            NSUInteger remainder = counter;
-            while (remainder > 0) {
-                @autoreleasepool {
-                    NSUInteger batchSize = MIN(kMaxBatchSize, remainder);
-                    [self writeWithBlock:^(SDSAnyWriteTransaction *_Nonnull transaction) {
-                        [self sendFakeMessages:batchSize thread:thread isTextOnly:isTextOnly transaction:transaction];
-                    }];
-                    remainder -= batchSize;
-                    OWSLogInfo(
-                        @"sendFakeMessages %lu / %lu", (unsigned long)(counter - remainder), (unsigned long)counter);
-                }
-            }
-        });
+    NSUInteger remainder = counter;
+    while (remainder > 0) {
+        @autoreleasepool {
+            NSUInteger batchSize = MIN(kMaxBatchSize, remainder);
+            [self createFakeMessages:batchSize
+                         batchOffset:counter - remainder
+                              thread:thread
+                          isTextOnly:isTextOnly
+                         transaction:transaction];
+            remainder -= batchSize;
+            OWSLogInfo(@"createFakeMessages %lu / %lu", (unsigned long)(counter - remainder), (unsigned long)counter);
+        }
     }
 }
 
@@ -3822,57 +3760,48 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
     }
     uint32_t sendDelay = arc4random_uniform((uint32_t)(0.01 * NSEC_PER_SEC));
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, sendDelay), dispatch_get_main_queue(), ^{
-        [self sendFakeMessages:1 thread:thread isTextOnly:YES];
+        [self createFakeMessagesInBatches:1 thread:thread isTextOnly:YES];
     });
 
     uint32_t deleteDelay = arc4random_uniform((uint32_t)(0.01 * NSEC_PER_SEC));
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, deleteDelay), dispatch_get_main_queue(), ^{
         dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
-            [self writeWithBlock:^(SDSAnyWriteTransaction *_Nonnull transaction) {
+            DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *_Nonnull transaction) {
                 [self deleteRandomMessagesWithCount:1 thread:thread transaction:transaction];
-            }];
+            });
         });
         [self thrashInsertAndDeleteForThread:thread counter:counter - 1];
     });
 }
 
 // TODO: Remove.
-+ (void)sendFakeMessages:(NSUInteger)counter
-                  thread:(TSThread *)thread
-              isTextOnly:(BOOL)isTextOnly
-             transaction:(SDSAnyWriteTransaction *)transaction
++ (void)createFakeMessages:(NSUInteger)counter
+               batchOffset:(NSUInteger)offset
+                    thread:(TSThread *)thread
+                isTextOnly:(BOOL)isTextOnly
+               transaction:(SDSAnyWriteTransaction *)transaction
 {
-    OWSLogInfo(@"sendFakeMessages: %lu", (unsigned long)counter);
+    OWSLogInfo(@"createFakeMessages: %lu", (unsigned long)counter);
 
     for (NSUInteger i = 0; i < counter; i++) {
-        NSString *randomText = [[self randomText] stringByAppendingFormat:@" (sequence: %lu)", (unsigned long)i + 1];
+        NSString *randomText =
+            [[self randomText] stringByAppendingFormat:@" (sequence: %lu)", (unsigned long)i + 1 + offset];
         switch (arc4random_uniform(isTextOnly ? 2 : 4)) {
             case 0: {
-                // MJK - should be safe to remove this senderTimestamp
-                TSIncomingMessage *message = [[TSIncomingMessage alloc]
-                    initIncomingMessageWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                            inThread:thread
-                                       authorAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
-                                      sourceDeviceId:0
-                                         messageBody:randomText
-                                       attachmentIds:@[]
-                                    expiresInSeconds:0
-                                       quotedMessage:nil
-                                        contactShare:nil
-                                         linkPreview:nil
-                                      messageSticker:nil
-                                     serverTimestamp:nil
-                                     wasReceivedByUD:NO
-                                   isViewOnceMessage:NO];
+                TSIncomingMessageBuilder *incomingMessageBuilder =
+                    [TSIncomingMessageBuilder incomingMessageBuilderWithThread:thread messageBody:randomText];
+                incomingMessageBuilder.authorAddress =
+                    [[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"];
+                TSIncomingMessage *message = [incomingMessageBuilder build];
                 [message anyInsertWithTransaction:transaction];
-                [message markAsReadNowWithSendReadReceipt:NO transaction:transaction];
+                [message debugonly_markAsReadNowWithTransaction:transaction];
                 break;
             }
             case 1: {
                 [self createFakeOutgoingMessage:thread
                                     messageBody:randomText
                                 fakeAssetLoader:nil
-                                   messageState:TSOutgoingMessageStateFailed
+                                   messageState:TSOutgoingMessageStateSent
                                     isDelivered:NO
                                          isRead:NO
                                   quotedMessage:nil
@@ -3886,6 +3815,8 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                 UInt32 filesize = 64;
                 TSAttachmentPointer *pointer =
                     [[TSAttachmentPointer alloc] initWithServerId:237391539706350548
+                                                           cdnKey:@""
+                                                        cdnNumber:0
                                                               key:[self createRandomNSDataOfSize:filesize]
                                                            digest:nil
                                                         byteCount:filesize
@@ -3895,37 +3826,28 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                                                    albumMessageId:nil
                                                    attachmentType:TSAttachmentTypeDefault
                                                         mediaSize:CGSizeZero
-                                                         blurHash:nil];
+                                                         blurHash:nil
+                                                  uploadTimestamp:0];
                 pointer.state = TSAttachmentPointerStateFailed;
                 [pointer anyInsertWithTransaction:transaction];
-                // MJK - should be safe to remove this senderTimestamp
-                TSIncomingMessage *message = [[TSIncomingMessage alloc]
-                    initIncomingMessageWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                            inThread:thread
-                                       authorAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
-                                      sourceDeviceId:0
-                                         messageBody:nil
-                                       attachmentIds:@[
-                                           pointer.uniqueId,
-                                       ]
-                                    expiresInSeconds:0
-                                       quotedMessage:nil
-                                        contactShare:nil
-                                         linkPreview:nil
-                                      messageSticker:nil
-                                     serverTimestamp:nil
-                                     wasReceivedByUD:NO
-                                   isViewOnceMessage:NO];
+                TSIncomingMessageBuilder *incomingMessageBuilder =
+                    [TSIncomingMessageBuilder incomingMessageBuilderWithThread:thread messageBody:nil];
+                incomingMessageBuilder.authorAddress =
+                    [[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"];
+                incomingMessageBuilder.attachmentIds = [@[
+                    pointer.uniqueId,
+                ] mutableCopy];
+                TSIncomingMessage *message = [incomingMessageBuilder build];
                 [message anyInsertWithTransaction:transaction];
-                [message markAsReadNowWithSendReadReceipt:NO transaction:transaction];
+                [message debugonly_markAsReadNowWithTransaction:transaction];
                 break;
             }
             case 3: {
                 ConversationFactory *conversationFactory = [ConversationFactory new];
                 // We want to produce a variety of album sizes, but favoring smaller albums
                 conversationFactory.attachmentCount = MAX(0,
-                                                          MIN(SignalAttachment.maxAttachmentsAllowed,
-                                                          ((NSInteger)((double)UINT32_MAX/(double)arc4random()) - 1)));
+                    MIN(SignalAttachment.maxAttachmentsAllowed,
+                        ((NSInteger)((double)UINT32_MAX / (double)arc4random()) - 1)));
                 conversationFactory.threadCreator = ^(SDSAnyWriteTransaction *_transaction){
                     return thread;
                 };
@@ -3947,13 +3869,14 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 
     void (^completion)(TSGroupThread *) = ^(TSGroupThread *thread) {
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)1.f * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-            [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-                [ThreadUtil enqueueMessageWithText:[@(counter) description]
-                                          inThread:thread
+            DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
+                [ThreadUtil enqueueMessageWithBody:[[MessageBody alloc] initWithText:[@(counter) description]
+                                                                              ranges:MessageBodyRanges.empty]
+                                            thread:thread
                                   quotedReplyModel:nil
                                   linkPreviewDraft:nil
                                        transaction:transaction];
-            }];
+            });
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)1.f * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
                 [self createNewGroups:counter - 1 recipientAddress:recipientAddress];
             });
@@ -3984,16 +3907,37 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
     OWSLogInfo(@"injectIncomingMessageInThread: %lu", (unsigned long)counter);
 
     NSString *randomText = [self randomText];
+    randomText = [[randomText stringByAppendingString:randomText] stringByAppendingString:@"\n"];
+    randomText = [[randomText stringByAppendingString:randomText] stringByAppendingString:@"\n"];
+    randomText = [[randomText stringByAppendingString:randomText] stringByAppendingString:@"\n"];
+    randomText = [[randomText stringByAppendingString:randomText] stringByAppendingString:@"\n"];
+    randomText = [[randomText stringByAppendingString:randomText] stringByAppendingString:@"\n"];
     NSString *text = [[[@(counter) description] stringByAppendingString:@" "] stringByAppendingString:randomText];
 
     SSKProtoDataMessageBuilder *dataMessageBuilder = [SSKProtoDataMessage builder];
     [dataMessageBuilder setBody:text];
 
     if ([thread isKindOfClass:[TSGroupThread class]]) {
-        TSGroupThread *groupThread = (TSGroupThread *)thread;
-        SSKProtoGroupContextBuilder *groupBuilder = [SSKProtoGroupContext builderWithId:groupThread.groupModel.groupId];
-        [groupBuilder setType:SSKProtoGroupContextTypeDeliver];
-        [dataMessageBuilder setGroup:groupBuilder.buildIgnoringErrors];
+        if (thread.isGroupV2Thread) {
+            TSGroupThread *groupThread = (TSGroupThread *)thread;
+            TSGroupModelV2 *groupModel = (TSGroupModelV2 *)groupThread.groupModel;
+
+            NSError *error;
+            SSKProtoGroupContextV2 *_Nullable groupContextV2 =
+                [self.groupsV2 buildGroupContextV2ProtoWithGroupModel:groupModel
+                                               changeActionsProtoData:nil
+                                                                error:&error];
+            if (groupContextV2 == nil || error != nil) {
+                OWSFailDebug(@"Error: %@", error);
+            }
+            [dataMessageBuilder setGroupV2:groupContextV2];
+        } else {
+            TSGroupThread *groupThread = (TSGroupThread *)thread;
+            SSKProtoGroupContextBuilder *groupBuilder =
+                [SSKProtoGroupContext builderWithId:groupThread.groupModel.groupId];
+            [groupBuilder setType:SSKProtoGroupContextTypeDeliver];
+            [dataMessageBuilder setGroup:groupBuilder.buildIgnoringErrors];
+        }
     }
 
     SSKProtoContentBuilder *payloadBuilder = [SSKProtoContent builder];
@@ -4028,24 +3972,23 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         return;
     }
 
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
         [SSKEnvironment.shared.batchMessageProcessor enqueueEnvelopeData:envelopeData
                                                            plaintextData:plaintextData
                                                          wasReceivedByUD:NO
+                                                 serverDeliveryTimestamp:0
                                                              transaction:transaction];
-    }];
+    });
 }
 
 + (void)performRandomActions:(NSUInteger)counter thread:(TSThread *)thread
 {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.f * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(),
-                   ^{
-                       [self performRandomActionInThread:thread counter:counter];
-                       if (counter > 0) {
-                           [self performRandomActions:counter - 1 thread:thread];
-                       }
-                   });
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.f * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self performRandomActionInThread:thread counter:counter];
+        if (counter > 0) {
+            [self performRandomActions:counter - 1 thread:thread];
+        }
+    });
 }
 
 + (void)performRandomActionInThread:(TSThread *)thread counter:(NSUInteger)counter
@@ -4066,7 +4009,7 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         },
         ^(SDSAnyWriteTransaction *transaction) {
             NSUInteger messageCount = (NSUInteger)(1 + arc4random_uniform(4));
-            [self sendFakeMessages:messageCount thread:thread isTextOnly:NO transaction:transaction];
+            [self createFakeMessages:messageCount batchOffset:0 thread:thread isTextOnly:NO transaction:transaction];
         },
         ^(SDSAnyWriteTransaction *transaction) {
             NSUInteger messageCount = (NSUInteger)(1 + arc4random_uniform(4));
@@ -4093,13 +4036,13 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
             [self resurrectNewOutgoingMessages2:messageCount thread:thread transaction:transaction];
         },
     ];
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
         NSUInteger actionCount = 1 + (NSUInteger)arc4random_uniform(3);
         for (NSUInteger actionIdx = 0; actionIdx < actionCount; actionIdx++) {
             TransactionBlock actionBlock = actionBlocks[(NSUInteger)arc4random_uniform((uint32_t)actionBlocks.count)];
             actionBlock(transaction);
         }
-    }];
+    });
 }
 
 + (void)deleteLastMessages:(NSUInteger)count thread:(TSThread *)thread transaction:(SDSAnyWriteTransaction *)transaction
@@ -4121,8 +4064,8 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         OWSFailDebug(@"error: %@", error);
     }
     for (NSString *interactionId in interactionIds) {
-        TSInteraction *_Nullable interaction =
-            [TSInteraction anyFetchWithUniqueId:interactionId transaction:transaction];
+        TSInteraction *_Nullable interaction = [TSInteraction anyFetchWithUniqueId:interactionId
+                                                                       transaction:transaction];
         if (interaction == nil) {
             OWSFailDebug(@"Couldn't load interaction.");
             continue;
@@ -4158,8 +4101,8 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         NSString *interactionId = interactionIds[idx];
         [interactionIds removeObjectAtIndex:idx];
 
-        TSInteraction *_Nullable interaction =
-            [TSInteraction anyFetchWithUniqueId:interactionId transaction:transaction];
+        TSInteraction *_Nullable interaction = [TSInteraction anyFetchWithUniqueId:interactionId
+                                                                       transaction:transaction];
         if (interaction == nil) {
             OWSFailDebug(@"Couldn't load interaction.");
             continue;
@@ -4224,14 +4167,14 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.f * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         OWSLogInfo(@"resurrectNewOutgoingMessages1.2: %zd", count);
-        [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+        DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
             for (TSOutgoingMessage *message in messages) {
                 [message anyRemoveWithTransaction:transaction];
             }
             for (TSOutgoingMessage *message in messages) {
                 [message anyInsertWithTransaction:transaction];
             }
-        }];
+        });
     });
 }
 
@@ -4247,21 +4190,10 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         OWSDisappearingMessagesConfiguration *configuration =
             [thread disappearingMessagesConfigurationWithTransaction:initialTransaction];
 
-        // MJK TODO - remove senderTimestamp
-        TSOutgoingMessage *message = [[TSOutgoingMessage alloc]
-            initOutgoingMessageWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                    inThread:thread
-                                 messageBody:text
-                               attachmentIds:[NSMutableArray new]
-                            expiresInSeconds:(configuration.isEnabled ? configuration.durationSeconds
-                                                                      : 0)expireStartedAt:0
-                              isVoiceMessage:NO
-                            groupMetaMessage:TSGroupMetaMessageUnspecified
-                               quotedMessage:nil
-                                contactShare:nil
-                                 linkPreview:nil
-                              messageSticker:nil
-                           isViewOnceMessage:NO];
+        TSOutgoingMessageBuilder *messageBuilder = [TSOutgoingMessageBuilder outgoingMessageBuilderWithThread:thread
+                                                                                                  messageBody:text];
+        [messageBuilder applyDisappearingMessagesConfiguration:configuration];
+        TSOutgoingMessage *message = [messageBuilder build];
         OWSLogInfo(@"resurrectNewOutgoingMessages2 timestamp: %llu.", message.timestamp);
         [messages addObject:message];
     }
@@ -4273,18 +4205,18 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.f * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
         OWSLogInfo(@"resurrectNewOutgoingMessages2.2: %zd", count);
-        [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+        DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
             for (TSOutgoingMessage *message in messages) {
                 [message anyRemoveWithTransaction:transaction];
             }
-        }];
+        });
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.f * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             OWSLogInfo(@"resurrectNewOutgoingMessages2.3: %zd", count);
-            [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+            DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
                 for (TSOutgoingMessage *message in messages) {
                     [message anyInsertWithTransaction:transaction];
                 }
-            }];
+            });
         });
     });
 }
@@ -4315,45 +4247,25 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         = (addresses.count > 0 ? addresses.firstObject
                                : [[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]);
 
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
         for (NSNumber *timestamp in timestamps) {
             NSString *randomText = [self randomText];
             {
                 // Legit usage of SenderTimestamp to backdate incoming sent messages for Debug
-                TSIncomingMessage *message =
-                    [[TSIncomingMessage alloc] initIncomingMessageWithTimestamp:timestamp.unsignedLongLongValue
-                                                                       inThread:thread
-                                                                  authorAddress:address
-                                                                 sourceDeviceId:0
-                                                                    messageBody:randomText
-                                                                  attachmentIds:[NSMutableArray new]
-                                                               expiresInSeconds:0
-                                                                  quotedMessage:nil
-                                                                   contactShare:nil
-                                                                    linkPreview:nil
-                                                                 messageSticker:nil
-                                                                serverTimestamp:nil
-                                                                wasReceivedByUD:NO
-                                                              isViewOnceMessage:NO];
+                TSIncomingMessageBuilder *incomingMessageBuilder =
+                    [TSIncomingMessageBuilder incomingMessageBuilderWithThread:thread messageBody:randomText];
+                incomingMessageBuilder.timestamp = timestamp.unsignedLongLongValue;
+                incomingMessageBuilder.authorAddress = address;
+                TSIncomingMessage *message = [incomingMessageBuilder build];
                 [message anyInsertWithTransaction:transaction];
-                [message markAsReadNowWithSendReadReceipt:NO transaction:transaction];
+                [message debugonly_markAsReadNowWithTransaction:transaction];
             }
             {
                 // MJK TODO - this might be the one place we actually use senderTimestamp
-                TSOutgoingMessage *message =
-                    [[TSOutgoingMessage alloc] initOutgoingMessageWithTimestamp:timestamp.unsignedLongLongValue
-                                                                       inThread:thread
-                                                                    messageBody:randomText
-                                                                  attachmentIds:[NSMutableArray new]
-                                                               expiresInSeconds:0
-                                                                expireStartedAt:0
-                                                                 isVoiceMessage:NO
-                                                               groupMetaMessage:TSGroupMetaMessageUnspecified
-                                                                  quotedMessage:nil
-                                                                   contactShare:nil
-                                                                    linkPreview:nil
-                                                                 messageSticker:nil
-                                                              isViewOnceMessage:NO];
+                TSOutgoingMessageBuilder *messageBuilder =
+                    [TSOutgoingMessageBuilder outgoingMessageBuilderWithThread:thread messageBody:randomText];
+                messageBuilder.timestamp = timestamp.unsignedLongLongValue;
+                TSOutgoingMessage *message = [messageBuilder build];
                 [message anyInsertWithTransaction:transaction];
                 [message updateWithFakeMessageState:TSOutgoingMessageStateSent transaction:transaction];
                 [message updateWithSentRecipient:address wasSentByUD:NO transaction:transaction];
@@ -4363,36 +4275,25 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                                      transaction:transaction];
             }
         }
-    }];
+    });
 }
 
 + (void)createDisappearingMessagesWhichFailedToStartInThread:(TSThread *)thread
 {
-    // MJK TODO - should be safe to remove this senderTimestamp
     uint64_t now = [NSDate ows_millisecondTimeStamp];
+    NSString *messageBody = [NSString stringWithFormat:@"Should disappear 60s after %lu", (unsigned long)now];
 
     SignalServiceAddress *address = thread.recipientAddresses.firstObject;
-    TSIncomingMessage *message = [[TSIncomingMessage alloc]
-        initIncomingMessageWithTimestamp:now
-                                inThread:thread
-                           authorAddress:address
-                          sourceDeviceId:0
-                             messageBody:[NSString
-                                             stringWithFormat:@"Should disappear 60s after %lu", (unsigned long)now]
-                           attachmentIds:[NSMutableArray new]
-                        expiresInSeconds:60
-                           quotedMessage:nil
-                            contactShare:nil
-                             linkPreview:nil
-                          messageSticker:nil
-                         serverTimestamp:nil
-                         wasReceivedByUD:NO
-                       isViewOnceMessage:NO];
+    TSIncomingMessageBuilder *incomingMessageBuilder =
+        [TSIncomingMessageBuilder incomingMessageBuilderWithThread:thread messageBody:messageBody];
+    incomingMessageBuilder.authorAddress = address;
+    incomingMessageBuilder.expiresInSeconds = 60;
+    TSIncomingMessage *message = [incomingMessageBuilder build];
     // private setter to avoid starting expire machinery.
     message.read = YES;
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         [message anyInsertWithTransaction:transaction];
-    }];
+    });
 }
 
 + (void)testLinkificationInThread:(TSThread *)thread
@@ -4409,7 +4310,7 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                                      @"https://кц.рф/some/path",
                                      @"http://foo.кц.рф"];
 
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
         for (NSString *string in strings) {
             // DO NOT log these strings with the debugger attached.
             //        OWSLogInfo(@"%@", string);
@@ -4424,11 +4325,11 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
             SignalServiceAddress *member = [[SignalServiceAddress alloc] initWithPhoneNumber:@"+1323555555"];
             [self createRandomGroupWithName:string
                                      member:member
-                                    success:^(TSGroupThread *thread) {
+                                    success:^(TSGroupThread *ignore) {
                                         // Do nothing.
                                     }];
         }
-    }];
+    });
 }
 
 + (void)createRandomGroupWithName:(NSString *)groupName
@@ -4439,18 +4340,14 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         member,
         TSAccountManager.localAddress,
     ];
-    [GroupManager createGroupObjcWithMembers:members
+    [GroupManager localCreateNewGroupObjcWithMembers:members
         groupId:nil
         name:groupName
         avatarData:nil
+        newGroupSeed:nil
+        shouldSendMessage:YES
         success:^(TSGroupThread *thread) {
-            [GroupManager sendDurableNewGroupMessageObjcForThread:thread
-                success:^{
-                    success(thread);
-                }
-                failure:^(NSError *error) {
-                    OWSFailDebug(@"Error: %@", error);
-                }];
+            success(thread);
         }
         failure:^(NSError *error) {
             OWSFailDebug(@"Error: %@", error);
@@ -4465,7 +4362,7 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         @"non-crashing string",
     ];
 
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
         for (NSString *string in strings) {
             // DO NOT log these strings with the debugger attached.
             //        OWSLogInfo(@"%@", string);
@@ -4480,11 +4377,11 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
             SignalServiceAddress *member = [[SignalServiceAddress alloc] initWithPhoneNumber:@"+1323555555"];
             [self createRandomGroupWithName:string
                                      member:member
-                                    success:^(TSGroupThread *thread) {
+                                    success:^(TSGroupThread *ignore) {
                                         // Do nothing.
                                     }];
         }
-    }];
+    });
 }
 
 + (void)testZalgoTextInThread:(TSThread *)thread
@@ -4494,27 +4391,26 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         @"This is some normal text",
     ];
 
-    [self
-        writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-            for (NSString *string in strings) {
-                OWSLogInfo(@"sending zalgo");
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
+        for (NSString *string in strings) {
+            OWSLogInfo(@"sending zalgo");
 
-                [self createFakeIncomingMessage:thread
-                                    messageBody:string
-                                fakeAssetLoader:nil
-                         isAttachmentDownloaded:NO
-                                  quotedMessage:nil
-                                    transaction:transaction];
+            [self createFakeIncomingMessage:thread
+                                messageBody:string
+                            fakeAssetLoader:nil
+                     isAttachmentDownloaded:NO
+                              quotedMessage:nil
+                                transaction:transaction];
 
 
-                SignalServiceAddress *member = [[SignalServiceAddress alloc] initWithPhoneNumber:@"+1323555555"];
-                [self createRandomGroupWithName:string
-                                         member:member
-                                        success:^(TSGroupThread *thread) {
-                                            // Do nothing.
-                                        }];
-            }
-        }];
+            SignalServiceAddress *member = [[SignalServiceAddress alloc] initWithPhoneNumber:@"+1323555555"];
+            [self createRandomGroupWithName:string
+                                     member:member
+                                    success:^(TSGroupThread *ignore) {
+                                        // Do nothing.
+                                    }];
+        }
+    });
 }
 
 + (void)testDirectionalFilenamesInThread:(TSThread *)thread
@@ -4536,8 +4432,9 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         _Nullable id<DataSource> dataSource =
             [DataSourceValue dataSourceWithData:[self createRandomNSDataOfSize:kDataLength] utiType:utiType];
         [dataSource setSourceFilename:filename];
-        SignalAttachment *attachment =
-            [SignalAttachment attachmentWithDataSource:dataSource dataUTI:utiType imageQuality:TSImageQualityOriginal];
+        SignalAttachment *attachment = [SignalAttachment attachmentWithDataSource:dataSource
+                                                                          dataUTI:utiType
+                                                                     imageQuality:TSImageQualityOriginal];
 
         OWSAssertDebug(attachment);
         if ([attachment hasError]) {
@@ -4556,9 +4453,9 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 
 + (void)deleteAllMessagesInThread:(TSThread *)thread
 {
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *transaction) {
         [thread removeAllThreadInteractionsWithTransaction:transaction];
-    }];
+    });
 }
 
 #pragma mark - Utility
@@ -4654,21 +4551,15 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         [attachmentIds addObject:attachment.uniqueId];
     }
 
-    // MJK TODO - remove senderTimestamp
-    TSOutgoingMessage *message =
-        [[TSOutgoingMessage alloc] initOutgoingMessageWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                                           inThread:thread
-                                                        messageBody:messageBody
-                                                      attachmentIds:attachmentIds
-                                                   expiresInSeconds:0
-                                                    expireStartedAt:0
-                                                     isVoiceMessage:isVoiceMessage
-                                                   groupMetaMessage:TSGroupMetaMessageUnspecified
-                                                      quotedMessage:quotedMessage
-                                                       contactShare:contactShare
-                                                        linkPreview:linkPreview
-                                                     messageSticker:messageSticker
-                                                  isViewOnceMessage:NO];
+    TSOutgoingMessageBuilder *messageBuilder = [TSOutgoingMessageBuilder outgoingMessageBuilderWithThread:thread
+                                                                                              messageBody:messageBody];
+    messageBuilder.attachmentIds = attachmentIds;
+    messageBuilder.isVoiceMessage = isVoiceMessage;
+    messageBuilder.quotedMessage = quotedMessage;
+    messageBuilder.contactShare = contactShare;
+    messageBuilder.linkPreview = linkPreview;
+    messageBuilder.messageSticker = messageSticker;
+    TSOutgoingMessage *message = [messageBuilder build];
 
     [message anyInsertWithTransaction:transaction];
     [message updateWithFakeMessageState:messageState transaction:transaction];
@@ -4679,17 +4570,21 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
     }];
     if (isDelivered) {
         SignalServiceAddress *_Nullable address = thread.recipientAddresses.lastObject;
-        OWSAssertDebug(address.isValid);
-        [message updateWithDeliveredRecipient:address
-                            deliveryTimestamp:@([NSDate ows_millisecondTimeStamp])
-                                  transaction:transaction];
+        if (address != nil) {
+            OWSAssertDebug(address.isValid);
+            [message updateWithDeliveredRecipient:address
+                                deliveryTimestamp:@([NSDate ows_millisecondTimeStamp])
+                                      transaction:transaction];
+        }
     }
     if (isRead) {
         SignalServiceAddress *_Nullable address = thread.recipientAddresses.lastObject;
-        OWSAssertDebug(address.isValid);
-        [message updateWithReadRecipient:address
-                           readTimestamp:[NSDate ows_millisecondTimeStamp]
-                             transaction:transaction];
+        if (address != nil) {
+            OWSAssertDebug(address.isValid);
+            [message updateWithReadRecipient:address
+                               readTimestamp:[NSDate ows_millisecondTimeStamp]
+                                 transaction:transaction];
+        }
     }
     return message;
 }
@@ -4743,29 +4638,14 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         [attachmentIds addObject:attachmentId];
     }
 
-    //    // Random time within last n years. Helpful for filling out a media gallery over time.
-    //    double yearsMillis = 4.0 * kYearsInMs;
-    //    uint64_t millisAgo = (uint64_t)(((double)arc4random() / ((double)0xffffffff)) * yearsMillis);
-    //    uint64_t timestamp = [NSDate ows_millisecondTimeStamp] - millisAgo;
-
-    // MJK TODO - should be safe to remove this senderTimestamp
-    TSIncomingMessage *message = [[TSIncomingMessage alloc]
-        initIncomingMessageWithTimestamp:[NSDate ows_millisecondTimeStamp]
-                                inThread:thread
-                           authorAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"]
-                          sourceDeviceId:0
-                             messageBody:messageBody
-                           attachmentIds:attachmentIds
-                        expiresInSeconds:0
-                           quotedMessage:quotedMessage
-                            contactShare:nil
-                             linkPreview:nil
-                          messageSticker:nil
-                         serverTimestamp:nil
-                         wasReceivedByUD:NO
-                       isViewOnceMessage:NO];
+    TSIncomingMessageBuilder *incomingMessageBuilder =
+        [TSIncomingMessageBuilder incomingMessageBuilderWithThread:thread messageBody:messageBody];
+    incomingMessageBuilder.authorAddress = [[SignalServiceAddress alloc] initWithPhoneNumber:@"+19174054215"];
+    incomingMessageBuilder.attachmentIds = attachmentIds;
+    incomingMessageBuilder.quotedMessage = quotedMessage;
+    TSIncomingMessage *message = [incomingMessageBuilder build];
     [message anyInsertWithTransaction:transaction];
-    [message markAsReadNowWithSendReadReceipt:NO transaction:transaction];
+    [message debugonly_markAsReadNowWithTransaction:transaction];
     return message;
 }
 
@@ -4779,10 +4659,9 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 
     if (isAttachmentDownloaded) {
         NSError *error;
-        id<DataSource>dataSource =
-            [DataSourcePath dataSourceWithFilePath:fakeAssetLoader.filePath
-                        shouldDeleteOnDeallocation:NO
-                                             error:&error];
+        id<DataSource> dataSource = [DataSourcePath dataSourceWithFilePath:fakeAssetLoader.filePath
+                                                shouldDeleteOnDeallocation:NO
+                                                                     error:&error];
         OWSAssertDebug(error == nil);
         NSString *filename = dataSource.sourceFilename;
         // To support "fake missing" attachments, we sometimes lie about the
@@ -4801,6 +4680,8 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
         UInt32 filesize = 64;
         TSAttachmentPointer *attachmentPointer =
             [[TSAttachmentPointer alloc] initWithServerId:237391539706350548
+                                                   cdnKey:@""
+                                                cdnNumber:0
                                                       key:[self createRandomNSDataOfSize:filesize]
                                                    digest:nil
                                                 byteCount:filesize
@@ -4810,7 +4691,8 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                                            albumMessageId:nil
                                            attachmentType:TSAttachmentTypeDefault
                                                 mediaSize:CGSizeZero
-                                                 blurHash:nil];
+                                                 blurHash:nil
+                                          uploadTimestamp:0];
         attachmentPointer.state = TSAttachmentPointerStateFailed;
         [attachmentPointer anyInsertWithTransaction:transaction];
         return attachmentPointer;
@@ -4861,10 +4743,9 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
             = fakeAssetLoaders[arc4random_uniform((uint32_t)fakeAssetLoaders.count)];
         OWSAssertDebug([NSFileManager.defaultManager fileExistsAtPath:fakeAssetLoader.filePath]);
         NSError *error;
-        id<DataSource>dataSource =
-            [DataSourcePath dataSourceWithFilePath:fakeAssetLoader.filePath
-                        shouldDeleteOnDeallocation:NO
-                                             error:&error];
+        id<DataSource> dataSource = [DataSourcePath dataSourceWithFilePath:fakeAssetLoader.filePath
+                                                shouldDeleteOnDeallocation:NO
+                                                                     error:&error];
         OWSAssertDebug(error == nil);
         SignalAttachment *attachment =
             [SignalAttachment attachmentWithDataSource:dataSource
@@ -4877,12 +4758,13 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
     }
 
     [self readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        TSOutgoingMessage *message = [ThreadUtil enqueueMessageWithText:messageBody
-                                                       mediaAttachments:attachments
-                                                               inThread:thread
-                                                       quotedReplyModel:nil
-                                                       linkPreviewDraft:nil
-                                                            transaction:transaction];
+        TSOutgoingMessage *message = [ThreadUtil
+            enqueueMessageWithBody:[[MessageBody alloc] initWithText:messageBody ranges:MessageBodyRanges.empty]
+                  mediaAttachments:attachments
+                            thread:thread
+                  quotedReplyModel:nil
+                  linkPreviewDraft:nil
+                       transaction:transaction];
         OWSLogDebug(@"timestamp: %llu.", message.timestamp);
     }];
 }
@@ -4914,7 +4796,7 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
 
 + (void)requestGroupInfoForGroupThread:(TSGroupThread *)groupThread
 {
-    [self writeWithBlock:^(SDSAnyWriteTransaction *_Nonnull transaction) {
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, ^(SDSAnyWriteTransaction *_Nonnull transaction) {
         for (SignalServiceAddress *address in groupThread.groupModel.groupMembers) {
             TSThread *thread = [TSContactThread getOrCreateThreadWithContactAddress:address transaction:transaction];
             OWSLogInfo(@"Requesting group info for group thread from: %@", address);
@@ -4922,7 +4804,7 @@ typedef OWSContact * (^OWSContactBlock)(SDSAnyWriteTransaction *transaction);
                 [[OWSGroupInfoRequestMessage alloc] initWithThread:thread groupId:groupThread.groupModel.groupId];
             [self.messageSenderJobQueue addMessage:groupInfoRequestMessage.asPreparer transaction:transaction];
         }
-    }];
+    });
 }
 
 @end

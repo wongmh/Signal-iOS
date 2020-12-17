@@ -1,34 +1,91 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
+import PromiseKit
 
 @objc(OWSReactionManager)
 public class ReactionManager: NSObject {
-    static var databaseStorage: SDSDatabaseStorage {
+
+    // MARK: - Dependencies
+
+    private static var databaseStorage: SDSDatabaseStorage {
         return .shared
     }
 
-    static var tsAccountManager: TSAccountManager {
-        return .sharedInstance()
+    private static var tsAccountManager: TSAccountManager {
+        return .shared()
     }
 
-    public static let emojiSet = ["❤️", "👍", "👎", "😂", "😮", "😢", "😡"]
+    private static var messageSender: MessageSender {
+        return SSKEnvironment.shared.messageSender
+    }
 
-    @objc(localUserReactedToMessage:emoji:isRemoving:transaction:)
-    public class func localUserReacted(to message: TSMessage, emoji: String, isRemoving: Bool, transaction: SDSAnyWriteTransaction) {
-        guard FeatureFlags.reactionSend else {
-            Logger.info("Not sending reaction, feature disabled")
+    // MARK: -
+
+    public static let emojiSet = ["❤️", "👍", "👎", "😂", "😮", "😢"]
+
+    public class func localUserReactedWithDurableSend(to message: TSMessage,
+                                                      emoji: String,
+                                                      isRemoving: Bool,
+                                                      transaction: SDSAnyWriteTransaction) {
+        let outgoingMessage: TSOutgoingMessage
+        do {
+            outgoingMessage = try _localUserReacted(to: message, emoji: emoji, isRemoving: isRemoving, transaction: transaction)
+        } catch {
+            owsFailDebug("Error: \(error)")
             return
         }
+        let messagePreparer = outgoingMessage.asPreparer
+        SSKEnvironment.shared.messageSenderJobQueue.add(message: messagePreparer, transaction: transaction)
+    }
 
+    public class func localUserReactedWithNonDurableSend(to message: TSMessage,
+                                                         emoji: String,
+                                                         isRemoving: Bool,
+                                                         transaction: SDSAnyWriteTransaction) -> Promise<Void> {
+
+        let outgoingMessage: TSOutgoingMessage
+        do {
+            outgoingMessage = try _localUserReacted(to: message, emoji: emoji, isRemoving: isRemoving, transaction: transaction)
+        } catch {
+            owsFailDebug("Error: \(error)")
+            return Promise(error: error)
+        }
+
+        let messagePreparer = outgoingMessage.asPreparer
+        messagePreparer.insertMessage(linkPreviewDraft: nil, transaction: transaction)
+
+        let (promise, resolver) = Promise<Void>.pending()
+        transaction.addAsyncCompletionOffMain {
+            self.messageSender.sendMessage(messagePreparer,
+                                           success: {
+                                            resolver.fulfill(())
+            },
+                                           failure: { (error: Error) in
+                                            resolver.reject(error)
+            })
+        }
+        return promise
+    }
+
+    // This helper method DRYs up the logic shared by the above methods.
+    private class func _localUserReacted(to message: TSMessage,
+                                         emoji: String,
+                                         isRemoving: Bool,
+                                         transaction: SDSAnyWriteTransaction) throws -> OWSOutgoingReactionMessage {
         assert(emoji.isSingleEmoji)
+
+        let thread = message.thread(transaction: transaction)
+        guard thread.canSendToThread else {
+            throw OWSAssertionError("Cannot send to thread.")
+        }
 
         Logger.info("Sending reaction: \(emoji) isRemoving: \(isRemoving)")
 
         guard let localAddress = tsAccountManager.localAddress else {
-            return owsFailDebug("missing local address")
+            throw OWSAssertionError("missing local address")
         }
 
         // Though we generally don't parse the expiration timer from
@@ -65,9 +122,19 @@ public class ReactionManager: NSObject {
                 receivedAtTimestamp: outgoingMessage.timestamp,
                 transaction: transaction
             )
+
+            // Always immediately mark outgoing reactions as read.
+            outgoingMessage.createdReaction?.markAsRead(transaction: transaction)
         }
 
-        SSKEnvironment.shared.messageSenderJobQueue.add(message: outgoingMessage.asPreparer, transaction: transaction)
+        return outgoingMessage
+    }
+
+    @objc(OWSReactionProcessingResult)
+    public enum ReactionProcessingResult: Int, Error {
+        case associatedMessageMissing
+        case invalidReaction
+        case success
     }
 
     @objc
@@ -77,19 +144,15 @@ public class ReactionManager: NSObject {
         reactor: SignalServiceAddress,
         timestamp: UInt64,
         transaction: SDSAnyWriteTransaction
-    ) {
-        guard FeatureFlags.reactionReceive else {
-            Logger.info("Ignoring incoming reaction, feature disabled")
-            return
-        }
-
+    ) -> ReactionProcessingResult {
         guard reaction.emoji.isSingleEmoji else {
             owsFailDebug("Received invalid emoji")
-            return
+            return .invalidReaction
         }
 
         guard let messageAuthor = reaction.authorAddress else {
-            return owsFailDebug("reaction missing author address")
+            owsFailDebug("reaction missing author address")
+            return .invalidReaction
         }
 
         guard let message = InteractionFinder.findMessage(
@@ -100,7 +163,12 @@ public class ReactionManager: NSObject {
         ) else {
             // This is potentially normal. For example, we could've deleted the message locally.
             Logger.info("Received reaction for a message that doesn't exist \(timestamp)")
-            return
+            return .associatedMessageMissing
+        }
+
+        guard !message.wasRemotelyDeleted else {
+            Logger.info("Ignoring reaction for a message that was remotely deleted")
+            return .invalidReaction
         }
 
         // If this is a reaction removal, we want to remove *any* reaction from this author
@@ -117,13 +185,16 @@ public class ReactionManager: NSObject {
             )
 
             // If this is a reaction to a message we sent, notify the user.
-            if message is TSOutgoingMessage, !reactor.isLocalAddress {
+            if let reaction = reaction, let message = message as? TSOutgoingMessage, !reactor.isLocalAddress {
                 guard let thread = TSThread.anyFetch(uniqueId: threadId, transaction: transaction) else {
-                    return owsFailDebug("Failed to lookup thread for reaction notification.")
+                    owsFailDebug("Failed to lookup thread for reaction notification.")
+                    return .success
                 }
 
-                SSKEnvironment.shared.notificationsManager.notifyUser(for: reaction, in: thread, transaction: transaction)
+                SSKEnvironment.shared.notificationsManager.notifyUser(for: reaction, on: message, thread: thread, transaction: transaction)
             }
         }
+
+        return .success
     }
 }

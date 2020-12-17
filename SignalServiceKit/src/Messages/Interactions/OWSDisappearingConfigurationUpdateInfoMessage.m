@@ -1,10 +1,11 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSDisappearingConfigurationUpdateInfoMessage.h"
 #import "OWSDisappearingMessagesConfiguration.h"
 #import <SignalCoreKit/NSString+OWS.h>
+#import <SignalServiceKit/SignalServiceKit-Swift.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -20,13 +21,17 @@ NS_ASSUME_NONNULL_BEGIN
 
 @implementation OWSDisappearingConfigurationUpdateInfoMessage
 
-- (instancetype)initWithTimestamp:(uint64_t)timestamp
-                           thread:(TSThread *)thread
-                    configuration:(OWSDisappearingMessagesConfiguration *)configuration
-              createdByRemoteName:(nullable NSString *)remoteName
-           createdInExistingGroup:(BOOL)createdInExistingGroup
+- (nullable instancetype)initWithCoder:(NSCoder *)coder
 {
-    self = [super initWithTimestamp:timestamp inThread:thread messageType:TSInfoMessageTypeDisappearingMessagesUpdate];
+    return [super initWithCoder:coder];
+}
+
+- (instancetype)initWithThread:(TSThread *)thread
+                 configuration:(OWSDisappearingMessagesConfiguration *)configuration
+           createdByRemoteName:(nullable NSString *)remoteName
+        createdInExistingGroup:(BOOL)createdInExistingGroup
+{
+    self = [super initWithThread:thread messageType:TSInfoMessageTypeDisappearingMessagesUpdate];
     if (!self) {
         return self;
     }
@@ -57,6 +62,7 @@ NS_ASSUME_NONNULL_BEGIN
                   uniqueThreadId:(NSString *)uniqueThreadId
                    attachmentIds:(NSArray<NSString *> *)attachmentIds
                             body:(nullable NSString *)body
+                      bodyRanges:(nullable MessageBodyRanges *)bodyRanges
                     contactShare:(nullable OWSContact *)contactShare
                  expireStartedAt:(uint64_t)expireStartedAt
                        expiresAt:(uint64_t)expiresAt
@@ -67,7 +73,9 @@ NS_ASSUME_NONNULL_BEGIN
                   messageSticker:(nullable MessageSticker *)messageSticker
                    quotedMessage:(nullable TSQuotedMessage *)quotedMessage
     storedShouldStartExpireTimer:(BOOL)storedShouldStartExpireTimer
+              wasRemotelyDeleted:(BOOL)wasRemotelyDeleted
                    customMessage:(nullable NSString *)customMessage
+             infoMessageUserInfo:(nullable NSDictionary<InfoMessageUserInfoKey, id> *)infoMessageUserInfo
                      messageType:(TSInfoMessageType)messageType
                             read:(BOOL)read
              unregisteredAddress:(nullable SignalServiceAddress *)unregisteredAddress
@@ -84,6 +92,7 @@ NS_ASSUME_NONNULL_BEGIN
                     uniqueThreadId:uniqueThreadId
                      attachmentIds:attachmentIds
                               body:body
+                        bodyRanges:bodyRanges
                       contactShare:contactShare
                    expireStartedAt:expireStartedAt
                          expiresAt:expiresAt
@@ -94,7 +103,9 @@ NS_ASSUME_NONNULL_BEGIN
                     messageSticker:messageSticker
                      quotedMessage:quotedMessage
       storedShouldStartExpireTimer:storedShouldStartExpireTimer
+                wasRemotelyDeleted:wasRemotelyDeleted
                      customMessage:customMessage
+               infoMessageUserInfo:infoMessageUserInfo
                        messageType:messageType
                               read:read
                unregisteredAddress:unregisteredAddress];
@@ -132,43 +143,12 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (NSString *)previewTextWithTransaction:(SDSAnyReadTransaction *)transaction
 {
-    if (self.createdInExistingGroup) {
-        OWSAssertDebug(self.configurationIsEnabled && self.configurationDurationSeconds > 0);
-        NSString *infoFormat = NSLocalizedString(@"DISAPPEARING_MESSAGES_CONFIGURATION_GROUP_EXISTING_FORMAT",
-            @"Info Message when added to a group which has enabled disappearing messages. Embeds {{time amount}} "
-            @"before messages disappear, see the *_TIME_AMOUNT strings for context.");
-
-        NSString *durationString = [NSString formatDurationSeconds:self.configurationDurationSeconds useShortFormat:NO];
-        return [NSString stringWithFormat:infoFormat, durationString];
-    } else if (self.createdByRemoteName) {
-        if (self.configurationIsEnabled && self.configurationDurationSeconds > 0) {
-            NSString *infoFormat = NSLocalizedString(@"OTHER_UPDATED_DISAPPEARING_MESSAGES_CONFIGURATION",
-                @"Info Message when {{other user}} updates message expiration to {{time amount}}, see the "
-                @"*_TIME_AMOUNT "
-                @"strings for context.");
-
-            NSString *durationString =
-                [NSString formatDurationSeconds:self.configurationDurationSeconds useShortFormat:NO];
-            return [NSString stringWithFormat:infoFormat, self.createdByRemoteName, durationString];
-        } else {
-            NSString *infoFormat = NSLocalizedString(@"OTHER_DISABLED_DISAPPEARING_MESSAGES_CONFIGURATION",
-                @"Info Message when {{other user}} disables or doesn't support disappearing messages");
-            return [NSString stringWithFormat:infoFormat, self.createdByRemoteName];
-        }
-    } else {
-        // Changed by localNumber on this device or via synced transcript
-        if (self.configurationIsEnabled && self.configurationDurationSeconds > 0) {
-            NSString *infoFormat = NSLocalizedString(@"YOU_UPDATED_DISAPPEARING_MESSAGES_CONFIGURATION",
-                @"Info message embedding a {{time amount}}, see the *_TIME_AMOUNT strings for context.");
-
-            NSString *durationString =
-                [NSString formatDurationSeconds:self.configurationDurationSeconds useShortFormat:NO];
-            return [NSString stringWithFormat:infoFormat, durationString];
-        } else {
-            return NSLocalizedString(@"YOU_DISABLED_DISAPPEARING_MESSAGES_CONFIGURATION",
-                @"Info Message when you disable disappearing messages");
-        }
-    }
+    DisappearingMessageToken *newToken =
+        [[DisappearingMessageToken alloc] initWithIsEnabled:self.configurationIsEnabled
+                                            durationSeconds:self.configurationDurationSeconds];
+    return [TSInfoMessage legacyDisappearingMessageUpdateDescriptionWithToken:newToken
+                                                      wasAddedToExistingGroup:self.createdInExistingGroup
+                                                                  updaterName:self.createdByRemoteName];
 }
 
 @end

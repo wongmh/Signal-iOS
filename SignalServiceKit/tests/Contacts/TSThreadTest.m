@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "MIMETypeUtil.h"
@@ -43,39 +43,19 @@
         XCTAssertEqual(0, [thread numberOfInteractionsWithTransaction:transaction]);
     }];
 
-    TSIncomingMessage *incomingMessage = [[TSIncomingMessage alloc]
-        initIncomingMessageWithTimestamp:10000
-                                inThread:thread
-                           authorAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+12223334444"]
-                          sourceDeviceId:OWSDevicePrimaryDeviceId
-                             messageBody:@"Incoming message body"
-                           attachmentIds:@[]
-                        expiresInSeconds:0
-                           quotedMessage:nil
-                            contactShare:nil
-                             linkPreview:nil
-                          messageSticker:nil
-                         serverTimestamp:nil
-                         wasReceivedByUD:NO
-                       isViewOnceMessage:NO];
+    TSIncomingMessageBuilder *incomingMessageBuilder =
+        [TSIncomingMessageBuilder incomingMessageBuilderWithThread:thread messageBody:@"Incoming message body"];
+    incomingMessageBuilder.authorAddress = [[SignalServiceAddress alloc] initWithPhoneNumber:@"+12223334444"];
+    incomingMessageBuilder.timestamp = 10000;
+    TSIncomingMessage *incomingMessage = [incomingMessageBuilder build];
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
         [incomingMessage anyInsertWithTransaction:transaction];
     }];
 
-    TSOutgoingMessage *outgoingMessage =
-        [[TSOutgoingMessage alloc] initOutgoingMessageWithTimestamp:20000
-                                                           inThread:thread
-                                                        messageBody:@"outgoing message body"
-                                                      attachmentIds:[NSMutableArray new]
-                                                   expiresInSeconds:0
-                                                    expireStartedAt:0
-                                                     isVoiceMessage:NO
-                                                   groupMetaMessage:TSGroupMetaMessageUnspecified
-                                                      quotedMessage:nil
-                                                       contactShare:nil
-                                                        linkPreview:nil
-                                                     messageSticker:nil
-                                                  isViewOnceMessage:NO];
+    TSOutgoingMessageBuilder *messageBuilder =
+        [TSOutgoingMessageBuilder outgoingMessageBuilderWithThread:thread messageBody:@"outgoing message body"];
+    messageBuilder.timestamp = 20000;
+    TSOutgoingMessage *outgoingMessage = [messageBuilder build];
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
         [outgoingMessage anyInsertWithTransaction:transaction];
     }];
@@ -118,21 +98,12 @@
         [[NSFileManager defaultManager] fileExistsAtPath:[incomingAttachment originalFilePath]];
     XCTAssert(incomingFileWasCreated);
 
-    TSIncomingMessage *incomingMessage = [[TSIncomingMessage alloc]
-        initIncomingMessageWithTimestamp:10000
-                                inThread:thread
-                           authorAddress:[[SignalServiceAddress alloc] initWithPhoneNumber:@"+12223334444"]
-                          sourceDeviceId:OWSDevicePrimaryDeviceId
-                             messageBody:@"incoming message body"
-                           attachmentIds:@[ incomingAttachment.uniqueId ]
-                        expiresInSeconds:0
-                           quotedMessage:nil
-                            contactShare:nil
-                             linkPreview:nil
-                          messageSticker:nil
-                         serverTimestamp:nil
-                         wasReceivedByUD:NO
-                       isViewOnceMessage:NO];
+    TSIncomingMessageBuilder *incomingMessageBuilder =
+        [TSIncomingMessageBuilder incomingMessageBuilderWithThread:thread messageBody:@"Incoming message body"];
+    incomingMessageBuilder.authorAddress = [[SignalServiceAddress alloc] initWithPhoneNumber:@"+12223334444"];
+    incomingMessageBuilder.timestamp = 10000;
+    incomingMessageBuilder.attachmentIds = [@[ incomingAttachment.uniqueId ] mutableCopy];
+    TSIncomingMessage *incomingMessage = [incomingMessageBuilder build];
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
         [incomingMessage anyInsertWithTransaction:transaction];
     }];
@@ -149,20 +120,11 @@
         [[NSFileManager defaultManager] fileExistsAtPath:[outgoingAttachment originalFilePath]];
     XCTAssert(outgoingFileWasCreated);
 
-    TSOutgoingMessage *outgoingMessage =
-        [[TSOutgoingMessage alloc] initOutgoingMessageWithTimestamp:10000
-                                                           inThread:thread
-                                                        messageBody:@"outgoing message body"
-                                                      attachmentIds:[@[ outgoingAttachment.uniqueId ] mutableCopy]
-                                                   expiresInSeconds:0
-                                                    expireStartedAt:0
-                                                     isVoiceMessage:NO
-                                                   groupMetaMessage:TSGroupMetaMessageUnspecified
-                                                      quotedMessage:nil
-                                                       contactShare:nil
-                                                        linkPreview:nil
-                                                     messageSticker:nil
-                                                  isViewOnceMessage:NO];
+    TSOutgoingMessageBuilder *messageBuilder =
+        [TSOutgoingMessageBuilder outgoingMessageBuilderWithThread:thread messageBody:@"outgoing message body"];
+    messageBuilder.timestamp = 10000;
+    messageBuilder.attachmentIds = [@[ outgoingAttachment.uniqueId ] mutableCopy];
+    TSOutgoingMessage *outgoingMessage = [messageBuilder build];
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
         [outgoingMessage anyInsertWithTransaction:transaction];
     }];

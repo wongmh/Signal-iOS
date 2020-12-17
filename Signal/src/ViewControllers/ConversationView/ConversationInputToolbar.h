@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import <SignalMessaging/BlockListUIUtils.h>
@@ -7,12 +7,15 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class ConversationStyle;
+@class MessageBody;
 @class OWSLinkPreviewDraft;
 @class OWSQuotedReplyModel;
 @class PHAsset;
 @class PhotoCapture;
 @class SignalAttachment;
 @class StickerInfo;
+
+@protocol MentionTextViewDelegate;
 
 @protocol ConversationInputToolbarDelegate <NSObject>
 
@@ -69,7 +72,7 @@ NS_ASSUME_NONNULL_BEGIN
 @interface ConversationInputToolbar : UIView
 
 - (instancetype)initWithConversationStyle:(ConversationStyle *)conversationStyle NS_DESIGNATED_INITIALIZER;
-- (instancetype)initWithCoder:(NSCoder *)aDecoder NS_UNAVAILABLE;
+- (nullable instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
 - (instancetype)initWithFrame:(CGRect)frame NS_UNAVAILABLE;
 
 @property (nonatomic, weak) id<ConversationInputToolbarDelegate> inputToolbarDelegate;
@@ -79,9 +82,10 @@ NS_ASSUME_NONNULL_BEGIN
 - (BOOL)isInputViewFirstResponder;
 
 - (void)setInputTextViewDelegate:(id<ConversationInputTextViewDelegate>)value;
+- (void)setMentionDelegate:(id<MentionTextViewDelegate>)value;
 
-- (NSString *)messageText;
-- (void)setMessageText:(NSString *_Nullable)value animated:(BOOL)isAnimated;
+- (nullable MessageBody *)messageBody;
+- (void)setMessageBody:(nullable MessageBody *)value animated:(BOOL)isAnimated;
 - (void)acceptAutocorrectSuggestion;
 - (void)clearTextMessageAnimated:(BOOL)isAnimated;
 - (void)clearDesiredKeyboard;

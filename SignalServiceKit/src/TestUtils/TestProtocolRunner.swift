@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -73,11 +73,7 @@ public extension SignalClient {
     }
 
     var address: SignalServiceAddress {
-        if FeatureFlags.allowUUIDOnlyContacts {
-            return SignalServiceAddress(uuid: uuid, phoneNumber: e164Identifier)
-        } else {
-            return SignalServiceAddress(phoneNumber: e164Identifier!)
-        }
+        return SignalServiceAddress(uuid: uuid, phoneNumber: e164Identifier)
     }
 
     func sessionCipher(for e164Identifier: SignalE164Identifier) throws -> SessionCipher {
@@ -149,7 +145,7 @@ public struct LocalSignalClient: SignalClient {
     }
 
     public var uuid: UUID {
-        return TSAccountManager.sharedInstance().localUuid!
+        return TSAccountManager.shared().localUuid!
     }
 
     public let deviceId: UInt32 = 1

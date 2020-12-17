@@ -9,6 +9,7 @@
 		"TSAttachmentStream.cachedImageHeight": "Double",
 		"TSAttachmentStream.isValidImageCached": "Bool",
 		"TSAttachmentStream.isValidVideoCached": "Bool",
+		"TSAttachmentStream.isAnimatedCached": "Bool",
 		"OWSBackupFragment.uncompressedDataLength": "UInt64",
 		"TestModel.nsNumberValueUsingInt64": "Int64",
 		"TestModel.nsNumberValueUsingUInt64": "UInt64"
@@ -23,12 +24,8 @@
 		"TSAttachmentStream.cachedAudioWaveform",
 		"TSThread.isArchivedByLegacyTimestampForSorting",
 		"TSContactThread.contactThreadSchemaVersion",
-		"OWSContactOffersInteraction.beforeInteractionId",
 		"TSCall.callSchemaVersion",
 		"TSErrorMessage.errorMessageSchemaVersion",
-		"OWSContactOffersInteraction.hasAddToContactsOffer",
-		"OWSContactOffersInteraction.hasAddToProfileWhitelistOffer",
-		"OWSContactOffersInteraction.hasBlockOffer",
 		"TSMessage.schemaVersion",
 		"TSIncomingMessage.incomingMessageSchemaVersion",
 		"TSInfoMessage.infoMessageSchemaVersion",
@@ -38,13 +35,30 @@
 		"SignalAccount.accountSchemaVersion",
 		"OWSUserProfile.userProfileSchemaVersion",
 		"TSRecipientReadReceipt.recipientReadReceiptSchemaVersion",
-		"OWSLinkedDeviceReadReceipt.linkedDeviceReadReceiptSchemaVersion"
+		"OWSLinkedDeviceReadReceipt.linkedDeviceReadReceiptSchemaVersion",
+		"TSOutgoingMessage.changeActionsProtoData"
 	],
 	"custom_property_column_sources": {
 		"TSInteraction.sortId": "id",
 		"SSKJobRecord.sortId": "id"
 	},
+	"class_cache_get_code": {
+		"InstalledSticker": "SSKEnvironment.shared.modelReadCaches.installedStickerCache.getInstalledSticker(uniqueId: uniqueId, transaction: transaction)",
+		"TSThread": "SSKEnvironment.shared.modelReadCaches.threadReadCache.getThread(uniqueId: uniqueId, transaction: transaction)",
+		"TSInteraction": "SSKEnvironment.shared.modelReadCaches.interactionReadCache.getInteraction(uniqueId: uniqueId, transaction: transaction)",
+		"TSAttachment": "SSKEnvironment.shared.modelReadCaches.attachmentReadCache.getAttachment(uniqueId: uniqueId, transaction: transaction)"
+	},
+	"class_cache_set_code": {
+		"InstalledSticker": "SSKEnvironment.shared.modelReadCaches.installedStickerCache.didReadInstalledSticker",
+		"TSThread": "SSKEnvironment.shared.modelReadCaches.threadReadCache.didReadThread",
+		"TSInteraction": "SSKEnvironment.shared.modelReadCaches.interactionReadCache.didReadInteraction",
+		"TSAttachment": "SSKEnvironment.shared.modelReadCaches.attachmentReadCache.didReadAttachment",
+		"SignalRecipient": "SSKEnvironment.shared.modelReadCaches.signalRecipientReadCache.didReadSignalRecipient",
+		"SignalAccount": "SSKEnvironment.shared.modelReadCaches.signalAccountReadCache.didReadSignalAccount",
+		"OWSUserProfile": "SSKEnvironment.shared.modelReadCaches.userProfileReadCache.didReadUserProfile"
+	},
 	"class_to_skip_serialization": [
+		"OWSContactOffersInteraction",
 		"OWSOutgoingSyncMessage",
 		"OWSOutgoingReactionMessage",
 		"OWSEndSessionMessage",
@@ -54,17 +68,49 @@
 		"OWSProfileKeyMessage",
 		"OWSOutgoingNullMessage",
 		"OWSOutgoingCallMessage",
+		"OWSOutgoingGroupCallMessage",
 		"OWSReceiptsForSenderMessage",
-		"OWSUnknownDBObject"
+		"OWSUnknownDBObject",
+		"TSOutgoingDeleteMessage"
 	],
-	"enum_properties": [
-		"TSThread.conversationColorName"
-	],
+	"manually_typed_fields": {
+		"TSThread.conversationColorName": {
+			"swift_type": "ConversationColorName",
+			"objc_initializer_type": "ConversationColorName",
+			"is_objc_codable": true,
+			"is_enum": true,
+			"column_type": ".unicodeString",
+			"record_swift_type": "String",
+			"serialize_record_invocation": "%s.rawValue",
+			"should_use_blob": false
+		},
+		"TSInfoMessage.infoMessageUserInfo": {
+			"swift_type": "[InfoMessageUserInfoKey: AnyObject]",
+			"objc_initializer_type": "NSDictionary<InfoMessageUserInfoKey, id> *",
+			"is_objc_codable": false,
+			"is_enum": false,
+			"column_type": ".blob",
+			"record_swift_type": "Data",
+			"serialize_record_invocation": "optionalArchive(%s)",
+			"should_use_blob": true
+		},
+		"TSThread.mentionNotificationMode": {
+			"swift_type": "TSThreadMentionNotificationMode",
+			"objc_initializer_type": "TSThreadMentionNotificationMode",
+			"is_objc_codable": true,
+			"is_enum": true,
+			"column_type": ".int",
+			"record_swift_type": "UInt",
+			"serialize_record_invocation": "%s.rawValue",
+			"should_use_blob": false
+		}
+	},
 	"custom_accessors": {
 		"TSInfoMessage.read": "wasRead",
 		"TSErrorMessage.read": "wasRead",
 		"TSIncomingMessage.read": "wasRead",
 		"TSCall.read": "wasRead",
+		"OWSGroupCallMessage.read": "wasRead",
 		"OWSDisappearingMessagesConfiguration.enabled": "isEnabled",
 		"OWSDisappearingMessagesConfiguration.newRecord": "isNewRecord"
 	},

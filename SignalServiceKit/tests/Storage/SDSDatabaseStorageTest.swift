@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -34,6 +34,25 @@ extension TSInteraction {
 
 class SDSDatabaseStorageTest: SSKBaseTestSwift {
 
+    // MARK: - Dependencies
+
+    private var tsAccountManager: TSAccountManager {
+        return TSAccountManager.shared()
+    }
+
+    // MARK: - Test Life Cycle
+
+    override func setUp() {
+        super.setUp()
+
+        // ensure local client has necessary "registered" state
+        let localE164Identifier = "+13235551234"
+        let localUUID = UUID()
+        tsAccountManager.registerForTests(withLocalNumber: localE164Identifier, uuid: localUUID)
+    }
+
+    // MARK: -
+
     func test_threads() {
         let storage = SDSDatabaseStorage.shared
 
@@ -54,9 +73,9 @@ class SDSDatabaseStorageTest: SSKBaseTestSwift {
         storage.write { transaction in
             XCTAssertEqual(1, TSThread.anyFetchAll(transaction: transaction).count)
 
-            groupThread = try! GroupManager.createGroupForTests(transaction: transaction,
-                                                                members: [contactAddress],
-                                                                name: "Test Group")
+            groupThread = try! GroupManager.createGroupForTests(members: [contactAddress],
+                                                                name: "Test Group",
+                                                                transaction: transaction)
 
             XCTAssertEqual(2, TSThread.anyFetchAll(transaction: transaction).count)
         }
@@ -79,7 +98,7 @@ class SDSDatabaseStorageTest: SSKBaseTestSwift {
                 return
             }
             XCTAssertNil(firstThread.messageDraft)
-            firstThread.update(withDraft: "Some draft", transaction: transaction)
+            firstThread.update(withDraft: MessageBody(text: "Some draft", ranges: .empty), transaction: transaction)
         }
         storage.read { transaction in
             let threads = TSThread.anyFetchAll(transaction: transaction)

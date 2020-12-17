@@ -1,11 +1,12 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
 // Separate iOS Frameworks from other imports.
+#import "NSItemProvider+TypedAccessors.h"
 #import "SAEScreenLockViewController.h"
 #import "ShareAppExtensionContext.h"
 #import <SignalCoreKit/NSObject+OWS.h>
@@ -21,6 +22,6 @@
 #import <SignalServiceKit/AppContext.h>
 #import <SignalServiceKit/AppReadiness.h>
 #import <SignalServiceKit/AppVersion.h>
+#import <SignalServiceKit/MessageSender.h>
 #import <SignalServiceKit/OWSMath.h>
-#import <SignalServiceKit/OWSMessageSender.h>
 #import <SignalServiceKit/TSAccountManager.h>

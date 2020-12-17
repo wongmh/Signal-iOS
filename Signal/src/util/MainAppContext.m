@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "MainAppContext.h"
@@ -266,6 +266,11 @@ NSString *const ReportedApplicationStateDidChangeNotification = @"ReportedApplic
     return UIApplication.sharedApplication.frontmostViewControllerIgnoringAlerts;
 }
 
+- (void)openSystemSettings
+{
+    [UIApplication.sharedApplication openSystemSettings];
+}
+
 - (nullable ActionSheetAction *)openSystemSettingsActionWithCompletion:(void (^_Nullable)(void))completion
 {
     return [[ActionSheetAction alloc] initWithTitle:CommonStrings.openSettingsButton
@@ -308,7 +313,7 @@ NSString *const ReportedApplicationStateDidChangeNotification = @"ReportedApplic
 
 - (CGRect)frame
 {
-    return UIApplication.sharedApplication.keyWindow.frame;
+    return self.mainWindow.frame;
 }
 
 - (UIInterfaceOrientation)interfaceOrientation
@@ -381,7 +386,7 @@ NSString *const ReportedApplicationStateDidChangeNotification = @"ReportedApplic
 - (NSString *)appSharedDataDirectoryPath
 {
     NSURL *groupContainerDirectoryURL =
-        [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:SignalApplicationGroup];
+        [[NSFileManager defaultManager] containerURLForSecurityApplicationGroupIdentifier:TSConstants.applicationGroup];
     return [groupContainerDirectoryURL path];
 }
 
@@ -396,7 +401,32 @@ NSString *const ReportedApplicationStateDidChangeNotification = @"ReportedApplic
 
 - (NSUserDefaults *)appUserDefaults
 {
-    return [[NSUserDefaults alloc] initWithSuiteName:SignalApplicationGroup];
+    return [[NSUserDefaults alloc] initWithSuiteName:TSConstants.applicationGroup];
+}
+
+- (BOOL)canPresentNotifications
+{
+    return YES;
+}
+
+- (BOOL)shouldProcessIncomingMessages
+{
+    return YES;
+}
+
+- (BOOL)hasUI
+{
+    return YES;
+}
+
+- (BOOL)didLastLaunchNotTerminate
+{
+    return SignalApp.sharedApp.didLastLaunchNotTerminate;
+}
+
+- (NSString *)debugLogsDirPath
+{
+    return DebugLogger.mainAppDebugLogsDirPath;
 }
 
 @end

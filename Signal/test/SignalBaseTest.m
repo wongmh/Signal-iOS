@@ -1,10 +1,12 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "SignalBaseTest.h"
 #import "Environment.h"
+#import <SignalMessaging/SignalMessaging-Swift.h>
 #import <SignalServiceKit/OWSPrimaryStorage.h>
+#import <SignalServiceKit/SDSDatabaseStorage+Objc.h>
 #import <SignalServiceKit/SignalServiceKit-Swift.h>
 #import <SignalServiceKit/TestAppContext.h>
 #import <YapDatabase/YapDatabaseConnection.h>
@@ -44,6 +46,8 @@ NS_ASSUME_NONNULL_BEGIN
     [MockSSKEnvironment activate];
     [MockEnvironment activate];
 
+    ((MockSSKEnvironment *)SSKEnvironment.shared).groupsV2 = [GroupsV2Impl new];
+
     self.ydbConnection = [SSKEnvironment.shared.primaryStorage newDatabaseConnection];
 }
 
@@ -61,7 +65,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 -(void)writeWithBlock:(void (^)(SDSAnyWriteTransaction *))block
 {
-    [SDSDatabaseStorage.shared writeWithBlock:block];
+    DatabaseStorageWrite(SDSDatabaseStorage.shared, block);
 }
 
 - (void)yapReadWithBlock:(void (^)(YapDatabaseReadTransaction *transaction))block

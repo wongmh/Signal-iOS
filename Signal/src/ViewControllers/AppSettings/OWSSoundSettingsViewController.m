@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSSoundSettingsViewController.h"
@@ -7,11 +7,12 @@
 #import <SignalMessaging/OWSAudioPlayer.h>
 #import <SignalMessaging/OWSSounds.h>
 #import <SignalMessaging/SignalMessaging-Swift.h>
+#import <SignalMessaging/Theme.h>
 #import <SignalMessaging/UIUtil.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
-@interface OWSSoundSettingsViewController ()
+@interface OWSSoundSettingsViewController () <UIDocumentPickerDelegate>
 
 @property (nonatomic) BOOL isDirty;
 
@@ -28,6 +29,8 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)viewDidLoad
 {
     [super viewDidLoad];
+
+    self.useThemeBackgroundColors = YES;
 
     [self setTitle:NSLocalizedString(@"SETTINGS_ITEM_NOTIFICATION_SOUND",
                        @"Label for settings view that allows user to change the notification sound.")];
@@ -80,12 +83,12 @@ NS_ASSUME_NONNULL_BEGIN
 
     NSArray<NSNumber *> *allSounds = [OWSSounds allNotificationSounds];
     for (NSNumber *nsValue in allSounds) {
-        OWSSound sound = (OWSSound)nsValue.intValue;
+        OWSSound sound = (OWSSound)nsValue.unsignedLongValue;
         OWSTableItem *item;
 
         NSString *soundLabelText = ^{
             NSString *baseName = [OWSSounds displayNameForSound:sound];
-            if (sound == OWSSound_Note) {
+            if (sound == OWSStandardSound_Note) {
                 NSString *noteStringFormat = NSLocalizedString(@"SETTINGS_AUDIO_DEFAULT_TONE_LABEL_FORMAT",
                     @"Format string for the default 'Note' sound. Embeds the system {{sound name}}.");
                 return [NSString stringWithFormat:noteStringFormat, baseName];
@@ -111,6 +114,24 @@ NS_ASSUME_NONNULL_BEGIN
         }
         [soundsSection addItem:item];
     }
+
+    NSString *addCustomSoundItemTitle = NSLocalizedString(@"NOTIFICATIONS_SECTION_SOUNDS_ADD_CUSTOM_SOUND",
+        @"Label for settings UI that allows user to add a new notification sound.");
+    OWSTableItem *addCustomSoundItem =
+        [OWSTableItem disclosureItemWithText:addCustomSoundItemTitle
+                                 actionBlock:^{
+                                     UIDocumentPickerViewController *picker = [[UIDocumentPickerViewController alloc]
+                                         initWithDocumentTypes:@[
+                                             @"com.microsoft.waveform-audio",
+                                             @"public.aifc-audio",
+                                             @"public.aiff-audio",
+                                             @"com.apple.coreaudio-format"
+                                         ]
+                                                        inMode:UIDocumentPickerModeImport];
+                                     picker.delegate = weakSelf;
+                                     [weakSelf presentViewController:picker animated:true completion:nil];
+                                 }];
+    [soundsSection addItem:addCustomSoundItem];
 
     [contents addSection:soundsSection];
 
@@ -154,6 +175,12 @@ NS_ASSUME_NONNULL_BEGIN
 
     [self.audioPlayer stop];
     [self.navigationController popViewControllerAnimated:YES];
+}
+
+- (void)documentPicker:(UIDocumentPickerViewController *)controller didPickDocumentsAtURLs:(NSArray<NSURL *> *)urls
+{
+    [OWSSounds importSoundsAtURLs:urls];
+    [self updateTableContents];
 }
 
 @end

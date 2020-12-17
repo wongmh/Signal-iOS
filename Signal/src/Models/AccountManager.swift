@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -28,11 +28,19 @@ public class AccountManager: NSObject {
     }
 
     private var tsAccountManager: TSAccountManager {
-        return TSAccountManager.sharedInstance()
+        return TSAccountManager.shared()
     }
 
     private var accountServiceClient: AccountServiceClient {
         return SSKEnvironment.shared.accountServiceClient
+    }
+
+    private var storageServiceManager: StorageServiceManagerProtocol {
+        return SSKEnvironment.shared.storageServiceManager
+    }
+
+    private var deviceService: DeviceService {
+        return DeviceService.shared
     }
 
     var pushRegistrationManager: PushRegistrationManager {
@@ -78,7 +86,7 @@ public class AccountManager: NSObject {
 
         return firstly { () -> Promise<String?> in
             guard !self.tsAccountManager.isRegistered else {
-                throw OWSErrorMakeAssertionError("requesting account verification when already registered")
+                throw OWSAssertionError("requesting account verification when already registered")
             }
 
             self.tsAccountManager.phoneNumberAwaitingVerification = recipientId
@@ -114,9 +122,9 @@ public class AccountManager: NSObject {
             switch error {
             case PushRegistrationError.pushNotSupported(description: let description):
                 Logger.warn("Push not supported: \(description)")
-            case let networkError as NetworkManagerError:
+            case is NetworkManagerError:
                 // not deployed to production yet.
-                if networkError.statusCode == 404, TSConstants.isUsingProductionService {
+                if error.httpStatusCode == 404 {
                     Logger.warn("404 while requesting preauthChallenge: \(error)")
                 } else {
                     fallthrough
@@ -128,7 +136,7 @@ public class AccountManager: NSObject {
         }
     }
 
-    func register(verificationCode: String, pin: String?) -> Promise<Void> {
+    func register(verificationCode: String, pin: String?, checkForAvailableTransfer: Bool) -> Promise<Void> {
         guard verificationCode.count > 0 else {
             let error = OWSErrorWithCodeDescription(.userError,
                                                     NSLocalizedString("REGISTRATION_ERROR_BLANK_VERIFICATION_CODE",
@@ -137,25 +145,33 @@ public class AccountManager: NSObject {
         }
 
         Logger.debug("registering with signal server")
-        let registrationPromise: Promise<Void> = firstly { () -> Promise<UUID?> in
-            self.registerForTextSecure(verificationCode: verificationCode, pin: pin)
-        }.then { (uuid: UUID?) -> Promise<Void> in
-            assert(!FeatureFlags.allowUUIDOnlyContacts || uuid != nil)
-            self.tsAccountManager.uuidAwaitingVerification = uuid
 
-            if !self.tsAccountManager.isReregistering {
-                self.databaseStorage.write { transaction in
+        return firstly {
+            self.registerForTextSecure(verificationCode: verificationCode, pin: pin, checkForAvailableTransfer: checkForAvailableTransfer)
+        }.then { response -> Promise<Void> in
+            assert(response.uuid != nil)
+            self.tsAccountManager.uuidAwaitingVerification = response.uuid
+
+            self.databaseStorage.write { transaction in
+                if !self.tsAccountManager.isReregistering {
                     // For new users, read receipts are on by default.
                     self.readReceiptManager.setAreReadReceiptsEnabled(true,
                                                                       transaction: transaction)
                 }
+
+                // If the user previously had a PIN, but we don't have record of it,
+                // mark them as pending restoration during onboarding. Reg lock users
+                // will have already restored their PIN by this point.
+                if response.hasPreviouslyUsedKBS, !KeyBackupService.hasMasterKey {
+                    KeyBackupService.recordPendingRestoration(transaction: transaction)
+                }
             }
 
-            return self.accountServiceClient.updateAttributes()
+            return self.accountServiceClient.updatePrimaryDeviceAccountAttributes()
         }.then {
             self.createPreKeys()
         }.done {
-            self.profileManager.fetchAndUpdateLocalUsersProfile()
+            self.profileManager.fetchLocalUsersProfile()
         }.then { _ -> Promise<Void> in
             return self.syncPushTokens().recover { (error) -> Promise<Void> in
                 switch error {
@@ -164,38 +180,70 @@ public class AccountManager: NSObject {
                     // - simulators, none of which support receiving push notifications
                     // - on iOS11 devices which have disabled "Allow Notifications" and disabled "Enable Background Refresh" in the system settings.
                     Logger.info("Recovered push registration error. Registering for manual message fetcher because push not supported: \(description)")
-                    return self.enableManualMessageFetching()
+                    self.tsAccountManager.setIsManualMessageFetchEnabled(true)
+                    return self.accountServiceClient.updatePrimaryDeviceAccountAttributes()
                 default:
                     throw error
                 }
             }
-        }.done { (_) -> Void in
+        }.done {
             self.completeRegistration()
+        }.then { _ -> Promise<Void> in
+            self.performInitialStorageServiceRestore()
         }
+    }
 
-        registrationPromise.retainUntilComplete()
+    func performInitialStorageServiceRestore() -> Promise<Void> {
+        BenchEventStart(title: "waiting for initial storage service restore", eventId: "initial-storage-service-restore")
+        return firstly {
+            self.storageServiceManager.restoreOrCreateManifestIfNecessary().asVoid()
+        }.done {
+            // In the case that we restored our profile from a previous registration,
+            // re-upload it so that the user does not need to refill in all the details.
+            // Right now the avatar will always be lost since we do not store avatars in
+            // the storage service.
 
-        return registrationPromise
+            if self.profileManager.hasProfileName || self.profileManager.localProfileAvatarData() != nil {
+                Logger.debug("restored local profile name. Uploading...")
+                // if we don't have a `localGivenName`, there's nothing to upload, and trying
+                // to upload would fail.
+
+                // Note we *don't* return this promise. There's no need to block registration on
+                // it completing, and if there are any errors, it's durable.
+                firstly {
+                    self.profileManager.reuploadLocalProfilePromise()
+                }.catch { error in
+                    Logger.error("error: \(error)")
+                }
+            } else {
+                Logger.debug("no local profile name restored.")
+            }
+
+            BenchEventComplete(eventId: "initial-storage-service-restore")
+        }.timeout(seconds: 60)
     }
 
     func completeSecondaryLinking(provisionMessage: ProvisionMessage, deviceName: String) -> Promise<Void> {
-        identityManager.generateNewIdentityKey()
         tsAccountManager.phoneNumberAwaitingVerification = provisionMessage.phoneNumber
         tsAccountManager.uuidAwaitingVerification = provisionMessage.uuid
 
         let serverAuthToken = generateServerAuthToken()
 
-        return firstly {
-            accountServiceClient.verifySecondaryDevice(deviceName: deviceName,
-                                                       verificationCode: provisionMessage.provisioningCode,
-                                                       phoneNumber: provisionMessage.phoneNumber,
-                                                       authKey: serverAuthToken)
+        return firstly { () throws -> Promise<UInt32> in
+            let encryptedDeviceName = try DeviceNames.encryptDeviceName(plaintext: deviceName,
+                                                                        identityKeyPair: provisionMessage.identityKeyPair)
+
+            return accountServiceClient.verifySecondaryDevice(verificationCode: provisionMessage.provisioningCode,
+                                                              phoneNumber: provisionMessage.phoneNumber,
+                                                              authKey: serverAuthToken,
+                                                              encryptedDeviceName: encryptedDeviceName)
         }.done { (deviceId: UInt32) in
             self.databaseStorage.write { transaction in
                 self.identityManager.storeIdentityKeyPair(provisionMessage.identityKeyPair,
                                                           transaction: transaction)
 
                 self.profileManager.setLocalProfileKey(provisionMessage.profileKey,
+                                                       wasLocallyInitiated: false,
                                                        transaction: transaction)
 
                 if let areReadReceiptsEnabled = provisionMessage.areReadReceiptsEnabled {
@@ -210,32 +258,51 @@ public class AccountManager: NSObject {
                 self.tsAccountManager.setStoredDeviceName(deviceName,
                                                           transaction: transaction)
             }
-        }.then {
-            self.accountServiceClient.updateAttributes()
         }.then { _ -> Promise<Void> in
             self.createPreKeys()
         }.then { _ -> Promise<Void> in
-            return self.syncPushTokens().recover { (error) -> Promise<Void> in
+            return self.syncPushTokens().recover { error in
                 switch error {
                 case PushRegistrationError.pushNotSupported(let description):
                     // This can happen with:
                     // - simulators, none of which support receiving push notifications
                     // - on iOS11 devices which have disabled "Allow Notifications" and disabled "Enable Background Refresh" in the system settings.
-                    Logger.info("Recovered push registration error. Registering for manual message fetcher because push not supported: \(description)")
-                    return self.enableManualMessageFetching()
+                    Logger.info("Recovered push registration error. Leaving as manual message fetcher because push not supported: \(description)")
+
+                    // no-op since secondary devices already start as manual message fetchers
+                    return
                 default:
                     throw error
                 }
             }
-        }.then { _ -> Promise<Void> in
+        }.then(on: .global()) {
+            self.deviceService.updateSecondaryDeviceCapabilities()
+        }.done {
             self.completeRegistration()
+        }.then { _ -> Promise<Void> in
+            BenchEventStart(title: "waiting for initial storage service restore", eventId: "initial-storage-service-restore")
+
+            self.databaseStorage.asyncWrite { transaction in
+                OWSSyncManager.shared().sendKeysSyncRequestMessage(transaction: transaction)
+            }
+
+            let storageServiceRestorePromise = firstly {
+                NotificationCenter.default.observe(once: .OWSSyncManagerKeysSyncDidComplete).asVoid()
+            }.then {
+                StorageServiceManager.shared.restoreOrCreateManifestIfNecessary().asVoid()
+            }.ensure {
+                BenchEventComplete(eventId: "initial-storage-service-restore")
+            }.timeout(seconds: 60)
 
             // we wait a bit for the initial syncs to come in before proceeding to the inbox
             // because we want to present the inbox already populated with groups and contacts,
             // rather than have the trickle in moments later.
+            // TODO: Eventually, we can rely entirely on the storage service and will no longer
+            // need to do any initial sync beyond the "keys" sync. For now, we try and do both
+            // operations in parallel.
             BenchEventStart(title: "waiting for initial contact and group sync", eventId: "initial-contact-sync")
 
-            return firstly {
+            let initialSyncMessagePromise = firstly {
                 OWSSyncManager.shared().sendInitialSyncRequestsAwaitingCreatedThreadOrdering(timeoutSeconds: 60)
             }.done(on: .global() ) { orderedThreadIds in
                 Logger.debug("orderedThreadIds: \(orderedThreadIds)")
@@ -247,8 +314,7 @@ public class AccountManager: NSObject {
                             owsFailDebug("thread was unexpectedly nil")
                             continue
                         }
-                        let message = TSInfoMessage(timestamp: NSDate.ows_millisecondTimeStamp(),
-                                                    in: thread,
+                        let message = TSInfoMessage(thread: thread,
                                                     messageType: .syncedThread)
                         message.anyInsert(transaction: transaction)
                     }
@@ -256,10 +322,17 @@ public class AccountManager: NSObject {
             }.ensure {
                 BenchEventComplete(eventId: "initial-contact-sync")
             }
+
+            return when(fulfilled: [storageServiceRestorePromise, initialSyncMessagePromise])
         }
     }
 
-    private func registerForTextSecure(verificationCode: String, pin: String?) -> Promise<UUID?> {
+    private struct RegistrationResponse {
+        var uuid: UUID?
+        var hasPreviouslyUsedKBS = false
+    }
+
+    private func registerForTextSecure(verificationCode: String, pin: String?, checkForAvailableTransfer: Bool) -> Promise<RegistrationResponse> {
         let serverAuthToken = generateServerAuthToken()
 
         return Promise<Any?> { resolver in
@@ -270,12 +343,13 @@ public class AccountManager: NSObject {
             let request = OWSRequestFactory.verifyPrimaryDeviceRequest(verificationCode: verificationCode,
                                                                        phoneNumber: phoneNumber,
                                                                        authKey: serverAuthToken,
-                                                                       pin: pin)
+                                                                       pin: pin,
+                                                                       checkForAvailableTransfer: checkForAvailableTransfer)
 
             tsAccountManager.verifyAccount(with: request,
                                            success: resolver.fulfill,
                                            failure: resolver.reject)
-        }.map(on: .global()) { responseObject throws -> UUID? in
+        }.map(on: .global()) { responseObject throws -> RegistrationResponse in
             self.databaseStorage.write { transaction in
                 self.tsAccountManager.setStoredServerAuthToken(serverAuthToken,
                                                                deviceId: OWSDevicePrimaryDeviceId,
@@ -283,7 +357,8 @@ public class AccountManager: NSObject {
             }
 
             guard let responseObject = responseObject else {
-                return nil
+                owsFailDebug("unexpectedly missing responseObject")
+                throw OWSErrorMakeUnableToProcessServerResponseError()
             }
 
             guard let params = ParamParser(responseObject: responseObject) else {
@@ -291,17 +366,20 @@ public class AccountManager: NSObject {
                 throw OWSErrorMakeUnableToProcessServerResponseError()
             }
 
+            var registrationResponse = RegistrationResponse()
+
             // TODO UUID: this UUID param should be non-optional when the production service is updated
-            guard let uuidString: String = try params.optional(key: "uuid") else {
-                return nil
+            if let uuidString: String = try params.optional(key: "uuid") {
+                guard let uuid = UUID(uuidString: uuidString) else {
+                    owsFailDebug("invalid uuidString: \(uuidString)")
+                    throw OWSErrorMakeUnableToProcessServerResponseError()
+                }
+                registrationResponse.uuid = uuid
             }
 
-            guard let uuid = UUID(uuidString: uuidString) else {
-                owsFailDebug("invalid uuidString: \(uuidString)")
-                throw OWSErrorMakeUnableToProcessServerResponseError()
-            }
+            registrationResponse.hasPreviouslyUsedKBS = try params.optional(key: "storageCapable") ?? false
 
-            return uuid
+            return registrationResponse
         }
     }
 
@@ -323,12 +401,12 @@ public class AccountManager: NSObject {
             self.identityManager.storeIdentityKeyPair(identityKeyPair,
                                                       transaction: transaction)
             self.profileManager.setLocalProfileKey(profileKey,
+                                                   wasLocallyInitiated: false,
                                                    transaction: transaction)
             self.tsAccountManager.setStoredServerAuthToken(serverAuthToken,
                                                            deviceId: 1,
                                                            transaction: transaction)
         }
-        OWS2FAManager.shared().mark2FAAsEnabled(withPin: "12341234")
         completeRegistration()
     }
 
@@ -362,11 +440,6 @@ public class AccountManager: NSObject {
         }
     }
 
-    func enableManualMessageFetching() -> Promise<Void> {
-        tsAccountManager.setIsManualMessageFetchEnabled(true)
-        return Promise(tsAccountManager.performUpdateAccountAttributes()).asVoid()
-    }
-
     // MARK: Turn Server
 
     func getTurnServerInfo() -> Promise<TurnServerInfo> {
@@ -396,11 +469,8 @@ public class AccountManager: NSObject {
             _ = self.ensureUuid().catch { error in
                 // Until we're in a UUID-only world, don't require a
                 // local UUID.
-                if FeatureFlags.allowUUIDOnlyContacts {
-                    owsFailDebug("error: \(error)")
-                }
-                Logger.warn("error: \(error)")
-            }.retainUntilComplete()
+                owsFailDebug("error: \(error)")
+            }
         }
     }
 

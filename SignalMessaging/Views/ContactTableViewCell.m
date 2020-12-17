@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "ContactTableViewCell.h"
@@ -8,6 +8,7 @@
 #import "UIFont+OWS.h"
 #import "UIView+OWS.h"
 #import <SignalServiceKit/SignalAccount.h>
+#import <SignalServiceKit/SignalServiceKit-Swift.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -15,15 +16,32 @@ NS_ASSUME_NONNULL_BEGIN
 
 @property (nonatomic) ContactCellView *cellView;
 
+@property (nonatomic, readonly) BOOL allowUserInteraction;
+
 @end
 
 #pragma mark -
 
 @implementation ContactTableViewCell
 
++ (instancetype)new
+{
+    return [[ContactTableViewCell alloc] initWithStyle:UITableViewCellStyleDefault
+                                       reuseIdentifier:nil
+                                  allowUserInteraction:false];
+}
+
 - (instancetype)initWithStyle:(UITableViewCellStyle)style reuseIdentifier:(nullable NSString *)reuseIdentifier
 {
+    return [self initWithStyle:style reuseIdentifier:reuseIdentifier allowUserInteraction:false];
+}
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style
+              reuseIdentifier:(nullable NSString *)reuseIdentifier
+         allowUserInteraction:(BOOL)allowUserInteraction
+{
     if (self = [super initWithStyle:style reuseIdentifier:reuseIdentifier]) {
+        _allowUserInteraction = allowUserInteraction;
         [self configure];
     }
     return self;
@@ -49,7 +67,7 @@ NS_ASSUME_NONNULL_BEGIN
     self.cellView = [ContactCellView new];
     [self.contentView addSubview:self.cellView];
     [self.cellView autoPinEdgesToSuperviewMargins];
-    self.cellView.userInteractionEnabled = NO;
+    self.cellView.userInteractionEnabled = self.allowUserInteraction;
 }
 
 - (void)configureWithRecipientAddress:(SignalServiceAddress *)address
@@ -89,6 +107,36 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)setAttributedSubtitle:(nullable NSAttributedString *)attributedSubtitle
 {
     [self.cellView setAttributedSubtitle:attributedSubtitle];
+}
+
+- (void)setCustomName:(nullable NSString *)customName
+{
+    [self.cellView setCustomName:customName.asAttributedString];
+}
+
+- (void)setCustomNameAttributed:(nullable NSAttributedString *)customName
+{
+    [self.cellView setCustomName:customName];
+}
+
+- (void)setCustomAvatar:(nullable UIImage *)customAvatar
+{
+    [self.cellView setCustomAvatar:customAvatar];
+}
+
+- (void)setUseSmallAvatars
+{
+    self.cellView.useSmallAvatars = YES;
+}
+
+- (BOOL)forceDarkAppearance
+{
+    return self.cellView.forceDarkAppearance;
+}
+
+- (void)setForceDarkAppearance:(BOOL)forceDarkAppearance
+{
+    self.cellView.forceDarkAppearance = forceDarkAppearance;
 }
 
 - (void)prepareForReuse

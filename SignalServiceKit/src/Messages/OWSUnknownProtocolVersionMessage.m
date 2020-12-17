@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSUnknownProtocolVersionMessage.h"
@@ -29,12 +29,11 @@ NSUInteger const OWSUnknownProtocolVersionMessageSchemaVersion = 1;
     return SSKEnvironment.shared.contactsManager;
 }
 
-- (instancetype)initWithTimestamp:(uint64_t)timestamp
-                           thread:(TSThread *)thread
-                           sender:(nullable SignalServiceAddress *)sender
-                  protocolVersion:(NSUInteger)protocolVersion
+- (instancetype)initWithThread:(TSThread *)thread
+                        sender:(nullable SignalServiceAddress *)sender
+               protocolVersion:(NSUInteger)protocolVersion
 {
-    self = [super initWithTimestamp:timestamp inThread:thread messageType:TSInfoMessageUnknownProtocolVersion];
+    self = [super initWithThread:thread messageType:TSInfoMessageUnknownProtocolVersion];
 
     if (self) {
         OWSAssertDebug(sender.isValid);
@@ -47,7 +46,7 @@ NSUInteger const OWSUnknownProtocolVersionMessageSchemaVersion = 1;
     return self;
 }
 
-- (instancetype)initWithCoder:(NSCoder *)coder
+- (nullable instancetype)initWithCoder:(NSCoder *)coder
 {
     self = [super initWithCoder:coder];
     if (!self) {
@@ -80,6 +79,7 @@ NSUInteger const OWSUnknownProtocolVersionMessageSchemaVersion = 1;
                   uniqueThreadId:(NSString *)uniqueThreadId
                    attachmentIds:(NSArray<NSString *> *)attachmentIds
                             body:(nullable NSString *)body
+                      bodyRanges:(nullable MessageBodyRanges *)bodyRanges
                     contactShare:(nullable OWSContact *)contactShare
                  expireStartedAt:(uint64_t)expireStartedAt
                        expiresAt:(uint64_t)expiresAt
@@ -90,7 +90,9 @@ NSUInteger const OWSUnknownProtocolVersionMessageSchemaVersion = 1;
                   messageSticker:(nullable MessageSticker *)messageSticker
                    quotedMessage:(nullable TSQuotedMessage *)quotedMessage
     storedShouldStartExpireTimer:(BOOL)storedShouldStartExpireTimer
+              wasRemotelyDeleted:(BOOL)wasRemotelyDeleted
                    customMessage:(nullable NSString *)customMessage
+             infoMessageUserInfo:(nullable NSDictionary<InfoMessageUserInfoKey, id> *)infoMessageUserInfo
                      messageType:(TSInfoMessageType)messageType
                             read:(BOOL)read
              unregisteredAddress:(nullable SignalServiceAddress *)unregisteredAddress
@@ -105,6 +107,7 @@ NSUInteger const OWSUnknownProtocolVersionMessageSchemaVersion = 1;
                     uniqueThreadId:uniqueThreadId
                      attachmentIds:attachmentIds
                               body:body
+                        bodyRanges:bodyRanges
                       contactShare:contactShare
                    expireStartedAt:expireStartedAt
                          expiresAt:expiresAt
@@ -115,7 +118,9 @@ NSUInteger const OWSUnknownProtocolVersionMessageSchemaVersion = 1;
                     messageSticker:messageSticker
                      quotedMessage:quotedMessage
       storedShouldStartExpireTimer:storedShouldStartExpireTimer
+                wasRemotelyDeleted:wasRemotelyDeleted
                      customMessage:customMessage
+               infoMessageUserInfo:infoMessageUserInfo
                        messageType:messageType
                               read:read
                unregisteredAddress:unregisteredAddress];

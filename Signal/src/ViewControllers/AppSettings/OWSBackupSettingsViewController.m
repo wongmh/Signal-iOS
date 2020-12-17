@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSBackupSettingsViewController.h"
@@ -26,22 +26,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 @implementation OWSBackupSettingsViewController
 
-#pragma mark - Dependencies
-
-- (OWSBackup *)backup
-{
-    OWSAssertDebug(AppEnvironment.shared.backup);
-
-    return AppEnvironment.shared.backup;
-}
-
-#pragma mark -
-
 - (void)viewDidLoad
 {
     [super viewDidLoad];
 
     self.title = NSLocalizedString(@"SETTINGS_BACKUP", @"Label for the backup view in app settings.");
+
+    self.useThemeBackgroundColors = YES;
 
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(backupStateDidChange:)
@@ -71,19 +62,19 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)updateICloudStatus
 {
     __weak OWSBackupSettingsViewController *weakSelf = self;
-    [[self.backup ensureCloudKitAccess]
-            .then(^{
-                OWSAssertIsOnMainThread();
+    [self.backup ensureCloudKitAccess]
+        .then(^{
+            OWSAssertIsOnMainThread();
 
-                weakSelf.iCloudError = nil;
-                [weakSelf updateTableContents];
-            })
-            .catch(^(NSError *error) {
-                OWSAssertIsOnMainThread();
+            weakSelf.iCloudError = nil;
+            [weakSelf updateTableContents];
+        })
+        .catch(^(NSError *error) {
+            OWSAssertIsOnMainThread();
 
-                weakSelf.iCloudError = error;
-                [weakSelf updateTableContents];
-            }) retainUntilComplete];
+            weakSelf.iCloudError = error;
+            [weakSelf updateTableContents];
+        });
 }
 
 #pragma mark - Table Contents
@@ -92,7 +83,7 @@ NS_ASSUME_NONNULL_BEGIN
 {
     OWSTableContents *contents = [OWSTableContents new];
 
-    BOOL isBackupEnabled = [OWSBackup.sharedManager isBackupEnabled];
+    BOOL isBackupEnabled = [OWSBackup.shared isBackupEnabled];
 
     if (self.iCloudError) {
         OWSTableSection *iCloudSection = [OWSTableSection new];
@@ -102,8 +93,11 @@ NS_ASSUME_NONNULL_BEGIN
             addItem:[OWSTableItem
                         longDisclosureItemWithText:[OWSBackupAPI errorMessageForCloudKitAccessError:self.iCloudError]
                                        actionBlock:^{
-                                           [[UIApplication sharedApplication]
-                                               openURL:[NSURL URLWithString:UIApplicationOpenSettingsURLString]];
+                                           [UIApplication.sharedApplication
+                                                         openURL:[NSURL
+                                                                     URLWithString:UIApplicationOpenSettingsURLString]
+                                                         options:@{}
+                                               completionHandler:nil];
                                        }]];
         [contents addSection:iCloudSection];
     }
@@ -116,9 +110,7 @@ NS_ASSUME_NONNULL_BEGIN
         addItem:[OWSTableItem switchItemWithText:
                                   NSLocalizedString(@"SETTINGS_BACKUP_ENABLING_SWITCH",
                                       @"Label for switch in settings that controls whether or not backup is enabled.")
-                                       isOnBlock:^{
-                                           return [OWSBackup.sharedManager isBackupEnabled];
-                                       }
+                                       isOnBlock:^{ return [OWSBackup.shared isBackupEnabled]; }
                                           target:self
                                         selector:@selector(isBackupEnabledDidChange:)]];
     [contents addSection:enableSection];
@@ -131,17 +123,17 @@ NS_ASSUME_NONNULL_BEGIN
             addItem:[OWSTableItem
                         labelItemWithText:NSLocalizedString(@"SETTINGS_BACKUP_STATUS",
                                               @"Label for backup status row in the in the backup settings view.")
-                            accessoryText:NSStringForBackupExportState(OWSBackup.sharedManager.backupExportState)]];
-        if (OWSBackup.sharedManager.backupExportState == OWSBackupState_InProgress) {
-            if (OWSBackup.sharedManager.backupExportDescription) {
+                            accessoryText:NSStringForBackupExportState(OWSBackup.shared.backupExportState)]];
+        if (OWSBackup.shared.backupExportState == OWSBackupState_InProgress) {
+            if (OWSBackup.shared.backupExportDescription) {
                 [progressSection
                     addItem:[OWSTableItem
                                 labelItemWithText:NSLocalizedString(@"SETTINGS_BACKUP_PHASE",
                                                       @"Label for phase row in the in the backup settings view.")
-                                    accessoryText:OWSBackup.sharedManager.backupExportDescription]];
-                if (OWSBackup.sharedManager.backupExportProgress) {
+                                    accessoryText:OWSBackup.shared.backupExportDescription]];
+                if (OWSBackup.shared.backupExportProgress) {
                     NSUInteger progressPercent
-                        = (NSUInteger)round(OWSBackup.sharedManager.backupExportProgress.floatValue * 100);
+                        = (NSUInteger)round(OWSBackup.shared.backupExportProgress.floatValue * 100);
                     NSNumberFormatter *numberFormatter = [[NSNumberFormatter alloc] init];
                     [numberFormatter setNumberStyle:NSNumberFormatterPercentStyle];
                     [numberFormatter setMaximumFractionDigits:0];
@@ -156,7 +148,7 @@ NS_ASSUME_NONNULL_BEGIN
             }
         }
 
-        switch (OWSBackup.sharedManager.backupExportState) {
+        switch (OWSBackup.shared.backupExportState) {
             case OWSBackupState_Idle:
             case OWSBackupState_Failed:
             case OWSBackupState_Succeeded:
@@ -164,18 +156,14 @@ NS_ASSUME_NONNULL_BEGIN
                     addItem:[OWSTableItem disclosureItemWithText:
                                               NSLocalizedString(@"SETTINGS_BACKUP_BACKUP_NOW",
                                                   @"Label for 'backup now' button in the backup settings view.")
-                                                     actionBlock:^{
-                                                         [OWSBackup.sharedManager tryToExportBackup];
-                                                     }]];
+                                                     actionBlock:^{ [OWSBackup.shared tryToExportBackup]; }]];
                 break;
             case OWSBackupState_InProgress:
                 [progressSection
                     addItem:[OWSTableItem disclosureItemWithText:
                                               NSLocalizedString(@"SETTINGS_BACKUP_CANCEL_BACKUP",
                                                   @"Label for 'cancel backup' button in the backup settings view.")
-                                                     actionBlock:^{
-                                                         [OWSBackup.sharedManager cancelExportBackup];
-                                                     }]];
+                                                     actionBlock:^{ [OWSBackup.shared cancelExportBackup]; }]];
                 break;
         }
 
@@ -187,7 +175,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)isBackupEnabledDidChange:(UISwitch *)sender
 {
-    [OWSBackup.sharedManager setIsBackupEnabled:sender.isOn];
+    [OWSBackup.shared setIsBackupEnabled:sender.isOn];
 
     [self updateTableContents];
 }

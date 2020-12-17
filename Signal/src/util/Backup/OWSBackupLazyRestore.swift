@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -16,7 +16,7 @@ public class BackupLazyRestore: NSObject {
     }
 
     private var tsAccountManager: TSAccountManager {
-        return TSAccountManager.sharedInstance()
+        return TSAccountManager.shared()
     }
 
     var databaseStorage: SDSDatabaseStorage {
@@ -34,20 +34,17 @@ public class BackupLazyRestore: NSObject {
 
         SwiftSingletons.register(self)
 
-        AppReadiness.runNowOrWhenAppDidBecomeReady {
+        AppReadiness.runNowOrWhenAppDidBecomeReadyPolite {
             self.runIfNecessary()
         }
 
         NotificationCenter.default.addObserver(forName: .OWSApplicationDidBecomeActive, object: nil, queue: nil) { _ in
             self.runIfNecessary()
         }
-        NotificationCenter.default.addObserver(forName: .RegistrationStateDidChange, object: nil, queue: nil) { _ in
+        NotificationCenter.default.addObserver(forName: .registrationStateDidChange, object: nil, queue: nil) { _ in
             self.runIfNecessary()
         }
-        NotificationCenter.default.addObserver(forName: .reachabilityChanged, object: nil, queue: nil) { _ in
-            self.runIfNecessary()
-        }
-        NotificationCenter.default.addObserver(forName: .reachabilityChanged, object: nil, queue: nil) { _ in
+        NotificationCenter.default.addObserver(forName: SSKReachability.owsReachabilityDidChange, object: nil, queue: nil) { _ in
             self.runIfNecessary()
         }
         NotificationCenter.default.addObserver(forName: NSNotification.Name(NSNotificationNameBackupStateDidChange), object: nil, queue: nil) { _ in
@@ -80,7 +77,7 @@ public class BackupLazyRestore: NSObject {
         guard !CurrentAppContext().isRunningTests else {
             return
         }
-        guard AppReadiness.isAppReady() else {
+        guard AppReadiness.isAppReady else {
             return
         }
         guard CurrentAppContext().isMainAppAndActive else {
@@ -162,7 +159,7 @@ public class BackupLazyRestore: NSObject {
 
                 // Continue trying to restore the other attachments.
                 self.tryToRestoreNextAttachment(attachmentIds: attachmentIdsCopy, errorCount: errorCount + 1, backupIO: backupIO)
-            }.retainUntilComplete()
+            }
     }
 
     private func complete(errorCount: UInt) {

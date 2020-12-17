@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSContact.h"
@@ -299,6 +299,9 @@ NSString *NSStringForContactAddressType(OWSContactAddressType value)
     if (self.displayName.length > 0) {
         [result appendFormat:@"displayName: %@, ", self.displayName];
     }
+    if (self.displayName.length > 0) {
+        [result appendFormat:@"nickname: %@, ", self.nickname];
+    }
 
     [result appendString:@"]"];
     return result;
@@ -315,15 +318,35 @@ NSString *NSStringForContactAddressType(OWSContactAddressType value)
     return _displayName;
 }
 
+- (NSPersonNameComponents *)components
+{
+    NSPersonNameComponents *components = [NSPersonNameComponents new];
+    components.givenName = self.givenName;
+    components.familyName = self.familyName;
+    components.middleName = self.middleName;
+    components.namePrefix = self.namePrefix;
+    components.nameSuffix = self.nameSuffix;
+    components.nickname   = self.nickname;
+    return components;
+}
+
 - (void)ensureDisplayName
 {
     if (_displayName.length < 1) {
         CNContact *_Nullable cnContact = [self systemContactForName];
-        _displayName = [CNContactFormatter stringFromContact:cnContact style:CNContactFormatterStyleFullName];
+        if (cnContact.nickname.length > 0) {
+            _displayName = cnContact.nickname.ows_stripped;
+        } else {
+            _displayName = [CNContactFormatter stringFromContact:cnContact style:CNContactFormatterStyleFullName];
+        }
     }
     if (_displayName.length < 1) {
-        // Fall back to using the organization name.
-        _displayName = self.organizationName;
+        if (_nickname.length > 0) {
+            _displayName = self.nickname;
+        } else {
+            // Fall back to using the organization name.
+            _displayName = self.organizationName;
+        }
     }
 }
 
@@ -342,6 +365,7 @@ NSString *NSStringForContactAddressType(OWSContactAddressType value)
     systemContact.familyName = self.familyName.ows_stripped;
     systemContact.namePrefix = self.namePrefix.ows_stripped;
     systemContact.nameSuffix = self.nameSuffix.ows_stripped;
+    systemContact.nickname = self.nickname.ows_stripped;
     // We don't need to set display name, it's implicit for system contacts.
     systemContact.organizationName = self.organizationName.ows_stripped;
     return systemContact;
@@ -351,7 +375,7 @@ NSString *NSStringForContactAddressType(OWSContactAddressType value)
 {
     return (self.givenName.ows_stripped.length > 0 || self.middleName.ows_stripped.length > 0
         || self.familyName.ows_stripped.length > 0 || self.namePrefix.ows_stripped.length > 0
-        || self.nameSuffix.ows_stripped.length > 0);
+            || self.nameSuffix.ows_stripped.length > 0 || self.nickname.ows_stripped.length > 0);
 }
 
 @end
@@ -583,6 +607,7 @@ NSString *NSStringForContactAddressType(OWSContactAddressType value)
     contactName.familyName = systemContact.familyName.ows_stripped;
     contactName.namePrefix = systemContact.namePrefix.ows_stripped;
     contactName.nameSuffix = systemContact.nameSuffix.ows_stripped;
+    contactName.nickname   = systemContact.nickname.ows_stripped;
     contactName.organizationName = systemContact.organizationName.ows_stripped;
     [contactName ensureDisplayName];
     contact.name = contactName;

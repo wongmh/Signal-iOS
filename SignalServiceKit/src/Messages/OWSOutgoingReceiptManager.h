@@ -1,9 +1,10 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class SDSAnyWriteTransaction;
 @class SDSKeyValueStore;
 @class SSKProtoEnvelope;
 @class SignalServiceAddress;
@@ -13,13 +14,16 @@ NS_ASSUME_NONNULL_BEGIN
 + (SDSKeyValueStore *)deliveryReceiptStore;
 + (SDSKeyValueStore *)readReceiptStore;
 
-+ (instancetype)sharedManager;
++ (instancetype)shared;
 
 - (instancetype)init NS_DESIGNATED_INITIALIZER;
 
-- (void)enqueueDeliveryReceiptForEnvelope:(SSKProtoEnvelope *)envelope;
+- (void)enqueueDeliveryReceiptForEnvelope:(SSKProtoEnvelope *)envelope
+                              transaction:(SDSAnyWriteTransaction *)transaction;
 
-- (void)enqueueReadReceiptForAddress:(SignalServiceAddress *)messageAuthorAddress timestamp:(uint64_t)timestamp;
+- (void)enqueueReadReceiptForAddress:(SignalServiceAddress *)messageAuthorAddress
+                           timestamp:(uint64_t)timestamp
+                         transaction:(SDSAnyWriteTransaction *)transaction;
 
 @end
 

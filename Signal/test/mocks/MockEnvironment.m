@@ -1,10 +1,11 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "MockEnvironment.h"
 #import "OWSBackup.h"
 #import "OWSWindowManager.h"
+#import <SignalMessaging/ContactsViewHelper.h>
 #import <SignalMessaging/OWSPreferences.h>
 #import <SignalMessaging/OWSSounds.h>
 #import <SignalMessaging/SignalMessaging-Swift.h>
@@ -15,7 +16,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 + (MockEnvironment *)activate
 {
-    MockEnvironment *instance = [MockEnvironment new];
+    MockEnvironment *instance = [[MockEnvironment alloc] init];
     [self setShared:instance];
     return instance;
 }
@@ -31,6 +32,7 @@ NS_ASSUME_NONNULL_BEGIN
     OWSSounds *sounds = [OWSSounds new];
     id<OWSProximityMonitoringManager> proximityMonitoringManager = [OWSProximityMonitoringManagerImpl new];
     OWSWindowManager *windowManager = [[OWSWindowManager alloc] initDefault];
+    ContactsViewHelper *contactsViewHelper = [ContactsViewHelper new];
 
     self = [super initWithAudioSession:audioSession
            incomingContactSyncJobQueue:incomingContactSyncJobQueue
@@ -39,7 +41,8 @@ NS_ASSUME_NONNULL_BEGIN
                            preferences:preferences
             proximityMonitoringManager:proximityMonitoringManager
                                 sounds:sounds
-                         windowManager:windowManager];
+                         windowManager:windowManager
+                    contactsViewHelper:contactsViewHelper];
 
     OWSAssertDebug(self);
     return self;

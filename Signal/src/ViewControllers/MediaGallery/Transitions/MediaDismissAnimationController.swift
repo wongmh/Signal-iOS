@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -199,7 +199,7 @@ extension MediaDismissAnimationController: UIViewControllerAnimatedTransitioning
             self.pendingCompletion = completion
         } else {
             Logger.verbose("ran completion simultaneously for non-interactive transition")
-            completion().retainUntilComplete()
+            completion()
         }
 
         fromContextProvider.mediaWillDismiss(fromContext: fromMediaContext)
@@ -221,12 +221,15 @@ extension MediaDismissAnimationController: UIViewControllerAnimatedTransitioning
             Logger.verbose("ran pendingCompletion after fadeout")
             self.pendingCompletion = nil
             return pendingCompletion()
-        }.retainUntilComplete()
+        }
     }
 }
 
 extension MediaDismissAnimationController: InteractiveDismissDelegate {
-    func interactiveDismiss(_ interactiveDismiss: MediaInteractiveDismiss, didChangeTouchOffset offset: CGPoint) {
+    func interactiveDismissDidBegin(_ interactiveDismiss: UIPercentDrivenInteractiveTransition) {
+    }
+
+    func interactiveDismissUpdate(_ interactiveDismiss: UIPercentDrivenInteractiveTransition, didChangeTouchOffset offset: CGPoint) {
         guard let transitionView = transitionView else {
             // transition hasn't started yet.
             return
@@ -240,11 +243,14 @@ extension MediaDismissAnimationController: InteractiveDismissDelegate {
         transitionView.center = fromMediaFrame.offsetBy(dx: offset.x, dy: offset.y).center
     }
 
-    func interactiveDismissDidFinish(_ interactiveDismiss: MediaInteractiveDismiss) {
+    func interactiveDismissDidFinish(_ interactiveDismiss: UIPercentDrivenInteractiveTransition) {
         if let pendingCompletion = pendingCompletion {
             Logger.verbose("interactive gesture started pendingCompletion during fadeout")
             self.pendingCompletion = nil
-            pendingCompletion().retainUntilComplete()
+            _ = pendingCompletion()
         }
+    }
+    
+    func interactiveDismissDidCancel(_ interactiveDismiss: UIPercentDrivenInteractiveTransition) {
     }
 }

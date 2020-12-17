@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -210,7 +210,7 @@ class GifPickerCell: UICollectionViewCell {
             let imageView = YYAnimatedImageView()
             self.imageView = imageView
             self.contentView.addSubview(imageView)
-            imageView.ows_autoPinToSuperviewEdges()
+            imageView.autoPinEdgesToSuperviewEdges()
         }
         guard let imageView = imageView else {
             owsFailDebug("missing imageview.")
@@ -234,7 +234,7 @@ class GifPickerCell: UICollectionViewCell {
             activityIndicator.autoSetDimension(.height, toSize: 30)
             activityIndicator.layer.cornerRadius = 3
             activityIndicator.layer.shadowColor = UIColor.black.cgColor
-            activityIndicator.layer.shadowOffset = CGSize(width: 1, height: 1)
+            activityIndicator.layer.shadowOffset = CGSize(square: 1)
             activityIndicator.layer.shadowOpacity = 0.7
             activityIndicator.layer.shadowRadius = 1.0
         } else if !isSelected, let activityIndicator = self.activityIndicator {

@@ -1,10 +1,10 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
-#import "OWSDisappearingMessagesJob.h"
 #import "OWSDisappearingMessagesConfiguration.h"
 #import "OWSDisappearingMessagesFinder.h"
+#import "OWSDisappearingMessagesJob.h"
 #import "SSKBaseTestObjC.h"
 #import "TSContactThread.h"
 #import "TSIncomingMessage.h"
@@ -43,17 +43,12 @@ NS_ASSUME_NONNULL_BEGIN
               expiresInSeconds:(uint32_t)expiresInSeconds
                expireStartedAt:(uint64_t)expireStartedAt
 {
-    return [[TSMessage alloc] initMessageWithTimestamp:1
-                                              inThread:self.thread
-                                           messageBody:body
-                                         attachmentIds:@[]
-                                      expiresInSeconds:expiresInSeconds
-                                       expireStartedAt:expireStartedAt
-                                         quotedMessage:nil
-                                          contactShare:nil
-                                           linkPreview:nil
-                                        messageSticker:nil
-                                     isViewOnceMessage:NO];
+    TSIncomingMessageBuilder *incomingMessageBuilder =
+        [TSIncomingMessageBuilder incomingMessageBuilderWithThread:self.thread messageBody:body];
+    incomingMessageBuilder.timestamp = 1;
+    incomingMessageBuilder.expiresInSeconds = expiresInSeconds;
+    incomingMessageBuilder.expireStartedAt = expireStartedAt;
+    return [incomingMessageBuilder build];
 }
 
 - (void)testRemoveAnyExpiredMessage
@@ -86,67 +81,6 @@ NS_ASSUME_NONNULL_BEGIN
     [job syncPassForTests];
     [self readWithBlock:^(SDSAnyReadTransaction *transaction) {
         XCTAssertEqual(2, [TSMessage anyCountWithTransaction:transaction]);
-    }];
-}
-
-- (void)testBecomeConsistentWithMessageConfiguration
-{
-    OWSDisappearingMessagesJob *job = [OWSDisappearingMessagesJob sharedJob];
-
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        OWSDisappearingMessagesConfiguration *configuration;
-        configuration = [self.thread disappearingMessagesConfigurationWithTransaction:transaction];
-        [configuration anyRemoveWithTransaction:transaction];
-    }];
-
-    TSMessage *expiringMessage = [self messageWithBody:@"notYetExpiredMessage" expiresInSeconds:20 expireStartedAt:0];
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        [expiringMessage anyInsertWithTransaction:transaction];
-    }];
-
-
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        [job becomeConsistentWithDisappearingDuration:expiringMessage.expiresInSeconds
-                                               thread:self.thread
-                             createdByRemoteRecipient:nil
-                               createdInExistingGroup:NO
-                                          transaction:transaction];
-
-        OWSDisappearingMessagesConfiguration *configuration;
-        configuration = [self.thread disappearingMessagesConfigurationWithTransaction:transaction];
-        XCTAssertNotNil(configuration);
-        XCTAssert(configuration.isEnabled);
-        XCTAssertEqual(20, configuration.durationSeconds);
-    }];
-}
-
-- (void)testBecomeConsistentWithUnexpiringMessageConfiguration
-{
-    OWSDisappearingMessagesJob *job = [OWSDisappearingMessagesJob sharedJob];
-
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        OWSDisappearingMessagesConfiguration *configuration;
-        configuration = [self.thread disappearingMessagesConfigurationWithTransaction:transaction];
-        [configuration anyRemoveWithTransaction:transaction];
-    }];
-
-    TSMessage *unExpiringMessage = [self messageWithBody:@"unexpiringMessage" expiresInSeconds:0 expireStartedAt:0];
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        [unExpiringMessage anyInsertWithTransaction:transaction];
-    }];
-    [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        [job becomeConsistentWithDisappearingDuration:unExpiringMessage.expiresInSeconds
-                                               thread:self.thread
-                             createdByRemoteRecipient:nil
-                               createdInExistingGroup:NO
-                                          transaction:transaction];
-    }];
-
-    [self readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        OWSDisappearingMessagesConfiguration *configuration;
-        configuration = [self.thread disappearingMessagesConfigurationWithTransaction:transaction];
-        XCTAssertNotNil(configuration);
-        XCTAssertFalse(configuration.isEnabled);
     }];
 }
 

@@ -1,10 +1,9 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSContactThread.h"
 #import "ContactsManagerProtocol.h"
-#import "ContactsUpdater.h"
 #import "NotificationsProtocol.h"
 #import "OWSIdentityManager.h"
 #import "SSKEnvironment.h"
@@ -20,9 +19,6 @@ NSUInteger const TSContactThreadSchemaVersion = 1;
 @property (nonatomic, nullable, readonly) NSString *contactPhoneNumber;
 @property (nonatomic, nullable, readonly) NSString *contactUUID;
 @property (nonatomic, readonly) NSUInteger contactThreadSchemaVersion;
-
-// From TSThread
-@property (nonatomic) NSString *conversationColorName;
 
 @end
 
@@ -54,8 +50,13 @@ NSUInteger const TSContactThreadSchemaVersion = 1;
            conversationColorName:(ConversationColorName)conversationColorName
                     creationDate:(nullable NSDate *)creationDate
                       isArchived:(BOOL)isArchived
+                  isMarkedUnread:(BOOL)isMarkedUnread
             lastInteractionRowId:(int64_t)lastInteractionRowId
+               lastVisibleSortId:(uint64_t)lastVisibleSortId
+lastVisibleSortIdOnScreenPercentage:(double)lastVisibleSortIdOnScreenPercentage
+         mentionNotificationMode:(TSThreadMentionNotificationMode)mentionNotificationMode
                     messageDraft:(nullable NSString *)messageDraft
+          messageDraftBodyRanges:(nullable MessageBodyRanges *)messageDraftBodyRanges
                   mutedUntilDate:(nullable NSDate *)mutedUntilDate
            shouldThreadBeVisible:(BOOL)shouldThreadBeVisible
               contactPhoneNumber:(nullable NSString *)contactPhoneNumber
@@ -67,8 +68,13 @@ NSUInteger const TSContactThreadSchemaVersion = 1;
              conversationColorName:conversationColorName
                       creationDate:creationDate
                         isArchived:isArchived
+                    isMarkedUnread:isMarkedUnread
               lastInteractionRowId:lastInteractionRowId
+                 lastVisibleSortId:lastVisibleSortId
+lastVisibleSortIdOnScreenPercentage:lastVisibleSortIdOnScreenPercentage
+           mentionNotificationMode:mentionNotificationMode
                       messageDraft:messageDraft
+            messageDraftBodyRanges:messageDraftBodyRanges
                     mutedUntilDate:mutedUntilDate
              shouldThreadBeVisible:shouldThreadBeVisible];
 
@@ -139,9 +145,16 @@ NSUInteger const TSContactThreadSchemaVersion = 1;
     OWSAssertDebug(contactAddress.isValid);
 
     __block TSContactThread *thread;
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        thread = [self getOrCreateThreadWithContactAddress:contactAddress transaction:transaction];
+    [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
+        thread = [self getThreadWithContactAddress:contactAddress transaction:transaction];
     }];
+
+    if (thread == nil) {
+        // Only open a write transaction if necessary
+        DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
+            thread = [self getOrCreateThreadWithContactAddress:contactAddress transaction:transaction];
+        });
+    }
 
     return thread;
 }
@@ -160,10 +173,6 @@ NSUInteger const TSContactThreadSchemaVersion = 1;
 - (NSArray<SignalServiceAddress *> *)recipientAddresses
 {
     return @[ self.contactAddress ];
-}
-
-- (BOOL)isGroupThread {
-    return NO;
 }
 
 - (BOOL)isNoteToSelf
@@ -187,7 +196,7 @@ NSUInteger const TSContactThreadSchemaVersion = 1;
 
 - (BOOL)hasSafetyNumbers
 {
-    return !![[OWSIdentityManager sharedManager] identityKeyForAddress:self.contactAddress];
+    return !![[OWSIdentityManager shared] identityKeyForAddress:self.contactAddress];
 }
 
 + (nullable SignalServiceAddress *)contactAddressFromThreadId:(NSString *)threadId
@@ -205,8 +214,8 @@ NSUInteger const TSContactThreadSchemaVersion = 1;
     return [threadId substringWithRange:NSMakeRange(1, threadId.length - 1)];
 }
 
-+ (NSString *)conversationColorNameForContactAddress:(SignalServiceAddress *)address
-                                         transaction:(SDSAnyReadTransaction *)transaction
++ (ConversationColorName)conversationColorNameForContactAddress:(SignalServiceAddress *)address
+                                                    transaction:(SDSAnyReadTransaction *)transaction
 {
     OWSAssertDebug(address);
 

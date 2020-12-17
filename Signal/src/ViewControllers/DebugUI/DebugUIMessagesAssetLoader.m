@@ -1,10 +1,9 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "DebugUIMessagesAssetLoader.h"
 #import <AFNetworking/AFHTTPSessionManager.h>
-#import <AFNetworking/AFNetworking.h>
 #import <PromiseKit/AnyPromise.h>
 #import <SignalCoreKit/Randomness.h>
 #import <SignalServiceKit/MIMETypeUtil.h>
@@ -615,14 +614,14 @@ NS_ASSUME_NONNULL_BEGIN
     }
 
     // We could use PMKJoin() or PMKWhen().
-    [PMKJoin(promises)
-            .then(^(id value) {
-                success();
-            })
-            .catch(^(id error) {
-                OWSLogError(@"Could not prepare fake asset loaders: %@.", error);
-                failure();
-            }) retainUntilComplete];
+    PMKJoin(promises)
+        .then(^(id value) {
+            success();
+        })
+        .catch(^(id error) {
+            OWSLogError(@"Could not prepare fake asset loaders: %@.", error);
+            failure();
+        });
 }
 
 @end

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -54,11 +54,21 @@ public class ConversationSearchController: NSObject {
         uiSearchController.delegate = self
         uiSearchController.searchResultsUpdater = self
 
-        uiSearchController.hidesNavigationBarDuringPresentation = false
+        if #available(iOS 13, *) {
+            uiSearchController.hidesNavigationBarDuringPresentation = true
+        } else {
+            // In iOS12, if the search controller is presented and hiding the nav bar, when you
+            // push another VC, that VC will *also* not show it's navigation bar, so we just
+            // don't toggle nav bar visibility on legacy platforms.
+            uiSearchController.hidesNavigationBarDuringPresentation = false
+        }
         uiSearchController.dimsBackgroundDuringPresentation = false
-        uiSearchController.searchBar.inputAccessoryView = resultsBar
 
         applyTheme()
+    }
+
+    var searchBar: UISearchBar {
+        return uiSearchController.searchBar
     }
 
     func applyTheme() {
@@ -147,21 +157,52 @@ protocol SearchResultsBarDelegate: AnyObject {
                           resultSet: ConversationScreenSearchResultSet)
 }
 
-public class SearchResultsBar: UIToolbar {
+public class SearchResultsBar: UIView {
 
     weak var resultsBarDelegate: SearchResultsBarDelegate?
 
     var showLessRecentButton: UIBarButtonItem!
     var showMoreRecentButton: UIBarButtonItem!
-    let labelItem: UIBarButtonItem
+
+    let labelItem = UIBarButtonItem(title: nil, style: .plain, target: nil, action: nil)
+    let toolbar = UIToolbar.clear()
 
     var resultSet: ConversationScreenSearchResultSet?
 
     override init(frame: CGRect) {
-
-        labelItem = UIBarButtonItem(title: nil, style: .plain, target: nil, action: nil)
-
         super.init(frame: frame)
+
+        self.layoutMargins = .zero
+
+        // When presenting or dismissing the keyboard, there may be a slight
+        // gap between the keyboard and the bottom of the input bar during
+        // the animation. Extend the background below the toolbar's bounds
+        // by this much to mask that extra space.
+        let backgroundExtension: CGFloat = 100
+
+        if UIAccessibility.isReduceTransparencyEnabled {
+            self.backgroundColor = Theme.toolbarBackgroundColor
+
+            let extendedBackground = UIView()
+            extendedBackground.backgroundColor = Theme.toolbarBackgroundColor
+            addSubview(extendedBackground)
+            extendedBackground.autoPinWidthToSuperview()
+            extendedBackground.autoPinEdge(.top, to: .bottom, of: self)
+            extendedBackground.autoSetDimension(.height, toSize: backgroundExtension)
+        } else {
+            let alpha: CGFloat = OWSNavigationBar.backgroundBlurMutingFactor
+            backgroundColor = Theme.toolbarBackgroundColor.withAlphaComponent(alpha)
+
+            let blurEffectView = UIVisualEffectView(effect: Theme.barBlurEffect)
+            blurEffectView.layer.zPosition = -1
+            addSubview(blurEffectView)
+            blurEffectView.autoPinWidthToSuperview()
+            blurEffectView.autoPinEdge(toSuperviewEdge: .top)
+            blurEffectView.autoPinEdge(toSuperviewEdge: .bottom, withInset: -backgroundExtension)
+        }
+
+        addSubview(toolbar)
+        toolbar.autoPinEdgesToSuperviewMargins()
 
         let leftExteriorChevronMargin: CGFloat
         let leftInteriorChevronMargin: CGFloat
@@ -176,24 +217,22 @@ public class SearchResultsBar: UIToolbar {
         let upChevron = #imageLiteral(resourceName: "ic_chevron_up").withRenderingMode(.alwaysTemplate)
         showLessRecentButton = UIBarButtonItem(image: upChevron, style: .plain, target: self, action: #selector(didTapShowLessRecent))
         showLessRecentButton.imageInsets = UIEdgeInsets(top: 2, left: leftExteriorChevronMargin, bottom: 2, right: leftInteriorChevronMargin)
-        showLessRecentButton.tintColor = UIColor.ows_signalBlue
+        showLessRecentButton.tintColor = Theme.accentBlueColor
 
         let downChevron = #imageLiteral(resourceName: "ic_chevron_down").withRenderingMode(.alwaysTemplate)
         showMoreRecentButton = UIBarButtonItem(image: downChevron, style: .plain, target: self, action: #selector(didTapShowMoreRecent))
         showMoreRecentButton.imageInsets = UIEdgeInsets(top: 2, left: leftInteriorChevronMargin, bottom: 2, right: leftExteriorChevronMargin)
-        showMoreRecentButton.tintColor = UIColor.ows_signalBlue
+        showMoreRecentButton.tintColor = Theme.accentBlueColor
 
         let spacer1 = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
         let spacer2 = UIBarButtonItem(barButtonSystemItem: .flexibleSpace, target: nil, action: nil)
 
-        self.items = [showLessRecentButton, showMoreRecentButton, spacer1, labelItem, spacer2]
-
-        self.isTranslucent = false
-        self.isOpaque = true
-        self.barTintColor = Theme.toolbarBackgroundColor
+        toolbar.items = [showLessRecentButton, showMoreRecentButton, spacer1, labelItem, spacer2]
 
         self.autoresizingMask = .flexibleHeight
         self.translatesAutoresizingMaskIntoConstraints = false
+
+        updateBarItems()
     }
 
     required init?(coder aDecoder: NSCoder) {

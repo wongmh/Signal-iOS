@@ -1,15 +1,14 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
+#import "OWSMessageManager.h"
 #import "ContactsManagerProtocol.h"
-#import "ContactsUpdater.h"
+#import "MessageSender.h"
 #import "MockSSKEnvironment.h"
 #import "OWSFakeCallMessageHandler.h"
 #import "OWSFakeMessageSender.h"
 #import "OWSIdentityManager.h"
-#import "OWSMessageManager.h"
-#import "OWSMessageSender.h"
 #import "OWSSyncGroupsMessage.h"
 #import "SSKBaseTestObjC.h"
 #import "TSAccountManager.h"
@@ -27,11 +26,16 @@ NSString *const kAliceRecipientId = @"+13213214321";
 // private method we are testing
 - (void)throws_handleIncomingEnvelope:(SSKProtoEnvelope *)envelope
                       withSyncMessage:(SSKProtoSyncMessage *)syncMessage
+                        plaintextData:(NSData *)plaintextData
+                      wasReceivedByUD:(BOOL)wasReceivedByUD
+              serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
                           transaction:(SDSAnyWriteTransaction *)transaction;
 
 - (void)handleIncomingEnvelope:(SSKProtoEnvelope *)envelope
                withDataMessage:(SSKProtoDataMessage *)dataMessage
+                 plaintextData:(NSData *)plaintextData
                wasReceivedByUD:(BOOL)wasReceivedByUD
+       serverDeliveryTimestamp:(uint64_t)serverDeliveryTimestamp
                    transaction:(SDSAnyWriteTransaction *)transaction;
 
 @end
@@ -100,6 +104,9 @@ NSString *const kAliceRecipientId = @"+13213214321";
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
         [self.messagesManager throws_handleIncomingEnvelope:[envelopeBuilder buildIgnoringErrors]
                                             withSyncMessage:[messageBuilder buildIgnoringErrors]
+                                              plaintextData:nil
+                                            wasReceivedByUD:NO
+                                    serverDeliveryTimestamp:0
                                                 transaction:transaction];
     }];
 
@@ -111,14 +118,17 @@ NSString *const kAliceRecipientId = @"+13213214321";
 
 - (void)test_GroupUpdate
 {
-    NSData *groupId = [TSGroupModel generateRandomGroupId];
+    // GroupsV2 TODO: Handle v2 groups.
+    NSData *groupId = [TSGroupModel generateRandomV1GroupId];
     [self readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        TSGroupThread *groupThread = [TSGroupThread getThreadWithGroupId:groupId transaction:transaction];
-        XCTAssertNil(groupThread);
+        TSGroupThread *_Nullable thread = [TSGroupThread fetchWithGroupId:groupId transaction:transaction];
+        XCTAssertNil(thread);
     }];
 
     SSKProtoEnvelopeBuilder *envelopeBuilder =
         [SSKProtoEnvelope builderWithTimestamp:12345];
+    [envelopeBuilder setSourceE164:@"+13213214321"];
+    [envelopeBuilder setSourceUuid:NSUUID.UUID.UUIDString];
     [envelopeBuilder setType:SSKProtoEnvelopeTypeCiphertext];
 
     SSKProtoGroupContextBuilder *groupContextBuilder =
@@ -132,28 +142,32 @@ NSString *const kAliceRecipientId = @"+13213214321";
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
         [self.messagesManager handleIncomingEnvelope:[envelopeBuilder buildIgnoringErrors]
                                      withDataMessage:[messageBuilder buildIgnoringErrors]
+                                       plaintextData:nil
                                      wasReceivedByUD:NO
+                             serverDeliveryTimestamp:0
                                          transaction:transaction];
     }];
 
     [self readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        TSGroupThread *groupThread = [TSGroupThread getThreadWithGroupId:groupId transaction:transaction];
-        XCTAssertNotNil(groupThread);
-        XCTAssertEqualObjects(@"Newly created Group Name", groupThread.groupNameOrDefault);
+        TSGroupThread *_Nullable thread = [TSGroupThread fetchWithGroupId:groupId transaction:transaction];
+        XCTAssertNotNil(thread);
+        XCTAssertEqualObjects(@"Newly created Group Name", thread.groupNameOrDefault);
     }];
 }
 
-
 - (void)test_GroupUpdateWithAvatar
 {
-    NSData *groupId = [TSGroupModel generateRandomGroupId];
+    // GroupsV2 TODO: Handle v2 groups.
+    NSData *groupId = [TSGroupModel generateRandomV1GroupId];
     [self readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        TSGroupThread *groupThread = [TSGroupThread getThreadWithGroupId:groupId transaction:transaction];
-        XCTAssertNil(groupThread);
+        TSGroupThread *_Nullable thread = [TSGroupThread fetchWithGroupId:groupId transaction:transaction];
+        XCTAssertNil(thread);
     }];
 
     SSKProtoEnvelopeBuilder *envelopeBuilder =
         [SSKProtoEnvelope builderWithTimestamp:12345];
+    [envelopeBuilder setSourceE164:@"+13213214321"];
+    [envelopeBuilder setSourceUuid:NSUUID.UUID.UUIDString];
     [envelopeBuilder setType:SSKProtoEnvelopeTypeCiphertext];
 
     SSKProtoGroupContextBuilder *groupContextBuilder =
@@ -161,7 +175,8 @@ NSString *const kAliceRecipientId = @"+13213214321";
     [groupContextBuilder setType:SSKProtoGroupContextTypeUpdate];
     [groupContextBuilder setName:@"Newly created Group Name"];
 
-    SSKProtoAttachmentPointerBuilder *attachmentBuilder = [SSKProtoAttachmentPointer builderWithId:1234];
+    SSKProtoAttachmentPointerBuilder *attachmentBuilder = [SSKProtoAttachmentPointer builder];
+    attachmentBuilder.cdnID = 1234;
     [attachmentBuilder setContentType:@"image/png"];
     [attachmentBuilder setKey:[Cryptography generateRandomBytes:32]];
     [attachmentBuilder setSize:123];
@@ -173,14 +188,16 @@ NSString *const kAliceRecipientId = @"+13213214321";
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
         [self.messagesManager handleIncomingEnvelope:[envelopeBuilder buildIgnoringErrors]
                                      withDataMessage:[messageBuilder buildIgnoringErrors]
+                                       plaintextData:nil
                                      wasReceivedByUD:NO
+                             serverDeliveryTimestamp:0
                                          transaction:transaction];
     }];
 
     [self readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        TSGroupThread *groupThread = [TSGroupThread getThreadWithGroupId:groupId transaction:transaction];
-        XCTAssertNotNil(groupThread);
-        XCTAssertEqualObjects(@"Newly created Group Name", groupThread.groupNameOrDefault);
+        TSGroupThread *_Nullable thread = [TSGroupThread fetchWithGroupId:groupId transaction:transaction];
+        XCTAssertNotNil(thread);
+        XCTAssertEqualObjects(@"Newly created Group Name", thread.groupNameOrDefault);
     }];
 }
 

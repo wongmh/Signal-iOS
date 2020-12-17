@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import XCTest
@@ -21,12 +21,14 @@ public class SSKBaseTestSwift: XCTestCase {
     public override func setUp() {
         super.setUp()
 
-        DDLog.add(DDTTYLogger.sharedInstance)
+        DDLog.add(DDTTYLogger.sharedInstance!)
 
         ClearCurrentAppContextForTests()
         SetCurrentAppContext(TestAppContext())
 
         MockSSKEnvironment.activate()
+
+        GroupManager.forceV1Groups()
     }
 
     @objc
@@ -44,8 +46,7 @@ public class SSKBaseTestSwift: XCTestCase {
         return databaseStorage.read(block: block)
     }
 
-    @objc
-    public func write(_ block: @escaping (SDSAnyWriteTransaction) -> Void) {
+    public func write<T>(_ block: @escaping (SDSAnyWriteTransaction) -> T) -> T {
         return databaseStorage.write(block: block)
     }
 

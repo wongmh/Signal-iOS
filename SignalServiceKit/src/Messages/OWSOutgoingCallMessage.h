@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSOutgoingMessage.h"
@@ -11,6 +11,7 @@ NS_ASSUME_NONNULL_BEGIN
 @class SSKProtoCallMessageHangup;
 @class SSKProtoCallMessageIceUpdate;
 @class SSKProtoCallMessageOffer;
+@class SSKProtoCallMessageOpaque;
 @class TSThread;
 
 /**
@@ -18,31 +19,36 @@ NS_ASSUME_NONNULL_BEGIN
  */
 @interface OWSOutgoingCallMessage : TSOutgoingMessage
 
-- (instancetype)initOutgoingMessageWithTimestamp:(uint64_t)timestamp
-                                        inThread:(TSThread *)thread
-                                     messageBody:(nullable NSString *)body
-                                   attachmentIds:(NSMutableArray<NSString *> *)attachmentIds
-                                expiresInSeconds:(uint32_t)expiresInSeconds
-                                 expireStartedAt:(uint64_t)expireStartedAt
-                                  isVoiceMessage:(BOOL)isVoiceMessage
-                                groupMetaMessage:(TSGroupMetaMessage)groupMetaMessage
-                                   quotedMessage:(nullable TSQuotedMessage *)quotedMessage
-                                    contactShare:(nullable OWSContact *)contactShare
-                                     linkPreview:(nullable OWSLinkPreview *)linkPreview
-                                  messageSticker:(nullable MessageSticker *)messageSticker NS_UNAVAILABLE;
+- (instancetype)initOutgoingMessageWithBuilder:(TSOutgoingMessageBuilder *)outgoingMessageBuilder NS_UNAVAILABLE;
 
-- (instancetype)initWithThread:(TSThread *)thread offerMessage:(SSKProtoCallMessageOffer *)offerMessage;
-- (instancetype)initWithThread:(TSThread *)thread answerMessage:(SSKProtoCallMessageAnswer *)answerMessage;
 - (instancetype)initWithThread:(TSThread *)thread
-             iceUpdateMessages:(NSArray<SSKProtoCallMessageIceUpdate *> *)iceUpdateMessage;
-- (instancetype)initWithThread:(TSThread *)thread hangupMessage:(SSKProtoCallMessageHangup *)hangupMessage;
-- (instancetype)initWithThread:(TSThread *)thread busyMessage:(SSKProtoCallMessageBusy *)busyMessage;
+                  offerMessage:(SSKProtoCallMessageOffer *)offerMessage
+           destinationDeviceId:(nullable NSNumber *)destinationDeviceId;
+- (instancetype)initWithThread:(TSThread *)thread
+                 answerMessage:(SSKProtoCallMessageAnswer *)answerMessage
+           destinationDeviceId:(nullable NSNumber *)destinationDeviceId;
+- (instancetype)initWithThread:(TSThread *)thread
+             iceUpdateMessages:(NSArray<SSKProtoCallMessageIceUpdate *> *)iceUpdateMessage
+           destinationDeviceId:(nullable NSNumber *)destinationDeviceId;
+- (instancetype)initWithThread:(TSThread *)thread
+           legacyHangupMessage:(SSKProtoCallMessageHangup *)legacyHangupMessage
+           destinationDeviceId:(nullable NSNumber *)destinationDeviceId;
+- (instancetype)initWithThread:(TSThread *)thread
+                 hangupMessage:(SSKProtoCallMessageHangup *)hangupMessage
+           destinationDeviceId:(nullable NSNumber *)destinationDeviceId;
+- (instancetype)initWithThread:(TSThread *)thread
+                   busyMessage:(SSKProtoCallMessageBusy *)busyMessage
+           destinationDeviceId:(nullable NSNumber *)destinationDeviceId;
+- (instancetype)initWithThread:(TSThread *)thread opaqueMessage:(SSKProtoCallMessageOpaque *)opaqueMessage;
 
 @property (nullable, nonatomic, readonly) SSKProtoCallMessageOffer *offerMessage;
 @property (nullable, nonatomic, readonly) SSKProtoCallMessageAnswer *answerMessage;
 @property (nullable, nonatomic, readonly) NSArray<SSKProtoCallMessageIceUpdate *> *iceUpdateMessages;
+@property (nullable, nonatomic, readonly) SSKProtoCallMessageHangup *legacyHangupMessage;
 @property (nullable, nonatomic, readonly) SSKProtoCallMessageHangup *hangupMessage;
 @property (nullable, nonatomic, readonly) SSKProtoCallMessageBusy *busyMessage;
+@property (nullable, nonatomic, readonly) SSKProtoCallMessageOpaque *opaqueMessage;
+@property (nullable, nonatomic, readonly) NSNumber *destinationDeviceId;
 
 @end
 

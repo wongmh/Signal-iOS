@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -34,9 +34,10 @@ extension PhotoCaptureError: LocalizedError {
     }
 }
 
-class PhotoCaptureViewController: OWSViewController {
+class PhotoCaptureViewController: OWSViewController, InteractiveDismissDelegate {
 
     weak var delegate: PhotoCaptureViewControllerDelegate?
+    var interactiveDismiss : PhotoCaptureInteractiveDismiss!
 
     @objc public lazy var photoCapture = PhotoCapture()
 
@@ -49,12 +50,12 @@ class PhotoCaptureViewController: OWSViewController {
         view.setContentHuggingHigh()
         return view
     }()
-
+    
     deinit {
         UIDevice.current.endGeneratingDeviceOrientationNotifications()
         photoCapture.stopCapture().done {
             Logger.debug("stopCapture completed")
-        }.retainUntilComplete()
+        }
     }
 
     // MARK: - Overrides
@@ -62,6 +63,7 @@ class PhotoCaptureViewController: OWSViewController {
     override func loadView() {
         self.view = UIView()
         self.view.backgroundColor = Theme.darkThemeBackgroundColor
+        definesPresentationContext = true
 
         view.addSubview(previewView)
 
@@ -114,6 +116,12 @@ class PhotoCaptureViewController: OWSViewController {
         view.addGestureRecognizer(pinchZoomGesture)
         view.addGestureRecognizer(tapToFocusGesture)
         view.addGestureRecognizer(doubleTapToSwitchCameraGesture)
+        
+        if let navController = self.navigationController {
+            interactiveDismiss = PhotoCaptureInteractiveDismiss(viewController: navController)
+            interactiveDismiss.interactiveDismissDelegate = self
+            interactiveDismiss.addGestureRecognizer(to: view)
+        }
 
         tapToFocusGesture.require(toFail: doubleTapToSwitchCameraGesture)
     }
@@ -158,7 +166,7 @@ class PhotoCaptureViewController: OWSViewController {
     override var prefersHomeIndicatorAutoHidden: Bool {
         return true
     }
-
+    
     override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
         super.viewWillTransition(to: size, with: coordinator)
 
@@ -175,17 +183,27 @@ class PhotoCaptureViewController: OWSViewController {
         }
     }
 
-    @available(iOS 11.0, *)
     override func viewSafeAreaInsetsDidChange() {
         super.viewSafeAreaInsetsDidChange()
         if !UIDevice.current.isIPad {
             // we pin to a constant rather than margin, because on notched devices the
             // safeAreaInsets/margins change as the device rotates *EVEN THOUGH* the interface
             // is locked to portrait.
-            topBarOffset.constant = max(view.safeAreaInsets.top, view.safeAreaInsets.left, view.safeAreaInsets.bottom)
+            // Only grab this once -- otherwise when we swipe to dismiss this is updated and the top bar jumps to having zero offset
+            if topBarOffset.constant == 0 {
+                topBarOffset.constant = max(view.safeAreaInsets.top, view.safeAreaInsets.left, view.safeAreaInsets.bottom)
+            }
         }
     }
-
+    
+    func interactiveDismissDidBegin(_ interactiveDismiss: UIPercentDrivenInteractiveTransition) {
+    }
+    func interactiveDismissDidFinish(_ interactiveDismiss: UIPercentDrivenInteractiveTransition) {
+        dismiss(animated: true)
+    }
+    func interactiveDismissDidCancel(_ interactiveDismiss: UIPercentDrivenInteractiveTransition) {
+    }
+        
     // MARK: -
     var isRecordingMovie: Bool = false
 
@@ -302,7 +320,7 @@ class PhotoCaptureViewController: OWSViewController {
             self?.didTapFlashMode()
         }
     }()
-
+    
     lazy var pinchZoomGesture: UIPinchGestureRecognizer = {
         return UIPinchGestureRecognizer(target: self, action: #selector(didPinchZoom(pinchGesture:)))
     }()
@@ -349,17 +367,21 @@ class PhotoCaptureViewController: OWSViewController {
         }
         photoCapture.switchCamera().catch { error in
             self.showFailureUI(error: error)
-        }.retainUntilComplete()
+        }
     }
 
     @objc
     func didTapFlashMode() {
         Logger.debug("")
-        photoCapture.switchFlashMode().done {
+        firstly {
+            photoCapture.switchFlashMode()
+        }.done {
             self.updateFlashModeControl()
-        }.retainUntilComplete()
+        }.catch { error in
+            owsFailDebug("Error: \(error)")
+        }
     }
-
+    
     @objc
     func didPinchZoom(pinchGesture: UIPinchGestureRecognizer) {
         switch pinchGesture.state {
@@ -380,11 +402,31 @@ class PhotoCaptureViewController: OWSViewController {
 
         photoCapture.focus(with: .autoFocus, exposureMode: .autoExpose, at: devicePoint, monitorSubjectAreaChange: true)
 
-        // Don't show animation if it's in the bottom row.
+        // If the user taps near the capture button, it's more likely a mis-tap than intentional.
+        // Skip the focus animation in that case, since it looks bad.
         let captureButtonOrigin = captureButton.superview!.convert(captureButton.frame.origin, to: view)
-        guard viewLocation.y < captureButtonOrigin.y else {
-            Logger.verbose("Skipping animation for bottom row")
-            return
+        if UIDevice.current.isIPad {
+            guard viewLocation.x < captureButtonOrigin.x else {
+                Logger.verbose("Skipping animation for right edge on iPad")
+
+                // Finish any outstanding focus animation, otherwise it will remain in an
+                // uncompleted state.
+                if let lastUserFocusTapPoint = lastUserFocusTapPoint {
+                    completeFocusAnimation(forFocusPoint: lastUserFocusTapPoint)
+                }
+                return
+            }
+        } else {
+            guard viewLocation.y < captureButtonOrigin.y else {
+                Logger.verbose("Skipping animation for bottom row on iPhone")
+
+                // Finish any outstanding focus animation, otherwise it will remain in an
+                // uncompleted state.
+                if let lastUserFocusTapPoint = lastUserFocusTapPoint {
+                    completeFocusAnimation(forFocusPoint: lastUserFocusTapPoint)
+                }
+                return
+            }
         }
 
         lastUserFocusTapPoint = devicePoint
@@ -481,12 +523,14 @@ class PhotoCaptureViewController: OWSViewController {
             return captureReady()
         }
 
-        photoCapture.startVideoCapture()
-            .done(captureReady)
-            .catch { [weak self] error in
-                guard let self = self else { return }
-                self.showFailureUI(error: error)
-            }.retainUntilComplete()
+        firstly {
+            photoCapture.startVideoCapture()
+        }.done {
+            captureReady()
+        }.catch { [weak self] error in
+            guard let self = self else { return }
+            self.showFailureUI(error: error)
+        }
     }
 
     private func showFailureUI(error: Error) {
@@ -658,7 +702,7 @@ class CaptureButton: UIView {
         innerButton.addGestureRecognizer(longPressGesture)
 
         addSubview(innerButton)
-        innerButtonSizeConstraints = autoSetDimensions(to: CGSize(width: defaultDiameter, height: defaultDiameter))
+        innerButtonSizeConstraints = autoSetDimensions(to: CGSize(square: defaultDiameter))
         innerButton.backgroundColor = UIColor.ows_white.withAlphaComponent(0.33)
         innerButton.layer.shadowOffset = .zero
         innerButton.layer.shadowOpacity = 0.33
@@ -666,7 +710,7 @@ class CaptureButton: UIView {
         innerButton.autoPinEdgesToSuperviewEdges()
 
         addSubview(zoomIndicator)
-        zoomIndicatorSizeConstraints = zoomIndicator.autoSetDimensions(to: CGSize(width: defaultDiameter, height: defaultDiameter))
+        zoomIndicatorSizeConstraints = zoomIndicator.autoSetDimensions(to: CGSize(square: defaultDiameter))
         zoomIndicator.isUserInteractionEnabled = false
         zoomIndicator.layer.borderColor = UIColor.ows_white.cgColor
         zoomIndicator.layer.borderWidth = 1.5
@@ -930,25 +974,11 @@ class RecordingTimerView: UIView {
         icon.layer.shadowRadius = 4
 
         icon.backgroundColor = .red
-        icon.autoSetDimensions(to: CGSize(width: iconWidth, height: iconWidth))
+        icon.autoSetDimensions(to: CGSize(square: iconWidth))
         icon.alpha = 0
 
         return icon
     }()
-
-    // MARK: - Overrides  //
-
-    override func sizeThatFits(_ size: CGSize) -> CGSize {
-        if #available(iOS 10, *) {
-            return super.sizeThatFits(size)
-        } else {
-            // iOS9 manual layout sizing required for items in the navigation bar
-            var baseSize = label.frame.size
-            baseSize.width = baseSize.width + stackViewSpacing + RecordingTimerView.iconWidth + layoutMargins.left + layoutMargins.right
-            baseSize.height = baseSize.height + layoutMargins.top + layoutMargins.bottom
-            return baseSize
-        }
-    }
 
     // MARK: -
     var recordingStartTime: TimeInterval?
@@ -998,11 +1028,6 @@ class RecordingTimerView: UIView {
         let recordingDuration = self.recordingDuration
         let durationDate = Date(timeIntervalSinceReferenceDate: recordingDuration)
         label.text = timeFormatter.string(from: durationDate)
-        if #available(iOS 10, *) {
-            // do nothing
-        } else {
-            label.sizeToFit()
-        }
     }
 }
 

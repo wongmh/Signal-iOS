@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -38,12 +38,22 @@ public class GRDBDatabaseStorageAdapter: NSObject {
         return storage.pool
     }
 
-    init(baseDir: URL) throws {
+    init(baseDir: URL) {
         databaseUrl = GRDBDatabaseStorageAdapter.databaseFileUrl(baseDir: baseDir)
 
-        try GRDBDatabaseStorageAdapter.ensureDatabaseKeySpecExists(baseDir: baseDir)
+        do {
+            // Crash if keychain is inaccessible.
+            try GRDBDatabaseStorageAdapter.ensureDatabaseKeySpecExists(baseDir: baseDir)
+        } catch {
+            owsFail("\(error.grdbErrorForLogging)")
+        }
 
-        storage = try GRDBStorage(dbURL: databaseUrl, keyspec: GRDBDatabaseStorageAdapter.keyspec)
+        do {
+            // Crash if storage can't be initialized.
+            storage = try GRDBStorage(dbURL: databaseUrl, keyspec: GRDBDatabaseStorageAdapter.keyspec)
+        } catch {
+            owsFail("\(error.grdbErrorForLogging)")
+        }
 
         super.init()
 
@@ -52,7 +62,6 @@ public class GRDBDatabaseStorageAdapter: NSObject {
             defer { BenchEventComplete(eventId: "GRDB Setup") }
             do {
                 try self.setup()
-                try self.setupUIDatabase()
             } catch {
                 owsFail("unable to setup database: \(error)")
             }
@@ -83,12 +92,11 @@ public class GRDBDatabaseStorageAdapter: NSObject {
         SignalRecipient.table,
         SignalAccount.table,
         OWSUserProfile.table,
-        TSRecipientReadReceipt.table,
-        OWSLinkedDeviceReadReceipt.table,
         OWSDevice.table,
-        OWSContactQuery.table,
         TestModel.table,
-        OWSReaction.table
+        OWSReaction.table,
+        IncomingGroupsV2MessageJob.table,
+        TSMention.table
         // NOTE: We don't include OWSMessageDecryptJob,
         // since we should never use it with GRDB.
     ]
@@ -103,55 +111,25 @@ public class GRDBDatabaseStorageAdapter: NSObject {
     public private(set) var uiDatabaseObserver: UIDatabaseObserver?
 
     @objc
-    public private(set) var conversationListDatabaseObserver: ConversationListDatabaseObserver?
-
-    @objc
-    public private(set) var conversationViewDatabaseObserver: ConversationViewDatabaseObserver?
-
-    @objc
-    public private(set) var mediaGalleryDatabaseObserver: MediaGalleryDatabaseObserver?
-
-    @objc
-    public private(set) var genericDatabaseObserver: GRDBGenericDatabaseObserver?
-
-    @objc
     public func setupUIDatabase() throws {
+        owsAssertDebug(self.uiDatabaseObserver == nil)
+
         // UIDatabaseObserver is a general purpose observer, whose delegates
         // are notified when things change, but are not given any specific details
         // about the changes.
-        let uiDatabaseObserver = try UIDatabaseObserver(pool: pool)
+        let uiDatabaseObserver = try UIDatabaseObserver(pool: pool,
+                                                        checkpointingQueue: storage.checkpointingQueue)
         self.uiDatabaseObserver = uiDatabaseObserver
-
-        // ConversationListDatabaseObserver is built on top of UIDatabaseObserver
-        // but includes the details necessary for rendering collection view
-        // batch updates.
-        let conversationListDatabaseObserver = ConversationListDatabaseObserver()
-        self.conversationListDatabaseObserver = conversationListDatabaseObserver
-        uiDatabaseObserver.appendSnapshotDelegate(conversationListDatabaseObserver)
-
-        // ConversationViewDatabaseObserver is built on top of UIDatabaseObserver
-        // but includes the details necessary for rendering collection view
-        // batch updates.
-        let conversationViewDatabaseObserver = ConversationViewDatabaseObserver()
-        self.conversationViewDatabaseObserver = conversationViewDatabaseObserver
-        uiDatabaseObserver.appendSnapshotDelegate(conversationViewDatabaseObserver)
-
-        // MediaGalleryDatabaseObserver is built on top of UIDatabaseObserver
-        // but includes the details necessary for rendering collection view
-        // batch updates.
-        let mediaGalleryDatabaseObserver = MediaGalleryDatabaseObserver()
-        self.mediaGalleryDatabaseObserver = mediaGalleryDatabaseObserver
-        uiDatabaseObserver.appendSnapshotDelegate(mediaGalleryDatabaseObserver)
-
-        let genericDatabaseObserver = GRDBGenericDatabaseObserver()
-        self.genericDatabaseObserver = genericDatabaseObserver
-        uiDatabaseObserver.appendSnapshotDelegate(genericDatabaseObserver)
 
         try pool.write { db in
             db.add(transactionObserver: uiDatabaseObserver, extent: Database.TransactionObservationExtent.observerLifetime)
         }
+    }
 
-        SDSDatabaseStorage.shared.observation.set(grdbStorage: self)
+    // NOTE: This should only be used in exceptional circumstances,
+    // e.g. after reloading the database due to a device transfer.
+    func forceUpdateSnapshot() {
+        uiDatabaseObserver?.forceUpdateSnapshot()
     }
 
     func testing_tearDownUIDatabase() {
@@ -159,21 +137,18 @@ public class GRDBDatabaseStorageAdapter: NSObject {
         // are notified when things change, but are not given any specific details
         // about the changes.
         self.uiDatabaseObserver = nil
-        self.conversationListDatabaseObserver = nil
-        self.conversationViewDatabaseObserver = nil
-        self.mediaGalleryDatabaseObserver = nil
-        self.genericDatabaseObserver = nil
     }
 
     func setup() throws {
         GRDBMediaGalleryFinder.setup(storage: self)
+        try setupUIDatabase()
     }
 
     // MARK: -
 
     private static let keyServiceName: String = "GRDBKeyChainService"
     private static let keyName: String = "GRDBDatabaseCipherKeySpec"
-    private static var keyspec: GRDBKeySpecSource {
+    public static var keyspec: GRDBKeySpecSource {
         return GRDBKeySpecSource(keyServiceName: keyServiceName, keyName: keyName)
     }
 
@@ -185,6 +160,15 @@ public class GRDBDatabaseStorageAdapter: NSObject {
             owsFailDebug("Key not accessible: \(error)")
             return false
         }
+    }
+
+    /// Fetches the GRDB key data from the keychain.
+    /// - Note: Will fatally assert if not running in a debug or test build.
+    /// - Returns: The key data, if available.
+    @objc
+    public static var debugOnly_keyData: Data? {
+        owsAssert(OWSIsTestableBuild())
+        return try? keyspec.fetchData()
     }
 
     @objc
@@ -247,7 +231,7 @@ public class GRDBDatabaseStorageAdapter: NSObject {
 
         deleteDBKeys()
 
-        if (CurrentAppContext().isMainApp) {
+        if CurrentAppContext().isMainApp {
             TSAttachmentStream.deleteAttachmentsFromDisk()
         }
 
@@ -291,28 +275,51 @@ extension GRDBDatabaseStorageAdapter: SDSDatabaseStorageAdapter {
         AssertIsOnMainThread()
         try latestSnapshot.read { database in
             try autoreleasepool {
-                try block(GRDBReadTransaction(database: database))
+                try block(GRDBReadTransaction(database: database, isUIRead: true))
             }
         }
     }
 
-    public func readThrows<T>(block: @escaping (GRDBReadTransaction) throws -> T) throws -> T {
+    @discardableResult
+    public func read<T>(block: @escaping (GRDBReadTransaction) throws -> T) throws -> T {
         assertCanRead()
-        AssertIsOnMainThread()
         return try pool.read { database in
             try autoreleasepool {
-                return try block(GRDBReadTransaction(database: database))
+                return try block(GRDBReadTransaction(database: database, isUIRead: false))
             }
         }
+    }
+
+    @discardableResult
+    public func write<T>(block: @escaping (GRDBWriteTransaction) throws -> T) throws -> T {
+        var value: T!
+        var thrown: Error?
+        try write { (transaction) in
+            do {
+                value = try block(transaction)
+            } catch {
+                thrown = error
+            }
+        }
+        if let error = thrown {
+            throw error.grdbErrorForLogging
+        }
+        return value
     }
 
     @objc
     public func uiRead(block: @escaping (GRDBReadTransaction) -> Void) throws {
         assertCanRead()
         AssertIsOnMainThread()
+
+        guard CurrentAppContext().hasUI else {
+            // Never do uiReads in the NSE.
+            return try read(block: block)
+        }
+
         latestSnapshot.read { database in
             autoreleasepool {
-                block(GRDBReadTransaction(database: database))
+                block(GRDBReadTransaction(database: database, isUIRead: true))
             }
         }
     }
@@ -322,7 +329,7 @@ extension GRDBDatabaseStorageAdapter: SDSDatabaseStorageAdapter {
         assertCanRead()
         try pool.read { database in
             autoreleasepool {
-                block(GRDBReadTransaction(database: database))
+                block(GRDBReadTransaction(database: database, isUIRead: false))
             }
         }
     }
@@ -346,94 +353,119 @@ extension GRDBDatabaseStorageAdapter: SDSDatabaseStorageAdapter {
             }
         }
 
-        var transaction: GRDBWriteTransaction!
+        var syncCompletions: [GRDBWriteTransaction.CompletionBlock] = []
+        var asyncCompletions: [GRDBWriteTransaction.AsyncCompletion] = []
+
         try pool.write { database in
             autoreleasepool {
-                transaction = GRDBWriteTransaction(database: database)
+                let transaction = GRDBWriteTransaction(database: database)
                 block(transaction)
+                transaction.finalizeTransaction()
+
+                syncCompletions = transaction.syncCompletions
+                asyncCompletions = transaction.asyncCompletions
             }
         }
-        for (queue, block) in transaction.completions {
-            queue.async(execute: block)
+
+        // Perform all completions _after_ the write transaction completes.
+        for block in syncCompletions {
+            block()
+        }
+
+        for asyncCompletion in asyncCompletions {
+            asyncCompletion.queue.async(execute: asyncCompletion.block)
         }
     }
 }
 
 // MARK: -
 
+private func dbQueryLog(_ value: String) {
+    guard SDSDatabaseStorage.shouldLogDBQueries else {
+        return
+    }
+    func filter(_ input: String) -> String {
+        var result = input
+
+        while let matchRange = result.range(of: "x'[0-9a-f\n]*'", options: .regularExpression) {
+            let charCount = input.distance(from: matchRange.lowerBound, to: matchRange.upperBound)
+            let byteCount = Int64(charCount) / 2
+            let formattedByteCount = ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .memory)
+            result = result.replacingCharacters(in: matchRange, with: "x'<\(formattedByteCount)>'")
+        }
+
+        return result
+    }
+    Logger.info(filter(value))
+}
+
 private struct GRDBStorage {
 
     let pool: DatabasePool
 
+    let checkpointingQueue: DatabaseQueue?
+
     private let dbURL: URL
-    private let configuration: Configuration
+    private let poolConfiguration: Configuration
+    private let checkpointingQueueConfiguration: Configuration
 
-    // "Busy Timeout" is a thread local so that we can temporarily
-    // use a short timeout for checkpoints without interfering with
-    // other threads' database usage.
-    private static let maxBusyTimeoutMsKey: String = "maxBusyTimeoutMsKey"
-    private static var maxBusyTimeoutMs: UInt? {
-        get {
-            guard let value = Thread.current.threadDictionary[maxBusyTimeoutMsKey] as? UInt else {
-                return nil
-            }
-            return value
-        }
-        set {
-            Thread.current.threadDictionary[maxBusyTimeoutMsKey] = newValue
-        }
-    }
-
-    fileprivate static func useShortBusyTimeout() {
-        maxBusyTimeoutMs = 50
-    }
-    fileprivate static func useInfiniteBusyTimeout() {
-        maxBusyTimeoutMs = nil
-    }
+    fileprivate static let maxBusyTimeoutMs = 50
 
     init(dbURL: URL, keyspec: GRDBKeySpecSource) throws {
         self.dbURL = dbURL
 
+        poolConfiguration = Self.buildConfiguration(keyspec: keyspec,
+                                               isForCheckpointingQueue: false)
+        checkpointingQueueConfiguration = Self.buildConfiguration(keyspec: keyspec,
+                                                                  isForCheckpointingQueue: true)
+
+        pool = try DatabasePool(path: dbURL.path, configuration: poolConfiguration)
+        Logger.debug("dbURL: \(dbURL)")
+
+        let shouldCheckpoint = CurrentAppContext().isMainApp
+        if shouldCheckpoint {
+            checkpointingQueue = try DatabaseQueue(path: dbURL.path,
+                                                   configuration: checkpointingQueueConfiguration)
+        } else {
+            checkpointingQueue = nil
+        }
+
+        OWSFileSystem.protectFileOrFolder(atPath: dbURL.path)
+    }
+
+    private static func buildConfiguration(keyspec: GRDBKeySpecSource,
+                                           isForCheckpointingQueue: Bool) -> Configuration {
         var configuration = Configuration()
         configuration.readonly = false
         configuration.foreignKeysEnabled = true // Default is already true
         configuration.trace = { logString in
-            if SDSDatabaseStorage.shouldLogDBQueries {
-                func filter(_ input: String) -> String {
-                    var result = input
-
-                    while let matchRange = result.range(of: "x'[0-9a-f\n]*'", options: .regularExpression) {
-                        let charCount = input.distance(from: matchRange.lowerBound, to: matchRange.upperBound)
-                        let byteCount = Int64(charCount) / 2
-                        let formattedByteCount = ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .memory)
-                        result = result.replacingCharacters(in: matchRange, with: "x'<\(formattedByteCount)>'")
-                    }
-
-                    return result
-                }
-                Logger.info(filter(logString))
-            }
+            dbQueryLog(logString)
         }
-        configuration.label = "Modern (GRDB) Storage"      // Useful when your app opens multiple databases
+        // Useful when your app opens multiple databases
+        configuration.label = (isForCheckpointingQueue
+            ? "GRDB Checkpointing"
+            : "GRDB Storage")
         configuration.maximumReaderCount = 10   // The default is 5
         configuration.busyMode = .callback({ (retryCount: Int) -> Bool in
             // sleep N milliseconds
             let millis = 25
             usleep(useconds_t(millis * 1000))
-
             Logger.verbose("retryCount: \(retryCount)")
             let accumulatedWaitMs = millis * (retryCount + 1)
             if accumulatedWaitMs > 0, (accumulatedWaitMs % 250) == 0 {
                 Logger.warn("Database busy for \(accumulatedWaitMs)ms")
             }
 
-            if let maxBusyTimeoutMs = GRDBStorage.maxBusyTimeoutMs,
-                accumulatedWaitMs > maxBusyTimeoutMs {
-                Logger.warn("Aborting busy retry.")
-                return false
+            if isForCheckpointingQueue {
+                // The checkpointing queue should time out.
+                if accumulatedWaitMs > GRDBStorage.maxBusyTimeoutMs {
+                    Logger.warn("Aborting busy retry.")
+                    return false
+                }
+                return true
+            } else {
+                return true
             }
-
-            return true
         })
         configuration.prepareDatabase = { (db: Database) in
             let keyspec = try keyspec.fetchString()
@@ -441,18 +473,14 @@ private struct GRDBStorage {
             try db.execute(sql: "PRAGMA cipher_plaintext_header_size = 32")
         }
         configuration.defaultTransactionKind = .immediate
-        self.configuration = configuration
-
-        pool = try DatabasePool(path: dbURL.path, configuration: configuration)
-        Logger.debug("dbURL: \(dbURL)")
-
-        OWSFileSystem.protectFileOrFolder(atPath: dbURL.path)
+        configuration.allowsUnsafeTransactions = true
+        return configuration
     }
 }
 
 // MARK: -
 
-private struct GRDBKeySpecSource {
+public struct GRDBKeySpecSource {
     // 256 bit key + 128 bit salt
     private let kSQLCipherKeySpecLength: UInt = 48
 
@@ -475,7 +503,7 @@ private struct GRDBKeySpecSource {
         return passphrase
     }
 
-    func fetchData() throws -> Data {
+    public func fetchData() throws -> Data {
         return try CurrentAppContext().keychainStorage().data(forService: keyServiceName, key: keyName)
     }
 
@@ -496,7 +524,7 @@ private struct GRDBKeySpecSource {
         }
     }
 
-    func store(data: Data) throws {
+    public func store(data: Data) throws {
         guard data.count == kSQLCipherKeySpecLength else {
             owsFail("unexpected keyspec length")
         }
@@ -507,15 +535,15 @@ private struct GRDBKeySpecSource {
 // MARK: -
 
 extension GRDBDatabaseStorageAdapter {
-    var databaseFilePath: String {
+    public var databaseFilePath: String {
         return databaseUrl.path
     }
 
-    var databaseWALFilePath: String {
+    public var databaseWALFilePath: String {
         return databaseUrl.path + "-wal"
     }
 
-    var databaseSHMFilePath: String {
+    public var databaseSHMFilePath: String {
         return databaseUrl.path + "-shm"
     }
 
@@ -565,39 +593,47 @@ public struct GrdbTruncationResult {
 extension GRDBDatabaseStorageAdapter {
     @objc
     public func syncTruncatingCheckpoint() throws {
+        guard let checkpointingQueue = storage.checkpointingQueue else {
+            return
+        }
+
         Logger.info("running truncating checkpoint.")
 
         SDSDatabaseStorage.shared.logFileSizes()
 
-        let result = try GRDBDatabaseStorageAdapter.checkpoint(pool: pool, mode: .truncate)
+        let result = try GRDBDatabaseStorageAdapter.checkpoint(checkpointingQueue: checkpointingQueue,
+                                                               mode: .truncate)
 
         Logger.info("walSizePages: \(result.walSizePages), pagesCheckpointed: \(result.pagesCheckpointed)")
 
         SDSDatabaseStorage.shared.logFileSizes()
     }
 
-    public static func checkpoint(pool: DatabasePool, mode: Database.CheckpointMode) throws -> GrdbTruncationResult {
-
-        // Use a short busy timeout when checkpointing the WAL.
-        // Another process may be active; we don't want to block for long.
-        //
-        // NOTE: This isn't necessary for .passive checkpoints; they never
-        //       block.
-        defer {
-            // Restore the default busy behavior.
-            GRDBStorage.useInfiniteBusyTimeout()
-        }
-        GRDBStorage.useShortBusyTimeout()
+    public static func checkpoint(checkpointingQueue: DatabaseQueue,
+                                  mode: Database.CheckpointMode) throws -> GrdbTruncationResult {
 
         var walSizePages: Int32 = 0
         var pagesCheckpointed: Int32 = 0
         try Bench(title: "Slow checkpoint: \(mode)", logIfLongerThan: 0.01, logInProduction: true) {
-            try pool.writeWithoutTransaction { db in
+            #if TESTABLE_BUILD
+            let startTime = CACurrentMediaTime()
+            #endif
+            try checkpointingQueue.inDatabase { db in
+                #if TESTABLE_BUILD
+                let startElapsedSeconds: TimeInterval = CACurrentMediaTime() - startTime
+                let slowStartSeconds: TimeInterval = TimeInterval(GRDBStorage.maxBusyTimeoutMs) / 1000
+                if startElapsedSeconds > slowStartSeconds * 2 {
+                    // maxBusyTimeoutMs isn't a hard limit, but slow starts should be very rare.
+                    let formattedTime = String(format: "%0.2fms", startElapsedSeconds * 1000)
+                    owsFailDebug("Slow checkpoint start: \(formattedTime)")
+                }
+                #endif
+
                 let code = sqlite3_wal_checkpoint_v2(db.sqliteConnection, nil, mode.rawValue, &walSizePages, &pagesCheckpointed)
                 switch code {
                 case SQLITE_OK:
                     if mode != .passive {
-                        Logger.info("Checkpoint \(mode) succeeded.")
+                        Logger.info("Checkpoint succeeded: \(mode).")
                     }
                     break
                 case SQLITE_BUSY:

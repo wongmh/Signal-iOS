@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -7,8 +7,11 @@ import PromiseKit
 
 @objc(SSKRotateSignedPreKeyOperation)
 public class RotateSignedPreKeyOperation: OWSOperation {
+
+    // MARK: - Dependencies
+
     private var tsAccountManager: TSAccountManager {
-        return TSAccountManager.sharedInstance()
+        return TSAccountManager.shared()
     }
 
     private var accountServiceClient: AccountServiceClient {
@@ -18,6 +21,16 @@ public class RotateSignedPreKeyOperation: OWSOperation {
     private var signedPreKeyStore: SSKSignedPreKeyStore {
         return SSKEnvironment.shared.signedPreKeyStore
     }
+
+    private var databaseStorage: SDSDatabaseStorage {
+        return SDSDatabaseStorage.shared
+    }
+
+    private var messageProcessing: MessageProcessing {
+        return SSKEnvironment.shared.messageProcessing
+    }
+
+    // MARK: -
 
     public override func run() {
         Logger.debug("")
@@ -29,41 +42,49 @@ public class RotateSignedPreKeyOperation: OWSOperation {
 
         let signedPreKeyRecord: SignedPreKeyRecord = self.signedPreKeyStore.generateRandomSignedRecord()
 
-        self.signedPreKeyStore.storeSignedPreKey(signedPreKeyRecord.id, signedPreKeyRecord: signedPreKeyRecord)
-        firstly {
+        firstly(on: .global()) { () -> Promise<Void> in
+            self.messageProcessing.flushMessageFetchingAndDecryptionPromise()
+        }.then(on: .global()) { () -> Promise<Void> in
+            self.databaseStorage.write { transaction in
+                self.signedPreKeyStore.storeSignedPreKey(signedPreKeyRecord.id,
+                                                         signedPreKeyRecord: signedPreKeyRecord,
+                                                         transaction: transaction)
+            }
             return self.accountServiceClient.setSignedPreKey(signedPreKeyRecord)
-        }.done(on: DispatchQueue.global()) {
+        }.done(on: .global()) { () in
             Logger.info("Successfully uploaded signed PreKey")
             signedPreKeyRecord.markAsAcceptedByService()
-            self.signedPreKeyStore.storeSignedPreKey(signedPreKeyRecord.id, signedPreKeyRecord: signedPreKeyRecord)
+            self.databaseStorage.write { transaction in
+                self.signedPreKeyStore.storeSignedPreKey(signedPreKeyRecord.id,
+                                                         signedPreKeyRecord: signedPreKeyRecord,
+                                                         transaction: transaction)
+            }
             self.signedPreKeyStore.setCurrentSignedPrekeyId(signedPreKeyRecord.id)
 
             TSPreKeyManager.clearPreKeyUpdateFailureCount()
             TSPreKeyManager.clearSignedPreKeyRecords()
 
-            Logger.debug("done")
+            Logger.info("done")
             self.reportSuccess()
-        }.catch { error in
+        }.catch(on: .global()) { error in
             self.reportError(withUndefinedRetry: error)
-        }.retainUntilComplete()
+        }
     }
 
     override public func didFail(error: Error) {
-        switch error {
-        case let networkManagerError as NetworkManagerError:
-            guard !networkManagerError.isNetworkError else {
-                Logger.debug("don't report SPK rotation failure w/ network error")
-                return
-            }
-
-            guard networkManagerError.statusCode >= 400 && networkManagerError.statusCode <= 599 else {
-                Logger.debug("don't report SPK rotation failure w/ non application error")
-                return
-            }
-
-            TSPreKeyManager.incrementPreKeyUpdateFailureCount()
-        default:
-            Logger.debug("don't report SPK rotation failure w/ non NetworkManager error: \(error)")
+        guard !IsNetworkConnectivityFailure(error) else {
+            Logger.debug("don't report SPK rotation failure w/ network error")
+            return
         }
+        guard let statusCode = error.httpStatusCode else {
+            Logger.debug("don't report SPK rotation failure w/ non NetworkManager error: \(error)")
+            return
+        }
+        guard statusCode >= 400 && statusCode <= 599 else {
+            Logger.debug("don't report SPK rotation failure w/ non application error")
+            return
+        }
+
+        TSPreKeyManager.incrementPreKeyUpdateFailureCount()
     }
 }

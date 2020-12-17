@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSConstants.h"
@@ -8,7 +8,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 extern NSString *const TSRegistrationErrorDomain;
 extern NSString *const TSRegistrationErrorUserInfoHTTPStatus;
-extern NSString *const RegistrationStateDidChangeNotification;
+extern NSNotificationName const NSNotificationNameRegistrationStateDidChange;
 extern NSString *const TSRemoteAttestationAuthErrorKey;
 extern NSString *const kNSNotificationName_LocalNumberDidChange;
 
@@ -28,6 +28,8 @@ typedef NS_ENUM(NSUInteger, OWSRegistrationState) {
     OWSRegistrationState_Reregistering,
 };
 
+NSString *NSStringForOWSRegistrationState(OWSRegistrationState value);
+
 @interface TSAccountManager : NSObject
 
 @property (nonatomic, readonly) SDSKeyValueStore *keyValueStore;
@@ -37,7 +39,7 @@ typedef NS_ENUM(NSUInteger, OWSRegistrationState) {
 
 #pragma mark - Initializers
 
-+ (TSAccountManager *)sharedInstance;
++ (TSAccountManager *)shared;
 
 - (void)warmCaches;
 
@@ -50,6 +52,9 @@ typedef NS_ENUM(NSUInteger, OWSRegistrationState) {
  */
 @property (readonly) BOOL isRegistered;
 @property (readonly) BOOL isRegisteredAndReady;
+
+// useful before account state has been cached, otherwise you should prefer `isRegistered`
+- (BOOL)isRegisteredWithTransaction:(SDSAnyReadTransaction *)transaction NS_SWIFT_NAME(isRegistered(transaction:));
 
 /**
  *  Returns current phone number for this device, which may not yet have been registered.
@@ -104,6 +109,16 @@ typedef NS_ENUM(NSUInteger, OWSRegistrationState) {
 
 - (UInt32)storedDeviceId;
 
+/// Onboarding state
+- (BOOL)isOnboarded;
+- (void)setIsOnboarded:(BOOL)isOnboarded transaction:(SDSAnyWriteTransaction *)transaction;
+
+- (BOOL)isDiscoverableByPhoneNumber;
+- (BOOL)hasDefinedIsDiscoverableByPhoneNumber;
+- (void)setIsDiscoverableByPhoneNumber:(BOOL)isDiscoverableByPhoneNumber
+                  updateStorageService:(BOOL)updateStorageService
+                           transaction:(SDSAnyWriteTransaction *)transaction;
+
 #pragma mark - Register with phone number
 
 - (void)verifyAccountWithRequest:(TSRequest *)request
@@ -145,6 +160,13 @@ typedef NS_ENUM(NSUInteger, OWSRegistrationState) {
 - (BOOL)isDeregistered;
 - (void)setIsDeregistered:(BOOL)isDeregistered;
 
+#pragma mark - Transfer
+
+@property (nonatomic) BOOL isTransferInProgress;
+@property (nonatomic) BOOL wasTransferred;
+
+#pragma mark - Backup
+
 - (BOOL)hasPendingBackupRestoreDecision;
 - (void)setHasPendingBackupRestoreDecision:(BOOL)value;
 
@@ -165,11 +187,6 @@ typedef NS_ENUM(NSUInteger, OWSRegistrationState) {
 #ifdef TESTABLE_BUILD
 - (void)registerForTestsWithLocalNumber:(NSString *)localNumber uuid:(NSUUID *)uuid;
 #endif
-
-- (AnyPromise *)updateAccountAttributes __attribute__((warn_unused_result));
-
-// This should only be used during the registration process.
-- (AnyPromise *)performUpdateAccountAttributes __attribute__((warn_unused_result));
 
 @end
 

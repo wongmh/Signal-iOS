@@ -1,19 +1,12 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
 import SignalServiceKit
-import YYImage
 
 @objc
 public class StickerPackViewController: OWSViewController {
-
-    // MARK: - Dependencies
-
-    private var databaseStorage: SDSDatabaseStorage {
-        return SDSDatabaseStorage.shared
-    }
 
     // MARK: Properties
 
@@ -25,24 +18,18 @@ public class StickerPackViewController: OWSViewController {
 
     // MARK: Initializers
 
-    @available(*, unavailable, message:"use other constructor instead.")
-    required public init?(coder aDecoder: NSCoder) {
-        notImplemented()
-    }
-
     @objc
     public required init(stickerPackInfo: StickerPackInfo) {
         self.stickerPackInfo = stickerPackInfo
         self.dataSource = TransientStickerPackDataSource(stickerPackInfo: stickerPackInfo,
                                                          shouldDownloadAllStickers: true)
 
-        super.init(nibName: nil, bundle: nil)
+        super.init()
 
         stickerCollectionView.stickerDelegate = self
         stickerCollectionView.show(dataSource: dataSource)
         dataSource.add(delegate: self)
 
-        NotificationCenter.default.addObserver(self, selector: #selector(callDidChange), name: .OWSWindowManagerCallDidChange, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(didChangeStatusBarFrame), name: UIApplication.didChangeStatusBarFrameNotification, object: nil)
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(stickersOrPacksDidChange),
@@ -115,25 +102,23 @@ public class StickerPackViewController: OWSViewController {
         dismissButton.contentEdgeInsets = UIEdgeInsets(top: 20, leading: hMargin, bottom: 20, trailing: hMargin)
         dismissButton.accessibilityIdentifier = UIView.accessibilityIdentifier(in: self, name: "dismissButton")
 
-        coverView.autoSetDimensions(to: CGSize(width: 64, height: 64))
+        coverView.autoSetDimensions(to: CGSize(square: 64))
         coverView.setCompressionResistanceHigh()
         coverView.setContentHuggingHigh()
 
         titleLabel.textColor = Theme.darkThemePrimaryColor
         titleLabel.numberOfLines = 2
         titleLabel.lineBreakMode = .byWordWrapping
-        titleLabel.font = UIFont.ows_dynamicTypeTitle1.ows_semibold()
+        titleLabel.font = UIFont.ows_dynamicTypeTitle1.ows_semibold
 
         authorLabel.font = UIFont.ows_dynamicTypeBody
 
-        defaultPackIconView.setTemplateImageName("check-circle-filled-16", tintColor: UIColor.ows_signalBlue)
+        defaultPackIconView.setTemplateImageName("check-circle-filled-16", tintColor: Theme.accentBlueColor)
         defaultPackIconView.isHidden = true
 
-        if FeatureFlags.stickerSharing {
-            shareButton.setTemplateImageName("forward-solid-24", tintColor: Theme.darkThemePrimaryColor)
-            shareButton.addTarget(self, action: #selector(shareButtonPressed(sender:)), for: .touchUpInside)
-            shareButton.accessibilityIdentifier = UIView.accessibilityIdentifier(in: self, name: "shareButton")
-        }
+        shareButton.setTemplateImageName("forward-solid-24", tintColor: Theme.darkThemePrimaryColor)
+        shareButton.addTarget(self, action: #selector(shareButtonPressed(sender:)), for: .touchUpInside)
+        shareButton.accessibilityIdentifier = UIView.accessibilityIdentifier(in: self, name: "shareButton")
 
         view.addSubview(dismissButton)
         dismissButton.autoPinEdge(toSuperviewEdge: .leading)
@@ -169,16 +154,16 @@ public class StickerPackViewController: OWSViewController {
         stickerCollectionView.autoPinEdge(.top, to: .bottom, of: headerStack)
 
         let installButton = OWSFlatButton.button(title: NSLocalizedString("STICKERS_INSTALL_BUTTON", comment: "Label for the 'install sticker pack' button."),
-                                             font: UIFont.ows_dynamicTypeBody.ows_semibold(),
-                                             titleColor: UIColor.ows_signalBlue,
+                                             font: UIFont.ows_dynamicTypeBody.ows_semibold,
+                                             titleColor: Theme.accentBlueColor,
                                              backgroundColor: UIColor.white,
                                              target: self,
                                              selector: #selector(didTapInstall))
         self.installButton = installButton
         installButton.accessibilityIdentifier = UIView.accessibilityIdentifier(in: self, name: "installButton")
         let uninstallButton = OWSFlatButton.button(title: NSLocalizedString("STICKERS_UNINSTALL_BUTTON", comment: "Label for the 'uninstall sticker pack' button."),
-                                             font: UIFont.ows_dynamicTypeBody.ows_semibold(),
-                                             titleColor: UIColor.ows_signalBlue,
+                                             font: UIFont.ows_dynamicTypeBody.ows_semibold,
+                                             titleColor: Theme.accentBlueColor,
                                              backgroundColor: UIColor.white,
                                              target: self,
                                              selector: #selector(didTapUninstall))
@@ -220,7 +205,7 @@ public class StickerPackViewController: OWSViewController {
     }
 
     private let dismissButton = UIButton()
-    private let coverView = YYAnimatedImageView()
+    private let coverView = UIView()
     private let titleLabel = UILabel()
     private let authorLabel = UILabel()
     private let defaultPackIconView = UIImageView()
@@ -273,7 +258,7 @@ public class StickerPackViewController: OWSViewController {
         authorLabel.text = stickerPack.author?.filterForDisplay
 
         let isDefaultStickerPack = StickerManager.isDefaultStickerPack(stickerPack.info)
-        authorLabel.textColor = isDefaultStickerPack ? UIColor.ows_signalBlue : Theme.darkThemePrimaryColor
+        authorLabel.textColor = isDefaultStickerPack ? Theme.accentBlueColor : Theme.darkThemePrimaryColor
         defaultPackIconView.isHidden = !isDefaultStickerPack
 
         // We need to consult StickerManager for the latest "isInstalled"
@@ -288,39 +273,29 @@ public class StickerPackViewController: OWSViewController {
     }
 
     private func updateCover() {
+        for subview in coverView.subviews {
+            subview.removeFromSuperview()
+        }
         guard let stickerPack = dataSource.getStickerPack() else { return }
-
         let coverInfo = stickerPack.coverInfo
-        guard let filePath = dataSource.filePath(forSticker: coverInfo) else {
-            // This can happen if the pack hasn't been saved yet, e.g.
-            // this view was opened from a sticker pack URL or share.
-            Logger.warn("Missing sticker data file path.")
+        guard let stickerView = StickerView.stickerView(forStickerInfo: coverInfo, dataSource: dataSource) else {
             return
         }
-        guard NSData.ows_isValidImage(atPath: filePath, mimeType: OWSMimeTypeImageWebp) else {
-            owsFailDebug("Invalid sticker.")
-            return
-        }
-        guard let stickerImage = YYImage(contentsOfFile: filePath) else {
-            owsFailDebug("Sticker could not be parsed.")
-            return
-        }
-
-        coverView.image = stickerImage
+        coverView.addSubview(stickerView)
+        stickerView.autoPinEdgesToSuperviewEdges()
     }
 
     private func updateInsets() {
         UIView.setAnimationsEnabled(false)
 
-        if #available(iOS 11.0, *) {
-            if (!CurrentAppContext().isMainApp) {
-                self.additionalSafeAreaInsets = .zero
-            } else if OWSWindowManager.shared.hasCall {
-                self.additionalSafeAreaInsets = UIEdgeInsets(top: 20, leading: 0, bottom: 0, trailing: 0)
-            } else {
-                self.additionalSafeAreaInsets = .zero
-            }
+        if !CurrentAppContext().isMainApp {
+            self.additionalSafeAreaInsets = .zero
+        } else if OWSWindowManager.shared.hasCall {
+            self.additionalSafeAreaInsets = UIEdgeInsets(top: 20, leading: 0, bottom: 0, trailing: 0)
+        } else {
+            self.additionalSafeAreaInsets = .zero
         }
+
         UIView.setAnimationsEnabled(true)
     }
 
@@ -415,13 +390,6 @@ public class StickerPackViewController: OWSViewController {
         }
 
         StickerSharingViewController.shareStickerPack(stickerPack.info, from: self)
-    }
-
-    @objc
-    public func callDidChange() {
-        Logger.debug("")
-
-        updateContent()
     }
 
     @objc

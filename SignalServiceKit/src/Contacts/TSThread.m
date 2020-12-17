@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSThread.h"
@@ -38,15 +38,24 @@ ConversationColorName const ConversationColorNamePlum = @"pink";
 ConversationColorName const ConversationColorNameTaupe = @"blue_grey";
 ConversationColorName const ConversationColorNameSteel = @"grey";
 
-ConversationColorName const kConversationColorName_Default = ConversationColorNameSteel;
+ConversationColorName const ConversationColorNameDefault = ConversationColorNameSteel;
 
 @interface TSThread ()
 
 @property (nonatomic, nullable) NSDate *creationDate;
 @property (nonatomic) BOOL isArchived;
+@property (nonatomic) BOOL isMarkedUnread;
+
 @property (nonatomic, copy, nullable) NSString *messageDraft;
+@property (nonatomic, nullable) MessageBodyRanges *messageDraftBodyRanges;
+
 @property (atomic, nullable) NSDate *mutedUntilDate;
 @property (nonatomic) int64_t lastInteractionRowId;
+
+@property (nonatomic) uint64_t lastVisibleSortId;
+@property (nonatomic) double lastVisibleSortIdOnScreenPercentage;
+
+@property (nonatomic) TSThreadMentionNotificationMode mentionNotificationMode;
 
 @end
 
@@ -63,6 +72,11 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
     return SSKEnvironment.shared.tsAccountManager;
 }
 
+- (ThreadReadCache *)threadReadCache
+{
+    return SSKEnvironment.shared.modelReadCaches.threadReadCache;
+}
+
 #pragma mark -
 
 + (NSString *)collection {
@@ -72,6 +86,11 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
 + (BOOL)shouldBeIndexedForFTS
 {
     return YES;
+}
+
+- (instancetype)init
+{
+    return [super init];
 }
 
 - (instancetype)initWithUniqueId:(NSString *)uniqueId
@@ -102,8 +121,13 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
            conversationColorName:(ConversationColorName)conversationColorName
                     creationDate:(nullable NSDate *)creationDate
                       isArchived:(BOOL)isArchived
+                  isMarkedUnread:(BOOL)isMarkedUnread
             lastInteractionRowId:(int64_t)lastInteractionRowId
+               lastVisibleSortId:(uint64_t)lastVisibleSortId
+lastVisibleSortIdOnScreenPercentage:(double)lastVisibleSortIdOnScreenPercentage
+         mentionNotificationMode:(TSThreadMentionNotificationMode)mentionNotificationMode
                     messageDraft:(nullable NSString *)messageDraft
+          messageDraftBodyRanges:(nullable MessageBodyRanges *)messageDraftBodyRanges
                   mutedUntilDate:(nullable NSDate *)mutedUntilDate
            shouldThreadBeVisible:(BOOL)shouldThreadBeVisible
 {
@@ -117,8 +141,13 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
     _conversationColorName = conversationColorName;
     _creationDate = creationDate;
     _isArchived = isArchived;
+    _isMarkedUnread = isMarkedUnread;
     _lastInteractionRowId = lastInteractionRowId;
+    _lastVisibleSortId = lastVisibleSortId;
+    _lastVisibleSortIdOnScreenPercentage = lastVisibleSortIdOnScreenPercentage;
+    _mentionNotificationMode = mentionNotificationMode;
     _messageDraft = messageDraft;
+    _messageDraftBodyRanges = messageDraftBodyRanges;
     _mutedUntilDate = mutedUntilDate;
     _shouldThreadBeVisible = shouldThreadBeVisible;
 
@@ -162,7 +191,7 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
 
         if (!mappedColorName) {
             OWSFailDebug(@"failure: unexpected unmappable conversationColorName: %@", _conversationColorName);
-            mappedColorName = kConversationColorName_Default;
+            mappedColorName = ConversationColorNameDefault;
         }
 
         _conversationColorName = mappedColorName;
@@ -188,6 +217,28 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
     if (self.shouldThreadBeVisible && ![SSKPreferences hasSavedThreadWithTransaction:transaction]) {
         [SSKPreferences setHasSavedThread:YES transaction:transaction];
     }
+
+    [self.threadReadCache didInsertOrUpdateThread:self transaction:transaction];
+}
+
+- (void)anyDidUpdateWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidUpdateWithTransaction:transaction];
+
+    if (self.shouldThreadBeVisible && ![SSKPreferences hasSavedThreadWithTransaction:transaction]) {
+        [SSKPreferences setHasSavedThread:YES transaction:transaction];
+    }
+
+    [self.threadReadCache didInsertOrUpdateThread:self transaction:transaction];
+
+    [PinnedThreadManager handleUpdatedThread:self transaction:transaction];
+}
+
+- (void)anyDidRemoveWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidRemoveWithTransaction:transaction];
+
+    [self.threadReadCache didRemoveThread:self transaction:transaction];
 }
 
 - (void)anyWillRemoveWithTransaction:(SDSAnyWriteTransaction *)transaction
@@ -195,6 +246,11 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
     [super anyWillRemoveWithTransaction:transaction];
 
     [self removeAllThreadInteractionsWithTransaction:transaction];
+
+    // TODO: If we ever use transaction finalizations for more than
+    // de-bouncing thread touches, we should promote this to TSYapDatabaseObject
+    // (or at least include it in the "will remove" hook for any relevant models.
+    [transaction addRemovedFinalizationKey:self.transactionFinalizationKey];
 }
 
 - (void)removeAllThreadInteractionsWithTransaction:(SDSAnyWriteTransaction *)transaction
@@ -228,6 +284,14 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
         }
         [interaction anyRemoveWithTransaction:transaction];
     }
+
+    // As an optimization, we called `ignoreInteractionUpdatesForThreadUniqueId` so as not
+    // to re-save the thread after *each* interaction deletion. However, we still need to resave
+    // the thread just once, after all the interactions are deleted.
+    [self anyUpdateWithTransaction:transaction
+                             block:^(TSThread *thread) {
+                                 thread.lastInteractionRowId = 0;
+                             }];
 }
 
 - (BOOL)isNoteToSelf
@@ -241,12 +305,6 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
 }
 
 #pragma mark - To be subclassed.
-
-- (BOOL)isGroupThread {
-    OWSAbstractMethod();
-
-    return NO;
-}
 
 - (NSArray<SignalServiceAddress *> *)recipientAddresses
 {
@@ -265,16 +323,16 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
 /**
  * Iterate over this thread's interactions
  */
-- (void)enumerateInteractionsWithTransaction:(SDSAnyReadTransaction *)transaction
-                                  usingBlock:(void (^)(TSInteraction *interaction))block
+- (void)enumerateRecentInteractionsWithTransaction:(SDSAnyReadTransaction *)transaction
+                                        usingBlock:(void (^)(TSInteraction *interaction))block
 {
     NSError *error;
     InteractionFinder *interactionFinder = [[InteractionFinder alloc] initWithThreadUniqueId:self.uniqueId];
-    [interactionFinder enumerateInteractionsWithTransaction:transaction
-                                                      error:&error
-                                                      block:^(TSInteraction *interaction, BOOL *stop) {
-                                                          block(interaction);
-                                                      }];
+    [interactionFinder enumerateRecentInteractionsWithTransaction:transaction
+                                                            error:&error
+                                                            block:^(TSInteraction *interaction, BOOL *stop) {
+                                                                block(interaction);
+                                                            }];
     if (error != nil) {
         OWSFailDebug(@"Error during enumeration: %@", error);
     }
@@ -284,13 +342,13 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
  * Enumerates all the threads interactions. Note this will explode if you try to create a transaction in the block.
  * If you need a transaction, use the sister method: `enumerateInteractionsWithTransaction:usingBlock`
  */
-- (void)enumerateInteractionsUsingBlock:(void (^)(TSInteraction *interaction))block
+- (void)enumerateRecentInteractionsUsingBlock:(void (^)(TSInteraction *interaction))block
 {
     [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        [self enumerateInteractionsWithTransaction:transaction
-                                        usingBlock:^(TSInteraction *interaction) {
-                                            block(interaction);
-                                        }];
+        [self enumerateRecentInteractionsWithTransaction:transaction
+                                              usingBlock:^(TSInteraction *interaction) {
+                                                  block(interaction);
+                                              }];
     }];
 }
 
@@ -300,7 +358,7 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
 - (NSArray<TSInteraction *> *)allInteractions
 {
     NSMutableArray<TSInteraction *> *interactions = [NSMutableArray new];
-    [self enumerateInteractionsUsingBlock:^(TSInteraction *interaction) {
+    [self enumerateRecentInteractionsUsingBlock:^(TSInteraction *interaction) {
         [interactions addObject:interaction];
     }];
 
@@ -312,7 +370,7 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
 - (NSArray<TSInvalidIdentityKeyReceivingErrorMessage *> *)receivedMessagesForInvalidKey:(NSData *)key
 {
     NSMutableArray *errorMessages = [NSMutableArray new];
-    [self enumerateInteractionsUsingBlock:^(TSInteraction *interaction) {
+    [self enumerateRecentInteractionsUsingBlock:^(TSInteraction *interaction) {
         if ([interaction isKindOfClass:[TSInvalidIdentityKeyReceivingErrorMessage class]]) {
             TSInvalidIdentityKeyReceivingErrorMessage *error = (TSInvalidIdentityKeyReceivingErrorMessage *)interaction;
             @try {
@@ -335,36 +393,57 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
     return [[[InteractionFinder alloc] initWithThreadUniqueId:self.uniqueId] countWithTransaction:transaction];
 }
 
-- (NSArray<id<OWSReadTracking>> *)unseenMessagesWithTransaction:(SDSAnyReadTransaction *)transaction
+- (void)markAllAsReadAndUpdateStorageService:(BOOL)updateStorageService
+                                 transaction:(SDSAnyWriteTransaction *)transaction
 {
-    NSMutableArray<id<OWSReadTracking>> *messages = [NSMutableArray new];
-    NSError *error;
-    InteractionFinder *interactionFinder = [[InteractionFinder alloc] initWithThreadUniqueId:self.uniqueId];
-    [interactionFinder
-        enumerateUnseenInteractionsWithTransaction:transaction
-                                             error:&error
-                                             block:^(TSInteraction *interaction, BOOL *stop) {
-                                                 if (![interaction conformsToProtocol:@protocol(OWSReadTracking)]) {
-                                                     OWSFailDebug(@"Unexpected object in unseen messages: %@",
-                                                         interaction.class);
-                                                     return;
-                                                 }
-                                                 [messages addObject:(id<OWSReadTracking>)interaction];
-                                             }];
-    if (error != nil) {
-        OWSFailDebug(@"Error during enumeration: %@", error);
-    }
-    return [messages copy];
-}
+    BOOL hasPendingMessageRequest = [self hasPendingMessageRequestWithTransaction:transaction.unwrapGrdbWrite];
+    OWSReadCircumstance circumstance = hasPendingMessageRequest
+        ? OWSReadCircumstanceReadOnThisDeviceWhilePendingMessageRequest
+        : OWSReadCircumstanceReadOnThisDevice;
 
-- (void)markAllAsReadWithTransaction:(SDSAnyWriteTransaction *)transaction
-{
-    for (id<OWSReadTracking> message in [self unseenMessagesWithTransaction:transaction]) {
-        [message markAsReadAtTimestamp:[NSDate ows_millisecondTimeStamp] sendReadReceipt:YES transaction:transaction];
+    InteractionFinder *interactionFinder = [[InteractionFinder alloc] initWithThreadUniqueId:self.uniqueId];
+
+    for (id<OWSReadTracking> message in
+        [interactionFinder allUnreadMessagesWithTransaction:transaction.unwrapGrdbRead]) {
+        [message markAsReadAtTimestamp:[NSDate ows_millisecondTimeStamp]
+                                thread:self
+                          circumstance:circumstance
+                           transaction:transaction];
     }
+
+    [self clearMarkedAsUnreadAndUpdateStorageService:updateStorageService transaction:transaction];
 
     // Just to be defensive, we'll also check for unread messages.
-    OWSAssertDebug([self unseenMessagesWithTransaction:transaction].count < 1);
+    OWSAssertDebug([interactionFinder allUnreadMessagesWithTransaction:transaction.unwrapGrdbRead].count < 1);
+}
+
+- (void)clearMarkedAsUnreadAndUpdateStorageService:(BOOL)updateStorageService
+                                       transaction:(SDSAnyWriteTransaction *)transaction
+{
+    __block BOOL wasMarkedUnread;
+    [self anyUpdateWithTransaction:transaction
+                             block:^(TSThread *thread) {
+                                 wasMarkedUnread = thread.isMarkedUnread;
+                                 thread.isMarkedUnread = NO;
+                             }];
+
+    if (updateStorageService && wasMarkedUnread) {
+        [self recordPendingStorageServiceUpdates];
+    }
+}
+
+- (void)markAsUnreadAndUpdateStorageService:(BOOL)updateStorageService transaction:(SDSAnyWriteTransaction *)transaction
+{
+    __block BOOL wasMarkedUnread;
+    [self anyUpdateWithTransaction:transaction
+                             block:^(TSThread *thread) {
+                                 wasMarkedUnread = thread.isMarkedUnread;
+                                 thread.isMarkedUnread = YES;
+                             }];
+
+    if (updateStorageService && !wasMarkedUnread) {
+        [self recordPendingStorageServiceUpdates];
+    }
 }
 
 - (nullable TSInteraction *)lastInteractionForInboxWithTransaction:(SDSAnyReadTransaction *)transaction
@@ -374,15 +453,13 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
         mostRecentInteractionForInboxWithTransaction:transaction];
 }
 
-- (NSString *)lastMessageTextWithTransaction:(SDSAnyReadTransaction *)transaction
+- (nullable TSInteraction *)firstInteractionAtOrAroundSortId:(uint64_t)sortId
+                                                 transaction:(SDSAnyReadTransaction *)transaction
 {
-    TSInteraction *interaction = [self lastInteractionForInboxWithTransaction:transaction];
-    if ([interaction conformsToProtocol:@protocol(OWSPreviewText)]) {
-        id<OWSPreviewText> previewable = (id<OWSPreviewText>)interaction;
-        return [previewable previewTextWithTransaction:transaction].filterStringForDisplay;
-    } else {
-        return @"";
-    }
+    OWSAssertDebug(transaction);
+    return
+        [[[InteractionFinder alloc] initWithThreadUniqueId:self.uniqueId] firstInteractionAtOrAroundSortId:sortId
+                                                                                               transaction:transaction];
 }
 
 // Returns YES IFF the interaction should show up in the inbox as the last message.
@@ -412,9 +489,13 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
         }
     } else if ([interaction isKindOfClass:[TSInfoMessage class]]) {
         TSInfoMessage *infoMessage = (TSInfoMessage *)interaction;
-        if (infoMessage.messageType == TSInfoMessageVerificationStateChange) {
+        if (infoMessage.messageType == TSInfoMessageVerificationStateChange
+            || infoMessage.messageType == TSInfoMessageProfileUpdate) {
             return NO;
         }
+    }
+    if (interaction.isGroupMigrationMessage) {
+        return NO;
     }
 
     return YES;
@@ -453,7 +534,20 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
     OWSAssertDebug(message != nil);
     OWSAssertDebug(transaction != nil);
 
+    BOOL needsToClearLastVisibleSortId = self.lastVisibleSortId > 0 && wasMessageInserted;
+
     if (![self.class shouldInteractionAppearInInbox:message]) {
+
+        // We want to clear the last visible sort ID on any new message,
+        // even if the message doesn't appear in the inbox view.
+        if (needsToClearLastVisibleSortId) {
+            [self anyUpdateWithTransaction:transaction
+                                     block:^(TSThread *thread) {
+                                         thread.lastVisibleSortId = 0;
+                                         thread.lastVisibleSortIdOnScreenPercentage = 0;
+                                     }];
+        }
+
         return;
     }
 
@@ -474,15 +568,32 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
     }
 
     BOOL needsToUpdateLastInteractionRowId = messageSortId > self.lastInteractionRowId;
-    if (needsToMarkAsVisible || needsToClearArchived || needsToUpdateLastInteractionRowId) {
-        self.shouldThreadBeVisible = YES;
-        self.lastInteractionRowId = MAX(self.lastInteractionRowId, messageSortId);
-        if (needsToClearArchived) {
-            self.isArchived = NO;
-        }
-        [self anyOverwritingUpdateWithTransaction:transaction];
+
+    BOOL needsToClearIsMarkedUnread = self.isMarkedUnread && wasMessageInserted;
+
+    if (needsToMarkAsVisible || needsToClearArchived || needsToUpdateLastInteractionRowId
+        || needsToClearLastVisibleSortId || needsToClearIsMarkedUnread) {
+        [self anyUpdateWithTransaction:transaction
+                                 block:^(TSThread *thread) {
+                                     thread.shouldThreadBeVisible = YES;
+                                     thread.lastInteractionRowId = MAX(thread.lastInteractionRowId, messageSortId);
+                                     if (needsToClearArchived) {
+                                         thread.isArchived = NO;
+                                     }
+                                     if (needsToClearLastVisibleSortId) {
+                                         thread.lastVisibleSortId = 0;
+                                         thread.lastVisibleSortIdOnScreenPercentage = 0;
+                                     }
+                                     if (needsToClearIsMarkedUnread) {
+                                         thread.isMarkedUnread = NO;
+                                     }
+
+                                     if (needsToClearIsMarkedUnread || needsToClearArchived) {
+                                         [self recordPendingStorageServiceUpdates];
+                                     }
+                                 }];
     } else {
-        [self.databaseStorage touchThread:self transaction:transaction];
+        [self scheduleTouchFinalizationWithTransaction:transaction];
     }
 }
 
@@ -491,19 +602,47 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
     OWSAssertDebug(message != nil);
     OWSAssertDebug(transaction != nil);
 
-    if (![self.class shouldInteractionAppearInInbox:message]) {
-        return;
-    }
-
     int64_t messageSortId = [self messageSortIdForMessage:message transaction:transaction];
     BOOL needsToUpdateLastInteractionRowId = messageSortId == self.lastInteractionRowId;
-    if (needsToUpdateLastInteractionRowId) {
-        TSInteraction *_Nullable latestInteraction = [self lastInteractionForInboxWithTransaction:transaction];
-        self.lastInteractionRowId = latestInteraction ? latestInteraction.sortId : 0;
-        [self anyOverwritingUpdateWithTransaction:transaction];
+
+    BOOL needsToUpdateLastVisibleSortId = self.lastVisibleSortId == messageSortId;
+
+    if (needsToUpdateLastInteractionRowId || needsToUpdateLastVisibleSortId) {
+        [self anyUpdateWithTransaction:transaction
+                                 block:^(TSThread *thread) {
+                                     if (needsToUpdateLastInteractionRowId) {
+                                         TSInteraction *_Nullable latestInteraction =
+                                             [thread lastInteractionForInboxWithTransaction:transaction];
+                                         thread.lastInteractionRowId = latestInteraction ? latestInteraction.sortId : 0;
+                                     }
+
+                                     if (needsToUpdateLastVisibleSortId) {
+                                         TSInteraction *_Nullable messageBeforeDeletedMessage =
+                                             [thread firstInteractionAtOrAroundSortId:thread.lastVisibleSortId
+                                                                          transaction:transaction];
+                                         thread.lastVisibleSortId
+                                             = messageBeforeDeletedMessage ? messageBeforeDeletedMessage.sortId : 0;
+                                         thread.lastVisibleSortIdOnScreenPercentage = 1;
+                                     }
+                                 }];
     } else {
-        [self.databaseStorage touchThread:self transaction:transaction];
+        [self scheduleTouchFinalizationWithTransaction:transaction];
     }
+}
+
+- (void)scheduleTouchFinalizationWithTransaction:(SDSAnyWriteTransaction *)transactionForMethod
+{
+    OWSAssertDebug(transactionForMethod != nil);
+
+    // If we insert, update or remove N interactions in a given
+    // transactions, we don't need to touch the same thread more
+    // than once.
+    [transactionForMethod addTransactionFinalizationBlockForKey:self.transactionFinalizationKey
+                                                          block:^(SDSAnyWriteTransaction *transactionForBlock) {
+                                                              [self.databaseStorage touchThread:self
+                                                                                  shouldReindex:NO
+                                                                                    transaction:transactionForBlock];
+                                                          }];
 }
 
 - (void)softDeleteThreadWithTransaction:(SDSAnyWriteTransaction *)transaction
@@ -514,6 +653,11 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
                                  thread.messageDraft = nil;
                                  thread.shouldThreadBeVisible = NO;
                              }];
+}
+
+- (BOOL)hasPendingMessageRequestWithTransaction:(GRDBReadTransaction *)transaction
+{
+    return [GRDBThreadFinder hasPendingMessageRequestWithThread:self transaction:transaction];
 }
 
 #pragma mark - Disappearing Messages
@@ -552,41 +696,99 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
     return [archivalDate compare:lastMessageDate] != NSOrderedAscending;
 }
 
-- (void)archiveThreadWithTransaction:(SDSAnyWriteTransaction *)transaction
+- (void)archiveThreadAndUpdateStorageService:(BOOL)updateStorageService
+                                 transaction:(SDSAnyWriteTransaction *)transaction
 {
     [self anyUpdateWithTransaction:transaction
                              block:^(TSThread *thread) {
                                  thread.isArchived = YES;
                              }];
 
-    [self markAllAsReadWithTransaction:transaction];
+    // We already update storage service below, so we don't need to here.
+    [self markAllAsReadAndUpdateStorageService:NO transaction:transaction];
+
+    if (updateStorageService) {
+        [self recordPendingStorageServiceUpdates];
+    }
 }
 
-- (void)unarchiveThreadWithTransaction:(SDSAnyWriteTransaction *)transaction
+- (void)unarchiveThreadAndUpdateStorageService:(BOOL)updateStorageService
+                                   transaction:(SDSAnyWriteTransaction *)transaction
 {
     [self anyUpdateWithTransaction:transaction
                              block:^(TSThread *thread) {
                                  thread.isArchived = NO;
                              }];
+
+    if (updateStorageService) {
+        [self recordPendingStorageServiceUpdates];
+    }
+}
+
+- (void)unarchiveAndMarkVisibleThreadWithUpdateStorageService:(BOOL)updateStorageService
+                                                  transaction:(SDSAnyWriteTransaction *)transaction
+{
+    [self anyUpdateWithTransaction:transaction
+                             block:^(TSThread *thread) {
+                                 thread.isArchived = NO;
+                                 thread.shouldThreadBeVisible = YES;
+                             }];
+
+    if (updateStorageService) {
+        [self recordPendingStorageServiceUpdates];
+    }
+}
+
+- (void)recordPendingStorageServiceUpdates
+{
+    if ([self isKindOfClass:[TSGroupThread class]]) {
+        TSGroupThread *groupThread = (TSGroupThread *)self;
+        [SSKEnvironment.shared.storageServiceManager recordPendingUpdatesWithGroupModel:groupThread.groupModel];
+    } else if ([self isKindOfClass:[TSContactThread class]]) {
+        TSContactThread *contactThread = (TSContactThread *)self;
+        [SSKEnvironment.shared.storageServiceManager
+            recordPendingUpdatesWithUpdatedAddresses:@[ contactThread.contactAddress ]];
+    } else {
+        OWSFailDebug(@"unexpected thread type");
+    }
 }
 
 #pragma mark - Drafts
 
-- (NSString *)currentDraftWithTransaction:(SDSAnyReadTransaction *)transaction
+- (nullable MessageBody *)currentDraftWithTransaction:(SDSAnyReadTransaction *)transaction
 {
     TSThread *_Nullable thread = [TSThread anyFetchWithUniqueId:self.uniqueId transaction:transaction];
     if (thread.messageDraft != nil) {
-        return thread.messageDraft;
+        return [[MessageBody alloc] initWithText:thread.messageDraft
+                                          ranges:thread.messageDraftBodyRanges ?: MessageBodyRanges.empty];
     } else {
-        return @"";
+        return nil;
     }
 }
 
-- (void)updateWithDraft:(NSString *)draftString transaction:(SDSAnyWriteTransaction *)transaction
+- (void)updateWithDraft:(nullable MessageBody *)draftMessageBody transaction:(SDSAnyWriteTransaction *)transaction
 {
     [self anyUpdateWithTransaction:transaction
                              block:^(TSThread *thread) {
-                                 thread.messageDraft = draftString;
+                                 thread.messageDraft = draftMessageBody.text;
+                                 thread.messageDraftBodyRanges = draftMessageBody.ranges;
+                             }];
+}
+
+#pragma mark - Last Visible
+
+- (void)updateWithLastVisibleSortId:(uint64_t)lastVisibleSortId
+                 onScreenPercentage:(double)onScreenPercentage
+                        transaction:(SDSAnyWriteTransaction *)transaction
+{
+    OWSAssertDebug(onScreenPercentage >= 0);
+    OWSAssertDebug(onScreenPercentage <= 1);
+    OWSAssertDebug(transaction);
+
+    [self anyUpdateWithTransaction:transaction
+                             block:^(TSThread *thread) {
+                                 thread.lastVisibleSortId = lastVisibleSortId;
+                                 thread.lastVisibleSortIdOnScreenPercentage = onScreenPercentage;
                              }];
 }
 
@@ -600,11 +802,20 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
             [mutedUntilDate timeIntervalSinceDate:now] > 0);
 }
 
-- (void)updateWithMutedUntilDate:(NSDate *)mutedUntilDate transaction:(SDSAnyWriteTransaction *)transaction
+- (void)updateWithMutedUntilDate:(nullable NSDate *)mutedUntilDate transaction:(SDSAnyWriteTransaction *)transaction
 {
     [self anyUpdateWithTransaction:transaction
                              block:^(TSThread *thread) {
                                  [thread setMutedUntilDate:mutedUntilDate];
+                             }];
+}
+
+- (void)updateWithMentionNotificationMode:(TSThreadMentionNotificationMode)mentionNotificationMode
+                              transaction:(SDSAnyWriteTransaction *)transaction
+{
+    [self anyUpdateWithTransaction:transaction
+                             block:^(TSThread *thread) {
+                                 thread.mentionNotificationMode = mentionNotificationMode;
                              }];
 }
 
@@ -636,7 +847,7 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
 
 + (NSArray<ConversationColorName> *)conversationColorNames
 {
-    return [self.colorNamesForNewConversation arrayByAddingObject:kConversationColorName_Default];
+    return [self.colorNamesForNewConversation arrayByAddingObject:ConversationColorNameDefault];
 }
 
 + (ConversationColorName)stableConversationColorNameForString:(NSString *)colorSeed
@@ -672,7 +883,7 @@ ConversationColorName const kConversationColorName_Default = ConversationColorNa
 
     if (!mappedColorName) {
         OWSFailDebug(@"failure: unexpected unmappable legacyColorName: %@", legacyColorName);
-        return kConversationColorName_Default;
+        return ConversationColorNameDefault;
     }
 
     return mappedColorName;

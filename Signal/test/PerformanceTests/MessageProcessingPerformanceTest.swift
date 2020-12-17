@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import XCTest
@@ -46,12 +46,15 @@ class MessageProcessingPerformanceTest: PerformanceBaseTest {
     override func setUp() {
         super.setUp()
 
+        storageCoordinator.useGRDBForTests()
+        try! databaseStorage.grdbStorage.setupUIDatabase()
+
         // for unit tests, we must manually start the decryptJobQueue
         SSKEnvironment.shared.messageDecryptJobQueue.setup()
 
         let dbObserver = BlockObserver(block: { [weak self] in self?.dbObserverBlock?() })
         self.dbObserver = dbObserver
-        databaseStorage.add(databaseStorageObserver: dbObserver)
+        databaseStorage.appendUIDatabaseSnapshotDelegate(dbObserver)
     }
 
     override func tearDown() {
@@ -62,20 +65,10 @@ class MessageProcessingPerformanceTest: PerformanceBaseTest {
     // MARK: - Tests
 
     func testGRDBPerf_messageProcessing() {
-        storageCoordinator.useGRDBForTests()
-        try! databaseStorage.grdbStorage.setupUIDatabase()
         measureMetrics(XCTestCase.defaultPerformanceMetrics, automaticallyStartMeasuring: false) {
             processIncomingMessages()
         }
         databaseStorage.grdbStorage.testing_tearDownUIDatabase()
-    }
-
-    func testYapDBPerf_messageProcessing() {
-        // Getting this working will require a new observer pattern.
-        storageCoordinator.useYDBForTests()
-        measureMetrics(XCTestCase.defaultPerformanceMetrics, automaticallyStartMeasuring: false) {
-            processIncomingMessages()
-        }
     }
 
     func processIncomingMessages() {
@@ -103,13 +96,13 @@ class MessageProcessingPerformanceTest: PerformanceBaseTest {
             return try! envelopeBuilder.buildSerializedData()
         }
 
-        let envelopeDatas: [Data] = (0..<500).map { _ in buildEnvelopeData() }
+        let envelopeCount: Int = DebugFlags.fastPerfTests ? 5 : 500
+        let envelopeDatas: [Data] = (0..<envelopeCount).map { _ in buildEnvelopeData() }
 
         let expectMessagesProcessed = expectation(description: "messages processed")
-        var hasFulfilled = false
+        let hasFulfilled = AtomicBool(false)
         let fulfillOnce = {
-            if !hasFulfilled {
-                hasFulfilled = true
+            if hasFulfilled.tryToSetFlag() {
                 expectMessagesProcessed.fulfill()
             }
         }
@@ -118,14 +111,14 @@ class MessageProcessingPerformanceTest: PerformanceBaseTest {
             let messageCount = self.databaseStorage.read { transaction in
                 return TSInteraction.anyCount(transaction: transaction)
             }
-            if (messageCount == envelopeDatas.count) {
+            if messageCount == envelopeDatas.count {
                 fulfillOnce()
             }
         }
 
         startMeasuring()
         for envelopeData in envelopeDatas {
-            messageReceiver.handleReceivedEnvelopeData(envelopeData)
+            messageReceiver.handleReceivedEnvelopeData(envelopeData, serverDeliveryTimestamp: 0)
         }
 
         waitForExpectations(timeout: 15.0) { _ in
@@ -143,21 +136,25 @@ class MessageProcessingPerformanceTest: PerformanceBaseTest {
     }
 }
 
-private class BlockObserver: SDSDatabaseStorageObserver {
+private class BlockObserver: UIDatabaseSnapshotDelegate {
     let block: () -> Void
     init(block: @escaping () -> Void) {
         self.block = block
     }
 
-    func databaseStorageDidUpdate(change: SDSDatabaseStorageChange) {
+    func uiDatabaseSnapshotWillUpdate() {
+        AssertIsOnMainThread()
+    }
+
+    func uiDatabaseSnapshotDidUpdate(databaseChanges: UIDatabaseChanges) {
         block()
     }
 
-    func databaseStorageDidUpdateExternally() {
+    func uiDatabaseSnapshotDidUpdateExternally() {
         block()
     }
 
-    func databaseStorageDidReset() {
+    func uiDatabaseSnapshotDidReset() {
         block()
     }
 }

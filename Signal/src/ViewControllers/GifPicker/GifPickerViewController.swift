@@ -1,10 +1,9 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
 import SignalServiceKit
-import Reachability
 import SignalMessaging
 import PromiseKit
 
@@ -21,13 +20,9 @@ public class GifPickerNavigationViewController: OWSNavigationController {
     }()
 
     @objc
-    init() {
-        super.init(owsNavbar: ())
+    override init() {
+        super.init()
         pushViewController(gifPickerViewController, animated: false)
-    }
-
-    required init?(coder aDecoder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
     }
 }
 
@@ -56,8 +51,8 @@ extension GifPickerNavigationViewController: AttachmentApprovalViewControllerDel
 
     public func attachmentApproval(_ attachmentApproval: AttachmentApprovalViewController,
                                    didApproveAttachments attachments: [SignalAttachment],
-                                   messageText: String?) {
-        approvalDelegate?.attachmentApproval(attachmentApproval, didApproveAttachments: attachments, messageText: messageText)
+                                   messageBody: MessageBody?) {
+        approvalDelegate?.attachmentApproval(attachmentApproval, didApproveAttachments: attachments, messageBody: messageBody)
     }
 
     public func attachmentApprovalDidCancel(_ attachmentApproval: AttachmentApprovalViewController) {
@@ -65,8 +60,8 @@ extension GifPickerNavigationViewController: AttachmentApprovalViewControllerDel
     }
 
     public func attachmentApproval(_ attachmentApproval: AttachmentApprovalViewController,
-                                   didChangeMessageText newMessageText: String?) {
-        approvalDelegate?.attachmentApproval(attachmentApproval, didChangeMessageText: newMessageText)
+                                   didChangeMessageBody newMessageBody: MessageBody?) {
+        approvalDelegate?.attachmentApproval(attachmentApproval, didChangeMessageBody: newMessageBody)
     }
 
     public func attachmentApprovalBackButtonTitle() -> String {
@@ -75,6 +70,14 @@ extension GifPickerNavigationViewController: AttachmentApprovalViewControllerDel
 
     public var attachmentApprovalTextInputContextIdentifier: String? {
         return approvalDelegate?.attachmentApprovalTextInputContextIdentifier
+    }
+
+    public var attachmentApprovalRecipientNames: [String] {
+        return approvalDelegate?.attachmentApprovalRecipientNames ?? []
+    }
+
+    public var attachmentApprovalMentionableAddresses: [SignalServiceAddress] {
+        return approvalDelegate?.attachmentApprovalMentionableAddresses ?? []
     }
 }
 
@@ -112,26 +115,19 @@ class GifPickerViewController: OWSViewController, UISearchBarDelegate, UICollect
     var hasSelectedCell: Bool = false
     var imageInfos = [GiphyImageInfo]()
 
-    var reachability: Reachability?
-
     private let kCellReuseIdentifier = "kCellReuseIdentifier"
 
     var progressiveSearchTimer: Timer?
 
     // MARK: Initializers
 
-    @available(*, unavailable, message:"use other constructor instead.")
-    required init?(coder aDecoder: NSCoder) {
-        notImplemented()
-    }
-
     @objc
-    required init() {
+    required override init() {
         self.searchBar = OWSSearchBar()
         self.layout = GifPickerLayout()
         self.collectionView = UICollectionView(frame: CGRect.zero, collectionViewLayout: self.layout)
 
-        super.init(nibName: nil, bundle: nil)
+        super.init()
 
         self.layout.delegate = self
     }
@@ -140,12 +136,6 @@ class GifPickerViewController: OWSViewController, UISearchBarDelegate, UICollect
         NotificationCenter.default.removeObserver(self)
 
         progressiveSearchTimer?.invalidate()
-    }
-
-    // MARK: - Dependencies
-
-    var giphyAPI: GiphyAPI {
-        return GiphyAPI.sharedInstance
     }
 
     // MARK: -
@@ -190,14 +180,13 @@ class GifPickerViewController: OWSViewController, UISearchBarDelegate, UICollect
 
         createViews()
 
-        reachability = Reachability.forInternetConnection()
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(reachabilityChanged),
-                                               name: NSNotification.Name.reachabilityChanged,
+                                               name: SSKReachability.owsReachabilityDidChange,
                                                object: nil)
         NotificationCenter.default.addObserver(self,
                                                selector: #selector(didBecomeActive),
-                                               name: NSNotification.Name.OWSApplicationDidBecomeActive,
+                                               name: .OWSApplicationDidBecomeActive,
                                                object: nil)
         loadTrending()
     }
@@ -498,7 +487,7 @@ class GifPickerViewController: OWSViewController, UISearchBarDelegate, UICollect
             }
 
             let pathForCachedAsset = asset.filePath
-            let pathForConsumableFile = OWSFileSystem.temporaryFilePath(withFileExtension: "gif")
+            let pathForConsumableFile = OWSFileSystem.temporaryFilePath(fileExtension: "gif")
             try FileManager.default.copyItem(atPath: pathForCachedAsset, toPath: pathForConsumableFile)
             let dataSource = try DataSourcePath.dataSource(withFilePath: pathForConsumableFile,
                                                            shouldDeleteOnDeallocation: false)
@@ -526,7 +515,7 @@ class GifPickerViewController: OWSViewController, UISearchBarDelegate, UICollect
             })
 
             self.presentActionSheet(alert)
-        }.retainUntilComplete()
+        }
     }
 
     public func collectionView(_ collectionView: UICollectionView, willDisplay cell: UICollectionViewCell, forItemAt indexPath: IndexPath) {
@@ -622,7 +611,7 @@ class GifPickerViewController: OWSViewController, UISearchBarDelegate, UICollect
         }.catch { error in
             // Don't both showing error UI feedback for default "trending" results.
             Logger.error("error: \(error)")
-        }.retainUntilComplete()
+        }
     }
 
     private func search(query: String) {

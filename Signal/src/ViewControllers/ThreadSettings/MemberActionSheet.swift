@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -8,16 +8,30 @@ import ContactsUI
 @objc
 class MemberActionSheet: NSObject {
 
+    // MARK: - Dependencies
+
+    private var contactsManager: OWSContactsManager {
+        return Environment.shared.contactsManager
+    }
+
+    private var contactsViewHelper: ContactsViewHelper {
+        return Environment.shared.contactsViewHelper
+    }
+
+    // MARK: -
+
     @objc
     let address: SignalServiceAddress
 
-    private weak var contactsViewHelper: ContactsViewHelper?
+    public var canMakeGroupAdmin = false
+
+    public var groupViewHelper: GroupViewHelper?
 
     @objc
-    init(address: SignalServiceAddress, contactsViewHelper: ContactsViewHelper) {
+    init(address: SignalServiceAddress, groupViewHelper: GroupViewHelper?) {
         assert(address.isValid)
         self.address = address
-        self.contactsViewHelper = contactsViewHelper
+        self.groupViewHelper = groupViewHelper
     }
 
     // When presenting the contact view, we must retain ourselves
@@ -31,27 +45,21 @@ class MemberActionSheet: NSObject {
             return owsFailDebug("Must be presented within a nav controller")
         }
 
-        guard let contactsViewHelper = contactsViewHelper else {
-            return owsFailDebug("unexpectedly missing contactsViewHelper")
-        }
+        let contactsViewHelper = self.contactsViewHelper
 
         let actionSheet = ActionSheetController()
         actionSheet.customHeader = MemberHeader(address: address) { [weak actionSheet] in
-            actionSheet?.dismiss(animated: true, completion: {
-                // If we can edit contacts, present the contact for this user when tapping the header.
-                guard contactsViewHelper.contactsManager.supportsContactEditing else { return }
-
-                guard let contactVC = contactsViewHelper.contactViewController(for: self.address, editImmediately: true) else {
-                    return owsFailDebug("unexpectedly failed to present contact view")
-                }
-                self.strongSelf = self
-                contactVC.delegate = self
-                navController.pushViewController(contactVC, animated: true)
-            })
+            actionSheet?.dismiss(animated: true)
         }
 
         actionSheet.contentAlignment = .leading
         actionSheet.addAction(OWSActionSheets.cancelAction)
+
+        // If the local user, show no options.
+        guard !address.isLocalAddress else {
+            fromViewController.presentActionSheet(actionSheet)
+            return
+        }
 
         // If blocked, only show unblock as an option
         guard !contactsViewHelper.isSignalServiceAddressBlocked(address) else {
@@ -63,8 +71,6 @@ class MemberActionSheet: NSObject {
                 BlockListUIUtils.showUnblockAddressActionSheet(
                     self.address,
                     from: fromViewController,
-                    blockingManager: contactsViewHelper.blockingManager,
-                    contactsManager: contactsViewHelper.contactsManager,
                     completionBlock: nil
                 )
             }
@@ -75,28 +81,6 @@ class MemberActionSheet: NSObject {
             return
         }
 
-        let messageAction = ActionSheetAction(
-            title: NSLocalizedString("GROUP_MEMBERS_SEND_MESSAGE",
-                                     comment: "Button label for the 'send message to group member' button"),
-            accessibilityIdentifier: "MemberActionSheet.send_message"
-        ) { _ in
-            SignalApp.shared().presentConversation(for: self.address, action: .compose, animated: true)
-        }
-        messageAction.leadingIcon = .message
-        actionSheet.addAction(messageAction)
-
-        if FeatureFlags.calling {
-            let callAction = ActionSheetAction(
-                title: NSLocalizedString("GROUP_MEMBERS_CALL",
-                                         comment: "Button label for the 'call group member' button"),
-                accessibilityIdentifier: "MemberActionSheet.call"
-            ) { _ in
-                SignalApp.shared().presentConversation(for: self.address, action: .audioCall, animated: true)
-            }
-            callAction.leadingIcon = .call
-            actionSheet.addAction(callAction)
-        }
-
         let blockAction = ActionSheetAction(
             title: NSLocalizedString("BLOCK_LIST_BLOCK_BUTTON",
                                      comment: "Button label for the 'block' button"),
@@ -105,13 +89,38 @@ class MemberActionSheet: NSObject {
             BlockListUIUtils.showBlockAddressActionSheet(
                 self.address,
                 from: fromViewController,
-                blockingManager: contactsViewHelper.blockingManager,
-                contactsManager: contactsViewHelper.contactsManager,
                 completionBlock: nil
             )
         }
         blockAction.leadingIcon = .settingsBlock
         actionSheet.addAction(blockAction)
+
+        if contactsManager.supportsContactEditing && !contactsManager.isSystemContact(address: address) {
+            let addToContactsAction = ActionSheetAction(
+                title: NSLocalizedString("CONVERSATION_SETTINGS_ADD_TO_SYSTEM_CONTACTS",
+                                         comment: "button in conversation settings view."),
+                accessibilityIdentifier: "MemberActionSheet.block"
+            ) { _ in
+                guard let contactVC = contactsViewHelper.contactViewController(for: self.address, editImmediately: true) else {
+                     return owsFailDebug("unexpectedly failed to present contact view")
+                 }
+                 self.strongSelf = self
+                 contactVC.delegate = self
+                 navController.pushViewController(contactVC, animated: true)
+            }
+            addToContactsAction.leadingIcon = .settingsAddToContacts
+            actionSheet.addAction(addToContactsAction)
+        }
+
+        let addToGroupAction = ActionSheetAction(
+            title: NSLocalizedString("ADD_TO_GROUP",
+                                     comment: "Label for button or row which allows users to add to another group."),
+            accessibilityIdentifier: "MemberActionSheet.addToGroup"
+        ) { _ in
+            AddToGroupViewController.presentForUser(self.address, from: fromViewController)
+        }
+        addToGroupAction.leadingIcon = .settingsAddToGroup
+        actionSheet.addAction(addToGroupAction)
 
         let safetyNumberAction = ActionSheetAction(
             title: NSLocalizedString("VERIFY_PRIVACY",
@@ -122,6 +131,45 @@ class MemberActionSheet: NSObject {
         }
         safetyNumberAction.leadingIcon = .settingsViewSafetyNumber
         actionSheet.addAction(safetyNumberAction)
+
+        let address = self.address
+        if let groupViewHelper = self.groupViewHelper,
+            groupViewHelper.isFullOrInvitedMember(address) {
+
+            if groupViewHelper.memberActionSheetCanMakeGroupAdmin(address: address) {
+                let action = ActionSheetAction(
+                    title: NSLocalizedString("CONVERSATION_SETTINGS_MAKE_GROUP_ADMIN_BUTTON",
+                                             comment: "Label for 'make group admin' button in conversation settings view."),
+                    accessibilityIdentifier: "MemberActionSheet.makeGroupAdmin"
+                ) { _ in
+                    groupViewHelper.memberActionSheetMakeGroupAdminWasSelected(address: address)
+                }
+                action.leadingIcon = .settingsViewMakeGroupAdmin
+                actionSheet.addAction(action)
+            }
+            if groupViewHelper.memberActionSheetCanRevokeGroupAdmin(address: address) {
+                let action = ActionSheetAction(
+                    title: NSLocalizedString("CONVERSATION_SETTINGS_REVOKE_GROUP_ADMIN_BUTTON",
+                                             comment: "Label for 'revoke group admin' button in conversation settings view."),
+                    accessibilityIdentifier: "MemberActionSheet.revokeGroupAdmin"
+                ) { _ in
+                    groupViewHelper.memberActionSheetRevokeGroupAdminWasSelected(address: address)
+                }
+                action.leadingIcon = .settingsViewRevokeGroupAdmin
+                actionSheet.addAction(action)
+            }
+            if groupViewHelper.memberActionSheetCanRemoveFromGroup(address: address) {
+                let action = ActionSheetAction(
+                    title: NSLocalizedString("CONVERSATION_SETTINGS_REMOVE_FROM_GROUP_BUTTON",
+                                             comment: "Label for 'remove from group' button in conversation settings view."),
+                    accessibilityIdentifier: "MemberActionSheet.removeFromGroup"
+                ) { _ in
+                    groupViewHelper.memberActionSheetRemoveFromGroupWasSelected(address: address)
+                }
+                action.leadingIcon = .settingsViewRemoveFromGroup
+                actionSheet.addAction(action)
+            }
+        }
 
         fromViewController.presentActionSheet(actionSheet)
     }
@@ -135,39 +183,21 @@ extension MemberActionSheet: CNContactViewControllerDelegate {
 }
 
 private class MemberHeader: UIStackView {
-    var databaseStorage: SDSDatabaseStorage {
-        return .shared
-    }
 
-    var contactsManager: OWSContactsManager {
-        return Environment.shared.contactsManager
-    }
+    private var dismiss: () -> Void
 
-    var profileManager: OWSProfileManager {
-        return .shared()
-    }
-
-    private var releaseAction: () -> Void
-
-    init(address: SignalServiceAddress, releaseAction: @escaping () -> Void) {
-        self.releaseAction = releaseAction
+    init(address: SignalServiceAddress, dismiss: @escaping () -> Void) {
+        self.dismiss = dismiss
 
         super.init(frame: .zero)
 
-        addBackgroundView(withBackgroundColor: Theme.backgroundColor)
+        addBackgroundView(withBackgroundColor: Theme.actionSheetBackgroundColor)
         axis = .vertical
         spacing = 2
         isLayoutMarginsRelativeArrangement = true
         layoutMargins = UIEdgeInsets(top: 16, leading: 16, bottom: 16, trailing: 16)
 
         createViews(address: address)
-
-        let tapGestureRecognizer = UITapGestureRecognizer(target: self, action: #selector(didTap))
-        addGestureRecognizer(tapGestureRecognizer)
-    }
-
-    @objc func didTap() {
-        releaseAction()
     }
 
     func createViews(address: SignalServiceAddress) {
@@ -197,19 +227,28 @@ private class MemberHeader: UIStackView {
         addArrangedSubview(avatarContainer)
 
         let avatarDiameter: CGFloat = 80
-        let avatarView = ConversationAvatarImageView(
-            thread: thread,
-            diameter: UInt(avatarDiameter),
-            contactsManager: contactsManager
-        )
+        let avatarView = AvatarImageView()
+
         avatarContainer.addSubview(avatarView)
         avatarView.autoHCenterInSuperview()
         avatarView.autoPinEdge(toSuperviewEdge: .top)
         avatarView.autoPinEdge(toSuperviewEdge: .bottom, withInset: 8)
         avatarView.autoSetDimension(.height, toSize: avatarDiameter)
 
+        let avatarBuilder = OWSContactAvatarBuilder(
+            address: address,
+            colorName: thread.conversationColorName,
+            diameter: UInt(avatarDiameter)
+        )
+
+        if address.isLocalAddress {
+            avatarView.image = OWSProfileManager.shared().localProfileAvatarImage() ?? avatarBuilder.buildDefaultImage()
+        } else {
+            avatarView.image = avatarBuilder.build()
+        }
+
         let titleLabel = UILabel()
-        titleLabel.font = UIFont.ows_dynamicTypeBodyClamped.ows_semibold()
+        titleLabel.font = UIFont.ows_dynamicTypeBodyClamped.ows_semibold
         titleLabel.textColor = Theme.primaryTextColor
         titleLabel.numberOfLines = 0
         titleLabel.lineBreakMode = .byWordWrapping
@@ -248,6 +287,68 @@ private class MemberHeader: UIStackView {
             detailsLabel.text = detailText
             addArrangedSubview(detailsLabel)
         }
+
+        let actionsStackView = UIStackView()
+        actionsStackView.axis = .horizontal
+        actionsStackView.spacing = 36
+        actionsStackView.isLayoutMarginsRelativeArrangement = true
+        actionsStackView.layoutMargins = UIEdgeInsets(top: 14, leading: 0, bottom: 18, trailing: 0)
+        addArrangedSubview(actionsStackView)
+
+        let messageButton = createActionButton(
+            icon: .message,
+            accessibilityLabel: NSLocalizedString("GROUP_MEMBERS_SEND_MESSAGE",
+                                                  comment: "Accessibility label for the 'send message to group member' button"),
+            accessibilityIdentifier: "MemberActionSheet.send_message"
+        ) { SignalApp.shared().presentConversation(for: address, action: .compose, animated: true) }
+        actionsStackView.addArrangedSubview(messageButton)
+
+        let videoCallButton = createActionButton(
+            icon: .videoCall,
+            accessibilityLabel: NSLocalizedString("GROUP_MEMBERS_VIDEO_CALL",
+                                                  comment: "Accessibility label for the 'call group member' button"),
+            accessibilityIdentifier: "MemberActionSheet.video_call"
+        ) { SignalApp.shared().presentConversation(for: address, action: .videoCall, animated: true) }
+        videoCallButton.isEnabled = !address.isLocalAddress
+        actionsStackView.addArrangedSubview(videoCallButton)
+
+        let audioCallButton = createActionButton(
+            icon: .audioCall,
+            accessibilityLabel: NSLocalizedString("GROUP_MEMBERS_CALL",
+                                                  comment: "Accessibility label for the 'call group member' button"),
+            accessibilityIdentifier: "MemberActionSheet.audio_call"
+        ) { SignalApp.shared().presentConversation(for: address, action: .audioCall, animated: true) }
+        audioCallButton.isEnabled = !address.isLocalAddress
+        actionsStackView.addArrangedSubview(audioCallButton)
+
+        let leftSpacer = UIView.hStretchingSpacer()
+        let rightSpacer = UIView.hStretchingSpacer()
+        actionsStackView.insertArrangedSubview(leftSpacer, at: 0)
+        actionsStackView.addArrangedSubview(rightSpacer)
+        leftSpacer.autoMatch(.width, to: .width, of: rightSpacer)
+
+    }
+
+    private func createActionButton(
+        icon: ThemeIcon,
+        accessibilityLabel: String?,
+        accessibilityIdentifier: String?,
+        action: @escaping () -> Void
+    ) -> UIButton {
+        let button = OWSButton { [weak self] in
+            guard let self = self else { return }
+            action()
+            self.dismiss()
+        }
+        button.accessibilityLabel = accessibilityLabel
+        button.accessibilityIdentifier = accessibilityIdentifier
+        button.autoSetDimensions(to: CGSize(square: 48))
+        button.backgroundColor = Theme.isDarkThemeEnabled ? .ows_gray65 : .ows_gray02
+        button.layer.cornerRadius = 24
+        button.clipsToBounds = true
+        button.imageEdgeInsets = UIEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
+        button.setTemplateImageName(Theme.iconName(icon), tintColor: Theme.accentBlueColor)
+        return button
     }
 
     required init(coder: NSCoder) {

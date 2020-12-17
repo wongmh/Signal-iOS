@@ -1,21 +1,16 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSFileSystem.h"
 #import "OWSError.h"
 #import "TSConstants.h"
 #import <SignalCoreKit/NSDate+OWS.h>
+#import <SignalServiceKit/SignalServiceKit-Swift.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
 @implementation OWSFileSystem
-
-+ (BOOL)fileOrFolderExistsAtPath:(NSString *)path
-{
-    BOOL isDirectory;
-    return [NSFileManager.defaultManager fileExistsAtPath:path isDirectory:&isDirectory];
-}
 
 + (BOOL)protectRecursiveContentsAtPath:(NSString *)path
 {
@@ -56,16 +51,35 @@ NS_ASSUME_NONNULL_BEGIN
         return NO;
     }
 
-    NSError *error;
+    NSError *_Nullable error;
     NSDictionary *fileProtection = @{ NSFileProtectionKey : fileProtectionType };
-    [[NSFileManager defaultManager] setAttributes:fileProtection ofItemAtPath:path error:&error];
+    BOOL success = [[NSFileManager defaultManager] setAttributes:fileProtection ofItemAtPath:path error:&error];
+    if (error || !success) {
+        if (error != nil && [error.domain isEqualToString:NSCocoaErrorDomain]
+            && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError)) {
+            // We sometimes protect files async, so races around short-lived
+            // temporarily files can cause these errors.
+            OWSLogWarn(@"Could not protect file or folder: %@", error);
+            return NO;
+        }
+        OWSFailDebug(@"Could not protect file or folder: %@", error);
+        OWSProdCritical([OWSAnalyticsEvents storageErrorFileProtection]);
+        return NO;
+    }
 
     NSDictionary *resourcesAttrs = @{ NSURLIsExcludedFromBackupKey : @YES };
 
     NSURL *ressourceURL = [NSURL fileURLWithPath:path];
-    BOOL success = [ressourceURL setResourceValues:resourcesAttrs error:&error];
+    success = [ressourceURL setResourceValues:resourcesAttrs error:&error];
 
     if (error || !success) {
+        if (error != nil && [error.domain isEqualToString:NSCocoaErrorDomain]
+            && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError)) {
+            // We sometimes protect files async, so races around short-lived
+            // temporarily files can cause these errors.
+            OWSLogWarn(@"Could not protect file or folder: %@", error);
+            return NO;
+        }
         OWSFailDebug(@"Could not protect file or folder: %@", error);
         OWSProdCritical([OWSAnalyticsEvents storageErrorFileProtection]);
         return NO;
@@ -279,107 +293,16 @@ NS_ASSUME_NONNULL_BEGIN
     }
 }
 
-+ (BOOL)deleteFile:(NSString *)filePath
-{
-    NSError *error;
-    BOOL success = [[NSFileManager defaultManager] removeItemAtPath:filePath error:&error];
-    if (!success || error) {
-        OWSLogError(@"Failed to delete file: %@", error.description);
-        return NO;
-    }
-    return YES;
-}
-
-+ (BOOL)deleteFileIfExists:(NSString *)filePath
-{
-    if (![[NSFileManager defaultManager] fileExistsAtPath:filePath]) {
-        return YES;
-    }
-    return [self deleteFile:filePath];
-}
-
 + (void)deleteContentsOfDirectory:(NSString *)dirPath
 {
-    NSError *error;
-    NSArray<NSString *> *_Nullable filePaths = [self allFilesInDirectoryRecursive:dirPath error:&error];
-    if (error != nil || filePaths == nil) {
+    NSArray<NSString *> *_Nullable filePaths = [self recursiveFilesInDirectory:dirPath error:NULL];
+    if (filePaths == nil) {
         OWSFailDebug(@"Could not retrieve files in directory.");
         return;
     }
     for (NSString *filePath in filePaths) {
         [self deleteFileIfExists:filePath];
     }
-}
-
-+ (NSArray<NSString *> *_Nullable)allFilesInDirectoryRecursive:(NSString *)dirPath error:(NSError **)error
-{
-    OWSAssertDebug(dirPath.length > 0);
-
-    *error = nil;
-
-    NSArray<NSString *> *filenames = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dirPath error:error];
-    if (*error) {
-        OWSFailDebug(@"could not find files in directory: %@", *error);
-        return nil;
-    }
-
-    NSMutableArray<NSString *> *filePaths = [NSMutableArray new];
-
-    for (NSString *filename in filenames) {
-        NSString *filePath = [dirPath stringByAppendingPathComponent:filename];
-
-        BOOL isDirectory;
-        [[NSFileManager defaultManager] fileExistsAtPath:filePath isDirectory:&isDirectory];
-        if (isDirectory) {
-            [filePaths addObjectsFromArray:[self allFilesInDirectoryRecursive:filePath error:error]];
-            if (*error) {
-                return nil;
-            }
-        } else {
-            [filePaths addObject:filePath];
-        }
-    }
-
-    return filePaths;
-}
-
-+ (NSString *)temporaryFilePath
-{
-    return [self temporaryFilePathWithFileExtension:nil];
-}
-
-+ (NSURL *)temporaryFileURLWithFileExtension:(NSString *_Nullable)fileExtension
-{
-    return [NSURL fileURLWithPath:[self temporaryFilePathWithFileExtension:fileExtension]];
-}
-
-+ (NSString *)temporaryFilePathWithFileExtension:(NSString *_Nullable)fileExtension
-{
-    NSString *temporaryDirectory = OWSTemporaryDirectory();
-    NSString *tempFileName = NSUUID.UUID.UUIDString;
-    if (fileExtension.length > 0) {
-        tempFileName = [[tempFileName stringByAppendingString:@"."] stringByAppendingString:fileExtension];
-    }
-    NSString *tempFilePath = [temporaryDirectory stringByAppendingPathComponent:tempFileName];
-
-    return tempFilePath;
-}
-
-+ (nullable NSString *)writeDataToTemporaryFile:(NSData *)data fileExtension:(NSString *_Nullable)fileExtension
-{
-    OWSAssertDebug(data);
-
-    NSString *tempFilePath = [self temporaryFilePathWithFileExtension:fileExtension];
-    NSError *error;
-    BOOL success = [data writeToFile:tempFilePath options:NSDataWritingAtomic error:&error];
-    if (!success || error) {
-        OWSFailDebug(@"could not write to temporary file: %@", error);
-        return nil;
-    }
-
-    [self protectFileOrFolderAtPath:tempFilePath];
-
-    return tempFilePath;
 }
 
 + (nullable NSNumber *)fileSizeOfPath:(NSString *)filePath
@@ -472,7 +395,7 @@ void ClearOldTemporaryDirectoriesSync(void)
         }
 
         OWSLogVerbose(@"Removing temp file or directory: %@", filePath);
-        if (![OWSFileSystem deleteFile:filePath]) {
+        if (![OWSFileSystem deleteFileIfExists:filePath]) {
             // This can happen if the app launches before the phone is unlocked.
             // Clean up will occur when app becomes active.
             OWSLogWarn(@"Could not delete old temp directory: %@", filePath);

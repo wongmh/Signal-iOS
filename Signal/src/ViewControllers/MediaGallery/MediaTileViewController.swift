@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -304,7 +304,7 @@ public class MediaTileViewController: UICollectionViewController, MediaGalleryDe
             return sectionHeader
         }
 
-        if (kind == UICollectionView.elementKindSectionHeader) {
+        if kind == UICollectionView.elementKindSectionHeader {
             switch indexPath.section {
             case kLoadOlderSectionIdx:
                 guard let sectionHeader = collectionView.dequeueReusableSupplementaryView(ofKind: kind, withReuseIdentifier: MediaGalleryStaticHeader.reuseIdentifier, for: indexPath) as? MediaGalleryStaticHeader else {
@@ -422,9 +422,7 @@ public class MediaTileViewController: UICollectionViewController, MediaGalleryDe
     private class func buildLayout() -> MediaTileViewLayout {
         let layout = MediaTileViewLayout()
 
-        if #available(iOS 11, *) {
-            layout.sectionInsetReference = .fromSafeArea
-        }
+        layout.sectionInsetReference = .fromSafeArea
         layout.minimumInteritemSpacing = kInterItemSpacing
         layout.minimumLineSpacing = kInterItemSpacing
         layout.sectionHeadersPinToVisibleBounds = true
@@ -433,12 +431,8 @@ public class MediaTileViewController: UICollectionViewController, MediaGalleryDe
     }
 
     func updateLayout() {
-        let rawSize: CGSize
-        if #available(iOS 11.0, *) {
-            rawSize = view.safeAreaLayoutGuide.layoutFrame.size
-        } else {
-            rawSize = view.frame.size
-        }
+        let rawSize = view.safeAreaLayoutGuide.layoutFrame.size
+
         let containerSize = CGSize(width: floor(rawSize.width), height: floor(rawSize.height))
 
         let kItemsPerPortraitRow = 4
@@ -450,10 +444,10 @@ public class MediaTileViewController: UICollectionViewController, MediaGalleryDe
         let availableWidth = containerSize.width - interSpaceWidth
 
         let itemWidth = floor(availableWidth / CGFloat(itemCount))
-        let newItemSize = CGSize(width: itemWidth, height: itemWidth)
+        let newItemSize = CGSize(square: itemWidth)
         let remainingSpace = availableWidth - (itemCount * itemWidth)
         let hInset = remainingSpace / 2
-        if (newItemSize != mediaTileViewLayout.itemSize || hInset != mediaTileViewLayout.sectionInset.left) {
+        if newItemSize != mediaTileViewLayout.itemSize || hInset != mediaTileViewLayout.sectionInset.left {
             mediaTileViewLayout.itemSize = newItemSize
             // Inset any remaining space around the outside edges to ensure all inter-item spacing is exactly equal, otherwise
             // we may get slightly different gaps between rows vs. columns
@@ -688,7 +682,7 @@ public class MediaTileViewController: UICollectionViewController, MediaGalleryDe
     public func autoLoadMoreIfNecessary() {
         let kEdgeThreshold: CGFloat = 800
 
-        if (self.isUserScrolling) {
+        if self.isUserScrolling {
             return
         }
 

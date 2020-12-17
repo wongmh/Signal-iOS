@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import UIKit
@@ -60,9 +60,9 @@ private class VAlignTextView: UITextView {
         case .top:
             topOffset = 0
         case .center:
-            topOffset = max(0, (self.height() - contentSize.height) * 0.5)
+            topOffset = max(0, (self.height - contentSize.height) * 0.5)
         case .bottom:
-            topOffset = max(0, self.height() - contentSize.height)
+            topOffset = max(0, self.height - contentSize.height)
         }
         contentInset = UIEdgeInsets(top: topOffset, leading: 0, bottom: 0, trailing: 0)
     }
@@ -131,14 +131,9 @@ public class ImageEditorTextViewController: OWSViewController, VAlignTextViewDel
                                                 itemIdsToIgnore: [textItem.itemId])
         self.paletteView = ImageEditorPaletteView(currentColor: textItem.color)
 
-        super.init(nibName: nil, bundle: nil)
+        super.init()
 
         self.textView.textViewDelegate = self
-    }
-
-    @available(*, unavailable, message: "use other init() instead.")
-    required public init?(coder aDecoder: NSCoder) {
-        notImplemented()
     }
 
     // MARK: - View Lifecycle
@@ -311,7 +306,7 @@ public class ImageEditorTextViewController: OWSViewController, VAlignTextViewDel
             let imageFrame = ImageEditorCanvasView.imageFrame(forViewSize: viewBounds.size,
                                                               imageSize: model.srcImageSizePixels,
                                                               transform: model.currentTransform())
-            let unitWidth = textView.width() / imageFrame.width
+            let unitWidth = textView.width / imageFrame.width
             newTextItem = textItem.copy(unitCenter: textCenterImageUnit).copy(unitWidth: unitWidth)
         }
 

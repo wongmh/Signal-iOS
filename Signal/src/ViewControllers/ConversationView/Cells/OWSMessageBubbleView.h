@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSMessageView.h"
@@ -7,6 +7,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class ContactShareViewModel;
+@class Mention;
 @class OWSContact;
 @class OWSLayerView;
 @class OWSLinkPreview;
@@ -38,6 +39,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)didTapTruncatedTextMessage:(id<ConversationViewItem>)conversationItem;
 
 - (void)didTapFailedIncomingAttachment:(id<ConversationViewItem>)viewItem;
+- (void)didTapPendingMessageRequestIncomingAttachment:(id<ConversationViewItem>)viewItem;
 
 - (void)didTapConversationItem:(id<ConversationViewItem>)viewItem quotedReply:(OWSQuotedReplyModel *)quotedReply;
 - (void)didTapConversationItem:(id<ConversationViewItem>)viewItem
@@ -56,6 +58,9 @@ NS_ASSUME_NONNULL_BEGIN
     NS_SWIFT_NAME(didTapShowAddToContactUI(forContactShare:));
 
 - (void)didTapStickerPack:(StickerPackInfo *)stickerPackInfo NS_SWIFT_NAME(didTapStickerPack(_:));
+- (void)didTapGroupInviteLink:(NSURL *)url NS_SWIFT_NAME(didTapGroupInviteLink(_:));
+
+- (void)didTapMention:(Mention *)mention NS_SWIFT_NAME(didTapMention(_:));
 
 @property (nonatomic, readonly, nullable) NSString *lastSearchedText;
 
@@ -70,11 +75,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) OWSMessageFooterView *footerView;
 @property (nonatomic, weak) id<OWSMessageBubbleViewDelegate> delegate;
 
-- (instancetype)init NS_UNAVAILABLE;
+- (instancetype)init NS_DESIGNATED_INITIALIZER;
 
-- (instancetype)initWithFrame:(CGRect)frame NS_DESIGNATED_INITIALIZER;
-
-- (instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
+- (nullable instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
+- (instancetype)initWithFrame:(CGRect)frame NS_UNAVAILABLE;
 
 @end
 

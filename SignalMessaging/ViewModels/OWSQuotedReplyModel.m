@@ -1,12 +1,12 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSQuotedReplyModel.h"
 #import "ConversationViewItem.h"
 #import <SignalMessaging/SignalMessaging-Swift.h>
 #import <SignalServiceKit/MIMETypeUtil.h>
-#import <SignalServiceKit/OWSMessageSender.h>
+#import <SignalServiceKit/MessageSender.h>
 #import <SignalServiceKit/TSAccountManager.h>
 #import <SignalServiceKit/TSAttachmentPointer.h>
 #import <SignalServiceKit/TSAttachmentStream.h>
@@ -25,6 +25,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithTimestamp:(uint64_t)timestamp
                     authorAddress:(SignalServiceAddress *)authorAddress
                              body:(nullable NSString *)body
+                       bodyRanges:(nullable MessageBodyRanges *)bodyRanges
                        bodySource:(TSQuotedMessageContentSource)bodySource
                    thumbnailImage:(nullable UIImage *)thumbnailImage
                       contentType:(nullable NSString *)contentType
@@ -43,6 +44,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithTimestamp:(uint64_t)timestamp
                     authorAddress:(SignalServiceAddress *)authorAddress
                              body:(nullable NSString *)body
+                       bodyRanges:(nullable MessageBodyRanges *)bodyRanges
                        bodySource:(TSQuotedMessageContentSource)bodySource
                    thumbnailImage:(nullable UIImage *)thumbnailImage
                       contentType:(nullable NSString *)contentType
@@ -59,6 +61,7 @@ NS_ASSUME_NONNULL_BEGIN
     _timestamp = timestamp;
     _authorAddress = authorAddress;
     _body = body;
+    _bodyRanges = bodyRanges;
     _bodySource = bodySource;
     _thumbnailImage = thumbnailImage;
     _contentType = contentType;
@@ -106,6 +109,7 @@ NS_ASSUME_NONNULL_BEGIN
     return [[self alloc] initWithTimestamp:quotedMessage.timestamp
                              authorAddress:quotedMessage.authorAddress
                                       body:quotedMessage.body
+                                bodyRanges:quotedMessage.bodyRanges
                                 bodySource:quotedMessage.bodySource
                             thumbnailImage:thumbnailImage
                                contentType:attachmentInfo.contentType
@@ -148,10 +152,11 @@ NS_ASSUME_NONNULL_BEGIN
         // We construct a quote that does not include any of the
         // quoted message's renderable content.
         NSString *body
-            = NSLocalizedString(@"PER_MESSAGE_EXPIRATION_OUTGOING_MESSAGE", @"Label for outgoing view-once messages.");
+            = NSLocalizedString(@"PER_MESSAGE_EXPIRATION_NOT_VIEWABLE", @"inbox cell and notification text for an already viewed view-once media message.");
         return [[self alloc] initWithTimestamp:timestamp
                                  authorAddress:authorAddress
                                           body:body
+                                    bodyRanges:nil
                                     bodySource:TSQuotedMessageContentSourceLocal
                                 thumbnailImage:nil
                                    contentType:nil
@@ -171,6 +176,7 @@ NS_ASSUME_NONNULL_BEGIN
         return [[self alloc] initWithTimestamp:timestamp
                                  authorAddress:authorAddress
                                           body:[@"👤 " stringByAppendingString:contactShare.displayName]
+                                    bodyRanges:nil
                                     bodySource:TSQuotedMessageContentSourceLocal
                                 thumbnailImage:nil
                                    contentType:nil
@@ -180,19 +186,30 @@ NS_ASSUME_NONNULL_BEGIN
                        thumbnailDownloadFailed:NO];
     }
 
-    if (conversationItem.stickerInfo || conversationItem.stickerAttachment) {
-        if (!conversationItem.stickerInfo || !conversationItem.stickerAttachment) {
+    if (conversationItem.stickerInfo || conversationItem.stickerAttachment || conversationItem.stickerMetadata) {
+        if (!conversationItem.stickerInfo || !conversationItem.stickerAttachment || !conversationItem.stickerMetadata) {
             OWSFailDebug(@"Incomplete sticker message.");
             return nil;
         }
 
         TSAttachmentStream *quotedAttachment = conversationItem.stickerAttachment;
-        NSData *_Nullable stickerData = [NSData dataWithContentsOfFile:quotedAttachment.originalFilePath];
+        StickerMetadata *stickerMetadata = conversationItem.stickerMetadata;
+        NSData *_Nullable stickerData = [NSData dataWithContentsOfURL:stickerMetadata.stickerDataUrl];
         if (!stickerData) {
             OWSFailDebug(@"Couldn't load sticker data.");
             return nil;
         }
-        UIImage *_Nullable thumbnailImage = [stickerData stillForWebpData];
+        UIImage *_Nullable thumbnailImage;
+        switch (stickerMetadata.stickerType) {
+            case StickerTypeWebp:
+                thumbnailImage = [stickerData stillForWebpData];
+                break;
+            case StickerTypeApng:
+                thumbnailImage = [UIImage imageWithData:stickerData];
+                break;
+            case StickerTypeSignalLottie:
+                break;
+        }
         if (!thumbnailImage) {
             OWSFailDebug(@"Couldn't generate thumbnail for sticker.");
             return nil;
@@ -201,9 +218,10 @@ NS_ASSUME_NONNULL_BEGIN
         return [[self alloc] initWithTimestamp:timestamp
                                  authorAddress:authorAddress
                                           body:nil
+                                    bodyRanges:nil
                                     bodySource:TSQuotedMessageContentSourceLocal
                                 thumbnailImage:thumbnailImage
-                                   contentType:quotedAttachment.contentType
+                                   contentType:stickerMetadata.contentType
                                 sourceFilename:quotedAttachment.sourceFilename
                               attachmentStream:quotedAttachment
                     thumbnailAttachmentPointer:nil
@@ -213,7 +231,8 @@ NS_ASSUME_NONNULL_BEGIN
     NSString *_Nullable quotedText = message.body;
     BOOL hasText = quotedText.length > 0;
 
-    TSAttachment *_Nullable attachment = [message bodyAttachmentsWithTransaction:transaction].firstObject;
+    TSAttachment *_Nullable attachment =
+        [message bodyAttachmentsWithTransaction:transaction.unwrapGrdbRead].firstObject;
     TSAttachmentStream *quotedAttachment;
     if (attachment && [attachment isKindOfClass:[TSAttachmentStream class]]) {
 
@@ -282,6 +301,7 @@ NS_ASSUME_NONNULL_BEGIN
     return [[self alloc] initWithTimestamp:timestamp
                              authorAddress:authorAddress
                                       body:quotedText
+                                bodyRanges:message.bodyRanges
                                 bodySource:TSQuotedMessageContentSourceLocal
                             thumbnailImage:thumbnailImage
                                contentType:quotedAttachment.contentType
@@ -301,6 +321,7 @@ NS_ASSUME_NONNULL_BEGIN
     return [[TSQuotedMessage alloc] initWithTimestamp:self.timestamp
                                         authorAddress:self.authorAddress
                                                  body:self.body
+                                           bodyRanges:self.bodyRanges
                           quotedAttachmentsForSending:attachments];
 }
 

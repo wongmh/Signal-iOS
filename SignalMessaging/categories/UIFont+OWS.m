@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "UIFont+OWS.h"
@@ -83,6 +83,11 @@ NS_ASSUME_NONNULL_BEGIN
     return self.ows_dynamicTypeSubheadlineFont;
 }
 
++ (UIFont *)ows_dynamicTypeCalloutFont
+{
+    return [UIFont preferredFontForTextStyle:UIFontTextStyleCallout];
+}
+
 + (UIFont *)ows_dynamicTypeSubheadlineFont
 {
     return [UIFont preferredFontForTextStyle:UIFontTextStyleSubheadline];
@@ -112,43 +117,50 @@ NS_ASSUME_NONNULL_BEGIN
     static NSDictionary<UIFontTextStyle, NSNumber *> *maxPointSizeMap = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        NSMutableDictionary<UIFontTextStyle, NSNumber *> *map = [@{
+        maxPointSizeMap = @{
             UIFontTextStyleTitle1 : @(34.0),
             UIFontTextStyleTitle2 : @(28.0),
             UIFontTextStyleTitle3 : @(26.0),
             UIFontTextStyleHeadline : @(23.0),
             UIFontTextStyleBody : @(23.0),
+            UIFontTextStyleCallout : @(22.0),
             UIFontTextStyleSubheadline : @(21.0),
             UIFontTextStyleFootnote : @(19.0),
             UIFontTextStyleCaption1 : @(18.0),
             UIFontTextStyleCaption2 : @(17.0),
-        } mutableCopy];
-        if (@available(iOS 11.0, *)) {
-            map[UIFontTextStyleLargeTitle] = @(40.0);
-        }
-        maxPointSizeMap = map;
+            UIFontTextStyleLargeTitle: @(40.0)
+        };
     });
 
-    UIFont *font = [UIFont preferredFontForTextStyle:fontTextStyle];
+    // From the documentation of -[id<UIContentSizeCategoryAdjusting> adjustsFontForContentSizeCategory:]
+    // Dynamic sizing is only supported with fonts that are:
+    // a. Vended using +preferredFontForTextStyle... with a valid UIFontTextStyle
+    // b. Vended from -[UIFontMetrics scaledFontForFont:] or one of its variants
+    //
+    // If we clamps fonts by checking the resulting point size and then creating a new, smaller UIFont with
+    // a fallback max size, we'll lose dynamic sizing. Max sizes can be specified using UIFontMetrics though.
+    //
+    // UIFontMetrics will only operate on unscaled fonts. So we do this dance to cap the system default styles
+    // 1. Grab the standard, unscaled font by using the default trait collection
+    // 2. Use UIFontMetrics to scale it up, capped at the desired max size
+    UITraitCollection *defaultTraitCollection =
+        [UITraitCollection traitCollectionWithPreferredContentSizeCategory:UIContentSizeCategoryLarge];
+    UIFont *unscaledFont = [UIFont preferredFontForTextStyle:fontTextStyle
+                               compatibleWithTraitCollection:defaultTraitCollection];
+
+    UIFontMetrics *desiredStyleMetrics = [[UIFontMetrics alloc] initForTextStyle:fontTextStyle];
     NSNumber *_Nullable maxPointSize = maxPointSizeMap[fontTextStyle];
     if (maxPointSize) {
-        if (maxPointSize.floatValue < font.pointSize) {
-            return [font fontWithSize:maxPointSize.floatValue];
-        }
+        return [desiredStyleMetrics scaledFontForFont:unscaledFont maximumPointSize:maxPointSize.floatValue];
     } else {
         OWSFailDebug(@"Missing max point size for style: %@", fontTextStyle);
+        return [desiredStyleMetrics scaledFontForFont:unscaledFont];
     }
-
-    return font;
 }
 
 + (UIFont *)ows_dynamicTypeLargeTitle1ClampedFont
 {
-    if (@available(iOS 11.0, *)) {
-        return [UIFont preferredFontForTextStyleClamped:UIFontTextStyleLargeTitle];
-    } else {
-        return [UIFont preferredFontForTextStyleClamped:UIFontTextStyleTitle1];
-    }
+    return [UIFont preferredFontForTextStyleClamped:UIFontTextStyleLargeTitle];
 }
 
 + (UIFont *)ows_dynamicTypeTitle1ClampedFont
@@ -174,6 +186,11 @@ NS_ASSUME_NONNULL_BEGIN
 + (UIFont *)ows_dynamicTypeBodyClampedFont
 {
     return [UIFont preferredFontForTextStyleClamped:UIFontTextStyleBody];
+}
+
++ (UIFont *)ows_dynamicTypeCalloutClampedFont
+{
+    return [UIFont preferredFontForTextStyleClamped:UIFontTextStyleCallout];
 }
 
 + (UIFont *)ows_dynamicTypeSubheadlineClampedFont

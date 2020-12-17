@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "UIViewController+Permissions.h"
@@ -117,6 +117,8 @@ NS_ASSUME_NONNULL_BEGIN
         completionCallback(NO);
     }
 
+    // TODO Xcode 12: When we're compiling on in Xcode 12, adjust this to
+    // use the new non-deprecated API that returns the "limited" status.
     PHAuthorizationStatus status = [PHPhotoLibrary authorizationStatus];
 
     switch (status) {
@@ -157,7 +159,11 @@ NS_ASSUME_NONNULL_BEGIN
         });
     };
 
-    if (CurrentAppContext().reportedApplicationState == UIApplicationStateBackground) {
+    // We want to avoid asking for audio permission while the app is in the background,
+    // as WebRTC can ask at some strange times. However, if we're currently in a call
+    // it's important we allow you to request audio permission regardless of app state.
+    if (CurrentAppContext().reportedApplicationState == UIApplicationStateBackground
+        && !OWSWindowManager.shared.hasCall) {
         OWSLogError(@"Skipping microphone permissions request when app is in background.");
         callback(NO);
         return;

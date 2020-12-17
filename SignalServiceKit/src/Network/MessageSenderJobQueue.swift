@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -27,7 +27,7 @@ public class MessageSenderJobQueue: NSObject, JobQueue {
     public override init() {
         super.init()
 
-        AppReadiness.runNowOrWhenAppDidBecomeReady {
+        AppReadiness.runNowOrWhenAppDidBecomeReadyPolite {
             self.setup()
         }
     }
@@ -41,7 +41,7 @@ public class MessageSenderJobQueue: NSObject, JobQueue {
 
     @objc(addMediaMessage:dataSource:contentType:sourceFilename:caption:albumMessageId:isTemporaryAttachment:)
     public func add(mediaMessage: TSOutgoingMessage, dataSource: DataSource, contentType: String, sourceFilename: String?, caption: String?, albumMessageId: String?, isTemporaryAttachment: Bool) {
-        let attachmentInfo = OutgoingAttachmentInfo(dataSource: dataSource, contentType: contentType, sourceFilename: sourceFilename, caption: caption, albumMessageId: albumMessageId)
+        let attachmentInfo = OutgoingAttachmentInfo(dataSource: dataSource, contentType: contentType, sourceFilename: sourceFilename, caption: caption, albumMessageId: albumMessageId, isBorderless: false)
         let message = OutgoingMessagePreparer(mediaMessage, unsavedAttachmentInfos: [attachmentInfo])
         add(message: message, isTemporaryAttachment: isTemporaryAttachment)
     }
@@ -57,7 +57,7 @@ public class MessageSenderJobQueue: NSObject, JobQueue {
     }
 
     private func add(message: OutgoingMessagePreparer, removeMessageAfterSending: Bool, transaction: SDSAnyWriteTransaction) {
-        assert(AppReadiness.isAppReady() || CurrentAppContext().isRunningTests)
+        assert(AppReadiness.isAppReady || CurrentAppContext().isRunningTests)
         do {
             let messageRecord = try message.prepareMessage(transaction: transaction)
             let jobRecord = try SSKMessageSenderJobRecord(message: messageRecord, removeMessageAfterSending: removeMessageAfterSending, label: self.jobRecordLabel, transaction: transaction)
@@ -72,9 +72,11 @@ public class MessageSenderJobQueue: NSObject, JobQueue {
     public typealias DurableOperationType = MessageSenderOperation
     @objc
     public static let jobRecordLabel: String = "MessageSender"
-    public static let maxRetries: UInt = 30
+    // per OWSOperation.retryIntervalForExponentialBackoff(failureCount:),
+    // 110 retries will yield ~24 hours of retry.
+    public static let maxRetries: UInt = 110
     public let requiresInternet: Bool = true
-    public var runningOperations: [MessageSenderOperation] = []
+    public var runningOperations = AtomicArray<MessageSenderOperation>()
 
     public var jobRecordLabel: String {
         return type(of: self).jobRecordLabel
@@ -85,7 +87,7 @@ public class MessageSenderJobQueue: NSObject, JobQueue {
         defaultSetup()
     }
 
-    public var isSetup: Bool = false
+    public var isSetup = AtomicBool(false)
 
     public func didMarkAsReady(oldJobRecord: SSKMessageSenderJobRecord, transaction: SDSAnyWriteTransaction) {
         if let messageId = oldJobRecord.messageId, let message = TSOutgoingMessage.anyFetch(uniqueId: messageId, transaction: transaction) as? TSOutgoingMessage {
@@ -104,10 +106,29 @@ public class MessageSenderJobQueue: NSObject, JobQueue {
             throw JobError.obsolete(description: "message no longer exists")
         }
 
-        return MessageSenderOperation(message: message, jobRecord: jobRecord)
+        let operation = MessageSenderOperation(message: message, jobRecord: jobRecord)
+
+        // Media messages run on their own queue to not block future non-media sends,
+        // but should not start sending until all previous operations have executed.
+        // We can guarantee this by adding another operation to the send queue that
+        // we depend upon.
+        //
+        // For example, if you send text messages A, B and then media message C
+        // message C should never send before A and B. However, if you send text
+        // messages A, B, then media message C, followed by text message D, D cannot
+        // send before A and B, but CAN send before C.
+        if jobRecord.isMediaMessage, let sendQueue = senderQueues[message.uniqueThreadId] {
+            let orderMaintainingOperation = Operation()
+            orderMaintainingOperation.queuePriority = MessageSender.queuePriority(for: message)
+            sendQueue.addOperation(orderMaintainingOperation)
+            operation.addDependency(orderMaintainingOperation)
+        }
+
+        return operation
     }
 
     var senderQueues: [String: OperationQueue] = [:]
+    var mediaSenderQueues: [String: OperationQueue] = [:]
     let defaultQueue: OperationQueue = {
         let operationQueue = OperationQueue()
         operationQueue.name = "DefaultSendingQueue"
@@ -123,17 +144,31 @@ public class MessageSenderJobQueue: NSObject, JobQueue {
             return defaultQueue
         }
 
-        guard let existingQueue = senderQueues[threadId] else {
-            let operationQueue = OperationQueue()
-            operationQueue.name = "SendingQueue:\(threadId)"
-            operationQueue.maxConcurrentOperationCount = 1
+        if jobRecord.isMediaMessage {
+            guard let existingQueue = mediaSenderQueues[threadId] else {
+                let operationQueue = OperationQueue()
+                operationQueue.name = "MediaSendingQueue:\(threadId)"
+                operationQueue.maxConcurrentOperationCount = 1
 
-            senderQueues[threadId] = operationQueue
+                mediaSenderQueues[threadId] = operationQueue
 
-            return operationQueue
+                return operationQueue
+            }
+
+            return existingQueue
+        } else {
+            guard let existingQueue = senderQueues[threadId] else {
+                let operationQueue = OperationQueue()
+                operationQueue.name = "SendingQueue:\(threadId)"
+                operationQueue.maxConcurrentOperationCount = 1
+
+                senderQueues[threadId] = operationQueue
+
+                return operationQueue
+            }
+
+            return existingQueue
         }
-
-        return existingQueue
     }
 
     @objc
@@ -177,7 +212,10 @@ public class MessageSenderOperation: OWSOperation, DurableOperation {
     init(message: TSOutgoingMessage, jobRecord: SSKMessageSenderJobRecord) {
         self.message = message
         self.jobRecord = jobRecord
+
         super.init()
+
+        self.queuePriority = MessageSender.queuePriority(for: message)
     }
 
     // MARK: Dependencies
@@ -194,8 +232,12 @@ public class MessageSenderOperation: OWSOperation, DurableOperation {
 
     override public func run() {
         self.messageSender.sendMessage(message.asPreparer,
-                                       success: reportSuccess,
-                                       failure: reportError(withUndefinedRetry:))
+                                       success: {
+                                        self.reportSuccess()
+        },
+                                       failure: { error in
+                                        self.reportError(withUndefinedRetry: error)
+        })
     }
 
     override public func didSucceed() {
@@ -217,19 +259,7 @@ public class MessageSenderOperation: OWSOperation, DurableOperation {
     }
 
     override public func retryInterval() -> TimeInterval {
-        // Arbitrary backoff factor...
-        // With backOffFactor of 1.9
-        // try  1 delay:  0.00s
-        // try  2 delay:  0.19s
-        // ...
-        // try  5 delay:  1.30s
-        // ...
-        // try 11 delay: 61.31s
-        let backoffFactor = 1.9
-        let maxBackoff = 15 * kMinuteInterval
-
-        let seconds = 0.1 * min(maxBackoff, pow(backoffFactor, Double(self.jobRecord.failureCount)))
-        return seconds
+        return OWSOperation.retryIntervalForExponentialBackoff(failureCount: jobRecord.failureCount)
     }
 
     override public func didFail(error: Error) {

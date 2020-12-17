@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -38,7 +38,10 @@ public class StickerHorizontalListViewItemSticker: NSObject, StickerHorizontalLi
     }
 
     public var view: UIView {
-        let view = StickerView(stickerInfo: stickerInfo)
+        guard let view = StickerView.stickerView(forInstalledStickerInfo: stickerInfo) else {
+            owsFailDebug("Could not load sticker for display.")
+            return UIView()
+        }
         view.layer.minificationFilter = .trilinear
         return view
     }
@@ -104,19 +107,10 @@ public class StickerHorizontalListView: UICollectionView {
     private let cellReuseIdentifier = "cellReuseIdentifier"
 
     @objc
-    public override var contentInset: UIEdgeInsets {
-        didSet {
-            updateHeightConstraint()
-        }
-    }
-
-    private var heightConstraint: NSLayoutConstraint?
-
-    @objc
-    public required init(cellSize: CGFloat, cellInset: CGFloat, spacing: CGFloat = 0) {
+    public required init(cellSize: CGFloat, cellInset: CGFloat, spacing: CGFloat) {
         self.cellSize = cellSize
         self.cellInset = cellInset
-        let layout = LinearHorizontalLayout(itemSize: CGSize(width: cellSize, height: cellSize), spacing: spacing)
+        let layout = LinearHorizontalLayout(itemSize: CGSize(square: cellSize), spacing: spacing)
 
         super.init(frame: .zero, collectionViewLayout: layout)
 
@@ -126,26 +120,11 @@ public class StickerHorizontalListView: UICollectionView {
 
         setContentHuggingHorizontalLow()
         setCompressionResistanceHorizontalLow()
-        heightConstraint = autoSetDimension(.height, toSize: 0)
-        updateHeightConstraint()
     }
 
     // Reload visible items to refresh the "selected" state
     func updateSelections() {
         reloadItems(at: indexPathsForVisibleItems)
-    }
-
-    private func updateHeightConstraint() {
-        guard let heightConstraint = heightConstraint else {
-            owsFailDebug("Missing heightConstraint.")
-            return
-        }
-        let newValue = cellSize + contentInset.top + contentInset.bottom
-        if heightConstraint.constant == newValue {
-            return
-        }
-        heightConstraint.constant = newValue
-        invalidateIntrinsicContentSize()
     }
 
     required public init(coder: NSCoder) {

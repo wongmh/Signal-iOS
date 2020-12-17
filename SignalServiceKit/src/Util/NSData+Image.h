@@ -1,11 +1,11 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 NS_ASSUME_NONNULL_BEGIN
 
 
-typedef NS_ENUM(NSInteger, ImageFormat) {
+typedef NS_CLOSED_ENUM(NSInteger, ImageFormat) {
     ImageFormat_Unknown,
     ImageFormat_Png,
     ImageFormat_Gif,
@@ -13,21 +13,29 @@ typedef NS_ENUM(NSInteger, ImageFormat) {
     ImageFormat_Jpeg,
     ImageFormat_Bmp,
     ImageFormat_Webp,
+    ImageFormat_Heic,
+    ImageFormat_Heif,
+    ImageFormat_LottieSticker,
 };
 
 NSString *NSStringForImageFormat(ImageFormat value);
 
+NSString *_Nullable MIMETypeForImageFormat(ImageFormat value);
+
 #pragma mark -
 
-@interface ImageData : NSObject
+@interface ImageMetadata : NSObject
 
-@property (nonatomic) BOOL isValid;
+@property (nonatomic, readonly) BOOL isValid;
 
 // These properties are only set if isValid is true.
-@property (nonatomic) ImageFormat imageFormat;
-@property (nonatomic) CGSize pixelSize;
+@property (nonatomic, readonly) ImageFormat imageFormat;
+@property (nonatomic, readonly) CGSize pixelSize;
+@property (nonatomic, readonly) BOOL hasAlpha;
+@property (nonatomic, readonly) BOOL isAnimated;
 
-// TODO: We could add an hasAlpha property.
+@property (nonatomic, readonly, nullable) NSString *mimeType;
+@property (nonatomic, readonly, nullable) NSString *fileExtension;
 
 @end
 
@@ -50,17 +58,21 @@ NSString *NSStringForImageFormat(ImageFormat value);
 
 + (BOOL)hasAlphaForValidImageFilePath:(NSString *)filePath;
 
+@property (nonatomic, readonly) BOOL isMaybeWebpData;
 - (nullable UIImage *)stillForWebpData;
 
-#pragma mark - Image Data
++ (BOOL)ows_hasStickerLikePropertiesWithPath:(NSString *)filePath;
+- (BOOL)ows_hasStickerLikeProperties;
+
+#pragma mark - Image Metadata
 
 // declaredMimeType is optional.
 // If present, it is used to validate the file format contents.
-+ (ImageData *)imageDataWithPath:(NSString *)filePath mimeType:(nullable NSString *)declaredMimeType;
++ (ImageMetadata *)imageMetadataWithPath:(NSString *)filePath mimeType:(nullable NSString *)declaredMimeType;
 
 // filePath and declaredMimeType are optional.
 // If present, they are used to validate the file format contents.
-- (ImageData *)imageDataWithPath:(nullable NSString *)filePath mimeType:(nullable NSString *)declaredMimeType;
+- (ImageMetadata *)imageMetadataWithPath:(nullable NSString *)filePath mimeType:(nullable NSString *)declaredMimeType;
 
 @end
 

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -19,6 +19,7 @@ public class SSKPreferences: NSObject {
     // MARK: -
 
     private static let areLinkPreviewsEnabledKey = "areLinkPreviewsEnabled"
+    private static let areLegacyLinkPreviewsEnabledKey = "areLegacyLinkPreviewsEnabled"
 
     @objc
     public static func areLinkPreviewsEnabled(transaction: SDSAnyReadTransaction) -> Bool {
@@ -26,14 +27,24 @@ public class SSKPreferences: NSObject {
     }
 
     @objc
-    public static func setAreLinkPreviewsEnabledAndSendSyncMessage(_ newValue: Bool, transaction: SDSAnyWriteTransaction) {
-        setAreLinkPreviewsEnabled(newValue, transaction: transaction)
-        SSKEnvironment.shared.syncManager.sendConfigurationSyncMessage()
+    public static func setAreLinkPreviewsEnabled(_ newValue: Bool,
+                                                 sendSyncMessage shouldSync: Bool = false,
+                                                 transaction: SDSAnyWriteTransaction) {
+        store.setBool(newValue, key: areLinkPreviewsEnabledKey, transaction: transaction)
+
+        if shouldSync {
+            SSKEnvironment.shared.syncManager.sendConfigurationSyncMessage()
+            SSKEnvironment.shared.storageServiceManager.recordPendingLocalAccountUpdates()
+        }
     }
 
-    @objc
-    public static func setAreLinkPreviewsEnabled(_ newValue: Bool, transaction: SDSAnyWriteTransaction) {
-        store.setBool(newValue, key: areLinkPreviewsEnabledKey, transaction: transaction)
+    // The following two methods are just to make sure we can store and forward in storage service updates
+    public static func areLegacyLinkPreviewsEnabled(transaction: SDSAnyReadTransaction) -> Bool {
+        return store.getBool(areLegacyLinkPreviewsEnabledKey, defaultValue: true, transaction: transaction)
+    }
+
+    public static func setAreLegacyLinkPreviewsEnabled(_ newValue: Bool, transaction: SDSAnyWriteTransaction) {
+        store.setBool(newValue, key: areLegacyLinkPreviewsEnabledKey, transaction: transaction)
     }
 
     // MARK: -
@@ -106,6 +117,49 @@ public class SSKPreferences: NSObject {
         let appUserDefaults = CurrentAppContext().appUserDefaults()
         appUserDefaults.set(value, forKey: didEverUseYdbKey)
         appUserDefaults.synchronize()
+    }
+
+    // MARK: - messageRequestInteractionIdEpoch
+
+    private static let messageRequestInteractionIdEpochKey = "messageRequestInteractionIdEpoch"
+    private static var messageRequestInteractionIdEpochCached: Int?
+    public static func messageRequestInteractionIdEpoch(transaction: GRDBReadTransaction) -> Int? {
+        if let value = messageRequestInteractionIdEpochCached {
+            return value
+        }
+        let value = store.getInt(messageRequestInteractionIdEpochKey, transaction: transaction.asAnyRead)
+        messageRequestInteractionIdEpochCached = value
+        return value
+    }
+
+    public static func setMessageRequestInteractionIdEpoch(_ value: Int?, transaction: GRDBWriteTransaction) {
+        guard let value = value else {
+            store.removeValue(forKey: messageRequestInteractionIdEpochKey, transaction: transaction.asAnyWrite)
+            messageRequestInteractionIdEpochCached = nil
+            return
+        }
+
+        store.setInt(value, key: messageRequestInteractionIdEpochKey, transaction: transaction.asAnyWrite)
+        messageRequestInteractionIdEpochCached = value
+    }
+
+    // MARK: - Badge Count
+
+    private static let includeMutedThreadsInBadgeCount = "includeMutedThreadsInBadgeCount"
+    private static var includeMutedThreadsInBadgeCountCached: Bool?
+
+    @objc
+    public static func includeMutedThreadsInBadgeCount(transaction: SDSAnyReadTransaction) -> Bool {
+        if let value = includeMutedThreadsInBadgeCountCached { return value }
+        let value = store.getBool(includeMutedThreadsInBadgeCount, defaultValue: false, transaction: transaction)
+        includeMutedThreadsInBadgeCountCached = value
+        return value
+    }
+
+    @objc
+    public static func setIncludeMutedThreadsInBadgeCount(_ value: Bool, transaction: SDSAnyWriteTransaction) {
+        store.setBool(value, key: includeMutedThreadsInBadgeCount, transaction: transaction)
+        includeMutedThreadsInBadgeCountCached = value
     }
 
     // MARK: -

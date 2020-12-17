@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "TSAttachment.h"
@@ -20,8 +20,6 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
 
 @property (nonatomic, nullable) NSString *sourceFilename;
 
-@property (nonatomic) NSString *contentType;
-
 @property (nonatomic, nullable) NSString *blurHash;
 
 @end
@@ -30,9 +28,22 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
 
 @implementation TSAttachment
 
+@synthesize contentType = _contentType;
+
+#pragma mark - Dependencies
+
+- (AttachmentReadCache *)attachmentReadCache
+{
+    return SSKEnvironment.shared.modelReadCaches.attachmentReadCache;
+}
+
+#pragma mark -
+
 // This constructor is used for new instances of TSAttachmentPointer,
 // i.e. undownloaded incoming attachments.
 - (instancetype)initWithServerId:(UInt64)serverId
+                          cdnKey:(NSString *)cdnKey
+                       cdnNumber:(UInt32)cdnNumber
                    encryptionKey:(NSData *)encryptionKey
                        byteCount:(UInt32)byteCount
                      contentType:(NSString *)contentType
@@ -40,8 +51,9 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
                          caption:(nullable NSString *)caption
                   albumMessageId:(nullable NSString *)albumMessageId
                         blurHash:(nullable NSString *)blurHash
+                 uploadTimestamp:(unsigned long long)uploadTimestamp
 {
-    OWSAssertDebug(serverId > 0);
+    OWSAssertDebug(serverId > 0 || cdnKey.length > 0);
     OWSAssertDebug(encryptionKey.length > 0);
     if (byteCount <= 0) {
         // This will fail with legacy iOS clients which don't upload attachment size.
@@ -60,6 +72,8 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
     }
 
     _serverId = serverId;
+    _cdnKey = cdnKey;
+    _cdnNumber = cdnNumber;
     _encryptionKey = encryptionKey;
     _byteCount = byteCount;
     _contentType = contentType;
@@ -67,6 +81,7 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
     _caption = caption;
     _albumMessageId = albumMessageId;
     _blurHash = blurHash;
+    _uploadTimestamp = uploadTimestamp;
 
     _attachmentSchemaVersion = TSAttachmentSchemaVersion;
 
@@ -144,11 +159,14 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
 - (instancetype)initWithPointer:(TSAttachmentPointer *)pointer transaction:(SDSAnyReadTransaction *)transaction
 {
     if (![pointer lazyRestoreFragmentWithTransaction:transaction]) {
-        OWSAssertDebug(pointer.serverId > 0);
+        OWSAssertDebug(pointer.serverId > 0 || pointer.cdnKey.length > 0);
         OWSAssertDebug(pointer.encryptionKey.length > 0);
         if (pointer.byteCount <= 0) {
             // This will fail with legacy iOS clients which don't upload attachment size.
-            OWSLogWarn(@"Missing pointer.byteCount for attachment with serverId: %lld", pointer.serverId);
+            OWSLogWarn(@"Missing pointer.byteCount for attachment with serverId: %lld, cdnKey: %@, cdnNumber: %u",
+                pointer.serverId,
+                pointer.cdnKey,
+                pointer.cdnNumber);
         }
     }
     OWSAssertDebug(pointer.contentType.length > 0);
@@ -160,6 +178,8 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
     }
 
     _serverId = pointer.serverId;
+    _cdnKey = pointer.cdnKey;
+    _cdnNumber = pointer.cdnNumber;
     _encryptionKey = pointer.encryptionKey;
     _byteCount = pointer.byteCount;
     _sourceFilename = pointer.sourceFilename;
@@ -173,6 +193,7 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
     _caption = pointer.caption;
     _albumMessageId = pointer.albumMessageId;
     _blurHash = pointer.blurHash;
+    _uploadTimestamp = pointer.uploadTimestamp;
 
     _attachmentSchemaVersion = TSAttachmentSchemaVersion;
 
@@ -219,10 +240,13 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
                         blurHash:(nullable NSString *)blurHash
                        byteCount:(unsigned int)byteCount
                          caption:(nullable NSString *)caption
+                          cdnKey:(NSString *)cdnKey
+                       cdnNumber:(unsigned int)cdnNumber
                      contentType:(NSString *)contentType
                    encryptionKey:(nullable NSData *)encryptionKey
                         serverId:(unsigned long long)serverId
                   sourceFilename:(nullable NSString *)sourceFilename
+                 uploadTimestamp:(unsigned long long)uploadTimestamp
 {
     self = [super initWithGrdbId:grdbId
                         uniqueId:uniqueId];
@@ -236,10 +260,13 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
     _blurHash = blurHash;
     _byteCount = byteCount;
     _caption = caption;
+    _cdnKey = cdnKey;
+    _cdnNumber = cdnNumber;
     _contentType = contentType;
     _encryptionKey = encryptionKey;
     _serverId = serverId;
     _sourceFilename = sourceFilename;
+    _uploadTimestamp = uploadTimestamp;
 
     [self sdsFinalizeAttachment];
 
@@ -270,19 +297,66 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
 }
 
 - (NSString *)description {
-    NSString *attachmentString = NSLocalizedString(@"ATTACHMENT", nil);
+    NSString *attachmentString;
 
-    if ([MIMETypeUtil isAudio:self.contentType]) {
+    if (self.isAnimated) {
+        if ([self.contentType caseInsensitiveCompare:OWSMimeTypeImageGif] == NSOrderedSame) {
+            attachmentString = NSLocalizedString(@"ATTACHMENT_TYPE_GIF",
+                @"Short text label for a gif attachment, used for thread preview and on the lock screen");
+        } else {
+            attachmentString = NSLocalizedString(@"ATTACHMENT_TYPE_IMAGE",
+                @"Short text label for an image attachment, used for thread preview and on the lock screen");
+        }
+    } else if ([MIMETypeUtil isImage:self.contentType]) {
+        attachmentString = NSLocalizedString(@"ATTACHMENT_TYPE_PHOTO",
+            @"Short text label for a photo attachment, used for thread preview and on the lock screen");
+    } else if ([MIMETypeUtil isVideo:self.contentType]) {
+        attachmentString = NSLocalizedString(@"ATTACHMENT_TYPE_VIDEO",
+            @"Short text label for a video attachment, used for thread preview and on the lock screen");
+    } else if ([MIMETypeUtil isAudio:self.contentType]) {
         // a missing filename is the legacy way to determine if an audio attachment is
         // a voice note vs. other arbitrary audio attachments.
         if (self.isVoiceMessage || !self.sourceFilename || self.sourceFilename.length == 0) {
             attachmentString = NSLocalizedString(@"ATTACHMENT_TYPE_VOICE_MESSAGE",
                 @"Short text label for a voice message attachment, used for thread preview and on the lock screen");
-            return [NSString stringWithFormat:@"🎤 %@", attachmentString];
+        } else {
+            attachmentString = NSLocalizedString(@"ATTACHMENT_TYPE_AUDIO",
+                @"Short text label for a audio attachment, used for thread preview and on the lock screen");
+        }
+    } else {
+        attachmentString = NSLocalizedString(@"ATTACHMENT_TYPE_FILE",
+            @"Short text label for a file attachment, used for thread preview and on the lock screen");
+    }
+
+    return [NSString stringWithFormat:@"%@ %@", self.emoji, attachmentString];
+}
+
+- (NSString *)emoji
+{
+    if ([MIMETypeUtil isAudio:self.contentType]) {
+        // a missing filename is the legacy way to determine if an audio attachment is
+        // a voice note vs. other arbitrary audio attachments.
+        if (self.isVoiceMessage || !self.sourceFilename || self.sourceFilename.length == 0) {
+            return @"🎤";
         }
     }
 
-    return [NSString stringWithFormat:@"%@ %@", [TSAttachment emojiForMimeType:self.contentType], attachmentString];
+    return [self emojiForMimeType];
+}
+
+- (NSString *)emojiForMimeType
+{
+    if (self.isAnimated) {
+        return @"🎡";
+    } else if ([MIMETypeUtil isImage:self.contentType]) {
+        return @"📷";
+    } else if ([MIMETypeUtil isVideo:self.contentType]) {
+        return @"🎥";
+    } else if ([MIMETypeUtil isAudio:self.contentType]) {
+        return @"🎧";
+    } else {
+        return @"📎";
+    }
 }
 
 + (NSString *)emojiForMimeType:(NSString *)contentType
@@ -292,11 +366,7 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
     } else if ([MIMETypeUtil isVideo:contentType]) {
         return @"🎥";
     } else if ([MIMETypeUtil isAudio:contentType]) {
-        if (SYSTEM_VERSION_GREATER_THAN_OR_EQUAL_TO(11, 0)) {
-            return @"🎧";
-        } else {
-            return @"📻";
-        }
+        return @"🎧";
     } else if ([MIMETypeUtil isAnimated:contentType]) {
         return @"🎡";
     } else {
@@ -307,6 +377,11 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
 - (BOOL)isImage
 {
     return [MIMETypeUtil isImage:self.contentType];
+}
+
+- (BOOL)isWebpImage
+{
+    return [self.contentType isEqualToString:OWSMimeTypeImageWebp];
 }
 
 - (BOOL)isVideo
@@ -321,12 +396,23 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
 
 - (BOOL)isAnimated
 {
+    // TSAttachmentStream overrides this method and discriminates based on the actual content.
+    return self.hasAnimatedContentType;
+}
+
+- (BOOL)hasAnimatedContentType
+{
     return [MIMETypeUtil isAnimated:self.contentType];
 }
 
 - (BOOL)isVoiceMessage
 {
     return self.attachmentType == TSAttachmentTypeVoiceMessage;
+}
+
+- (BOOL)isBorderless
+{
+    return self.attachmentType == TSAttachmentTypeBorderless;
 }
 
 - (BOOL)isVisualMedia
@@ -347,6 +433,36 @@ NSUInteger const TSAttachmentSchemaVersion = 5;
 - (NSString *)contentType
 {
     return _contentType.filterFilename;
+}
+
+#pragma mark - Update With...
+
+- (void)anyDidInsertWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidInsertWithTransaction:transaction];
+
+    [self.attachmentReadCache didInsertOrUpdateAttachment:self transaction:transaction];
+}
+
+- (void)anyDidUpdateWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidUpdateWithTransaction:transaction];
+
+    [self.attachmentReadCache didInsertOrUpdateAttachment:self transaction:transaction];
+}
+
+- (void)anyDidRemoveWithTransaction:(SDSAnyWriteTransaction *)transaction
+{
+    [super anyDidRemoveWithTransaction:transaction];
+
+    [self.attachmentReadCache didRemoveAttachment:self transaction:transaction];
+}
+
+- (void)setDefaultContentType:(NSString *)contentType
+{
+    if ([self.contentType isEqualToString:OWSMimeTypeApplicationOctetStream]) {
+        _contentType = contentType;
+    }
 }
 
 #pragma mark - Update With...

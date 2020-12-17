@@ -1,16 +1,21 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
+import MultipeerConnectivity
 
 @objc
-class ConversationSplitViewController: UISplitViewController {
+class ConversationSplitViewController: UISplitViewController, ConversationSplit {
+
+    fileprivate var deviceTransferNavController: DeviceTransferNavigationController?
+
     private let conversationListVC = ConversationListViewController()
     private let detailPlaceholderVC = NoSelectedConversationViewController()
 
     private lazy var primaryNavController = OWSNavigationController(rootViewController: conversationListVC)
     private lazy var detailNavController = OWSNavigationController()
+    private lazy var lastActiveInterfaceOrientation = CurrentAppContext().interfaceOrientation
 
     @objc private(set) weak var selectedConversationViewController: ConversationViewController?
 
@@ -56,6 +61,13 @@ class ConversationSplitViewController: UISplitViewController {
         preferredDisplayMode = .allVisible
 
         NotificationCenter.default.addObserver(self, selector: #selector(applyTheme), name: .ThemeDidChange, object: nil)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(orientationDidChange),
+            name: UIDevice.orientationDidChangeNotification,
+            object: UIDevice.current
+        )
+        NotificationCenter.default.addObserver(self, selector: #selector(didBecomeActive), name: .OWSApplicationDidBecomeActive, object: nil)
 
         applyTheme()
     }
@@ -73,6 +85,17 @@ class ConversationSplitViewController: UISplitViewController {
         applyNavBarStyle(collapsed: isCollapsed)
     }
 
+    @objc func orientationDidChange() {
+        AssertIsOnMainThread()
+        guard UIApplication.shared.applicationState == .active else { return }
+        lastActiveInterfaceOrientation = CurrentAppContext().interfaceOrientation
+    }
+
+    @objc func didBecomeActive() {
+        AssertIsOnMainThread()
+        lastActiveInterfaceOrientation = CurrentAppContext().interfaceOrientation
+    }
+
     func applyNavBarStyle(collapsed: Bool) {
         guard let owsNavBar = primaryNavController.navigationBar as? OWSNavigationBar else {
             return owsFailDebug("unexpected nav bar")
@@ -84,11 +107,8 @@ class ConversationSplitViewController: UISplitViewController {
     override func viewWillLayoutSubviews() {
         super.viewWillLayoutSubviews()
 
-        // TODO Xcode 11: Delete this once we're compiling only in Xcode 11
-        #if swift(>=5.1)
         // We don't want to hide anything on iOS 13, as the extra subview no longer exists
         if #available(iOS 13, *) { hasHiddenExtraSubivew = true }
-        #endif
 
         // HACK: UISplitViewController adds an extra subview behind the navigation
         // bar area that extends across both views. As far as I can tell, it's not
@@ -122,6 +142,19 @@ class ConversationSplitViewController: UISplitViewController {
     func presentThread(_ thread: TSThread, action: ConversationViewAction, focusMessageId: String?, animated: Bool) {
         AssertIsOnMainThread()
 
+        // On iOS 13, there is a bug with UISplitViewController that causes the `isCollapsed` state to
+        // get out of sync while the app isn't active and the orientation has changed while backgrounded.
+        // This results in conversations opening up in the wrong pane when you were in portrait and then
+        // try and open the app in landscape. We work around this by dispatching to the next runloop
+        // at which point things have stabilized.
+        if #available(iOS 13, *), UIApplication.shared.applicationState != .active, lastActiveInterfaceOrientation != CurrentAppContext().interfaceOrientation {
+            if #available(iOS 14, *) { owsFailDebug("check if this still happens") }
+            // Reset this to avoid getting stuck in a loop. We're becoming active.
+            lastActiveInterfaceOrientation = CurrentAppContext().interfaceOrientation
+            DispatchQueue.main.async { self.presentThread(thread, action: action, focusMessageId: focusMessageId, animated: animated) }
+            return
+        }
+
         guard selectedThread?.uniqueId != thread.uniqueId else {
             // If this thread is already selected, pop to the thread if
             // anything else has been presented above the view.
@@ -138,8 +171,10 @@ class ConversationSplitViewController: UISplitViewController {
         // can maintain its scroll position when navigating back.
         conversationListVC.lastViewedThread = thread
 
-        let vc = ConversationViewController()
-        vc.configure(for: thread, action: action, focusMessageId: focusMessageId)
+        let threadViewModel = databaseStorage.uiRead {
+            return ThreadViewModel(thread: thread, transaction: $0)
+        }
+        let vc = ConversationViewController(threadViewModel: threadViewModel, action: action, focusMessageId: focusMessageId)
 
         selectedConversationViewController = vc
 
@@ -264,7 +299,7 @@ class ConversationSplitViewController: UISplitViewController {
     ]
 
     var selectedConversationKeyCommands: [UIKeyCommand] {
-        var commands = [
+        return [
             UIKeyCommand(
                 input: "i",
                 modifierFlags: [.command, .shift],
@@ -300,11 +335,8 @@ class ConversationSplitViewController: UISplitViewController {
                     "KEY_COMMAND_ATTACHMENTS",
                     comment: "A keyboard command to open the current conversation's attachment picker."
                 )
-            )
-        ]
-
-        if (StickerManager.shared.isStickerSendEnabled) {
-            commands.append(UIKeyCommand(
+            ),
+            UIKeyCommand(
                 input: "s",
                 modifierFlags: [.command, .shift],
                 action: #selector(openStickerKeyboard),
@@ -312,10 +344,7 @@ class ConversationSplitViewController: UISplitViewController {
                     "KEY_COMMAND_STICKERS",
                     comment: "A keyboard command to open the current conversation's sticker picker."
                 )
-            ))
-        }
-
-        commands += [
+            ),
             UIKeyCommand(
                 input: "a",
                 modifierFlags: [.command, .shift],
@@ -344,8 +373,6 @@ class ConversationSplitViewController: UISplitViewController {
                 )
             )
         ]
-
-        return commands
     }
 
     override var keyCommands: [UIKeyCommand]? {
@@ -526,7 +553,7 @@ private class NoSelectedConversationViewController: OWSViewController {
         view = UIView()
 
         let logoContainer = UIView.container()
-        logoImageView.image = #imageLiteral(resourceName: "logoSignal").withRenderingMode(.alwaysTemplate)
+        logoImageView.image = #imageLiteral(resourceName: "signal-logo-128").withRenderingMode(.alwaysTemplate)
         logoImageView.contentMode = .scaleAspectFit
         logoContainer.addSubview(logoImageView)
         logoImageView.autoPinTopToSuperviewMargin()
@@ -534,7 +561,7 @@ private class NoSelectedConversationViewController: OWSViewController {
         logoImageView.autoHCenterInSuperview()
         logoImageView.autoSetDimension(.height, toSize: 72)
 
-        titleLabel.font = UIFont.ows_dynamicTypeBody.ows_semibold()
+        titleLabel.font = UIFont.ows_dynamicTypeBody.ows_semibold
         titleLabel.textAlignment = .center
         titleLabel.numberOfLines = 0
         titleLabel.lineBreakMode = .byWordWrapping
@@ -569,4 +596,31 @@ private class NoSelectedConversationViewController: OWSViewController {
         bodyLabel.textColor = Theme.secondaryTextAndIconColor
         logoImageView.tintColor = Theme.isDarkThemeEnabled ? .ows_gray05 : .ows_gray65
     }
+}
+
+extension ConversationSplitViewController: DeviceTransferServiceObserver {
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+
+        deviceTransferService.addObserver(self)
+        deviceTransferService.startListeningForNewDevices()
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+
+        deviceTransferService.removeObserver(self)
+        deviceTransferService.stopListeningForNewDevices()
+    }
+
+    func deviceTransferServiceDiscoveredNewDevice(peerId: MCPeerID, discoveryInfo: [String: String]?) {
+        guard deviceTransferNavController?.presentingViewController == nil else { return }
+        let navController = DeviceTransferNavigationController()
+        deviceTransferNavController = navController
+        navController.present(fromViewController: self)
+    }
+
+    func deviceTransferServiceDidStartTransfer(progress: Progress) {}
+
+    func deviceTransferServiceDidEndTransfer(error: DeviceTransferService.Error?) {}
 }

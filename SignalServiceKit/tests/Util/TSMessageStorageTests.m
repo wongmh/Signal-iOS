@@ -1,8 +1,9 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "SSKBaseTestObjC.h"
+#import "TSAccountManager.h"
 #import "TSContactThread.h"
 #import "TSGroupThread.h"
 #import "TSIncomingMessage.h"
@@ -22,6 +23,15 @@
 
 @implementation TSMessageStorageTests
 
+// MARK: - Dependencies
+
+- (TSAccountManager *)tsAccountManager
+{
+    return SSKEnvironment.shared.tsAccountManager;
+}
+
+// MARK: -
+
 - (SignalServiceAddress *)localAddress
 {
     return [[SignalServiceAddress alloc] initWithPhoneNumber:@"+13334445555"];
@@ -35,6 +45,11 @@
 - (void)setUp
 {
     [super setUp];
+
+    // ensure local client has necessary "registered" state
+    NSString *localE164Identifier = @"+13235551234";
+    NSUUID *localUUID = NSUUID.UUID;
+    [self.tsAccountManager registerForTestsWithLocalNumber:localE164Identifier uuid:localUUID];
 
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
         self.thread = [TSContactThread getOrCreateThreadWithContactAddress:self.otherAddress transaction:transaction];
@@ -58,20 +73,12 @@
           @"privacy matters; privacy is what allows us to determine who we are and who we want to be.";
 
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        TSIncomingMessage *newMessage = [[TSIncomingMessage alloc] initIncomingMessageWithTimestamp:timestamp
-                                                                                           inThread:self.thread
-                                                                                      authorAddress:self.otherAddress
-                                                                                     sourceDeviceId:1
-                                                                                        messageBody:body
-                                                                                      attachmentIds:@[]
-                                                                                   expiresInSeconds:0
-                                                                                      quotedMessage:nil
-                                                                                       contactShare:nil
-                                                                                        linkPreview:nil
-                                                                                     messageSticker:nil
-                                                                                    serverTimestamp:nil
-                                                                                    wasReceivedByUD:NO
-                                                                                  isViewOnceMessage:NO];
+        TSIncomingMessageBuilder *incomingMessageBuilder =
+            [TSIncomingMessageBuilder incomingMessageBuilderWithThread:self.thread messageBody:body];
+        incomingMessageBuilder.timestamp = timestamp;
+        incomingMessageBuilder.authorAddress = self.otherAddress;
+        incomingMessageBuilder.sourceDeviceId = 1;
+        TSIncomingMessage *newMessage = [incomingMessageBuilder build];
 
         [newMessage anyInsertWithTransaction:transaction];
         messageId = newMessage.uniqueId;
@@ -97,21 +104,12 @@
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
         NSMutableArray<TSIncomingMessage *> *messages = [NSMutableArray new];
         for (int i = 0; i < 10; i++) {
-            TSIncomingMessage *newMessage =
-                [[TSIncomingMessage alloc] initIncomingMessageWithTimestamp:i + 1
-                                                                   inThread:self.thread
-                                                              authorAddress:self.otherAddress
-                                                             sourceDeviceId:1
-                                                                messageBody:body
-                                                              attachmentIds:@[]
-                                                           expiresInSeconds:0
-                                                              quotedMessage:nil
-                                                               contactShare:nil
-                                                                linkPreview:nil
-                                                             messageSticker:nil
-                                                            serverTimestamp:nil
-                                                            wasReceivedByUD:NO
-                                                          isViewOnceMessage:NO];
+            TSIncomingMessageBuilder *incomingMessageBuilder =
+                [TSIncomingMessageBuilder incomingMessageBuilderWithThread:self.thread messageBody:body];
+            incomingMessageBuilder.timestamp = i + 1;
+            incomingMessageBuilder.authorAddress = self.otherAddress;
+            incomingMessageBuilder.sourceDeviceId = 1;
+            TSIncomingMessage *newMessage = [incomingMessageBuilder build];
 
             [messages addObject:newMessage];
             [newMessage anyInsertWithTransaction:transaction];
@@ -147,36 +145,23 @@
           @"privacy matters; privacy is what allows us to determine who we are and who we want to be.";
 
     [self writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
-        NSError *error;
-        TSGroupThread *thread = [GroupManager createGroupForTestsObjcWithTransaction:transaction
-                                                                             members:@[
-                                                                                       self.localAddress,
-                                                                                       self.otherAddress,
-                                                                                       ]
-                                                                                name:@"fdsfsd"
-                                                                          avatarData:nil
-                                                                               error:&error];
-        if (error != nil) {
-            OWSFailDebug(@"Error: %@", error);
-        }
+        TSGroupThread *thread = [GroupManager createGroupForTestsObjcWithMembers:@[
+            self.localAddress,
+            self.otherAddress,
+        ]
+                                                                            name:@"fdsfsd"
+                                                                      avatarData:nil
+                                                                     transaction:transaction];
 
         NSMutableArray<TSIncomingMessage *> *messages = [NSMutableArray new];
         for (uint64_t i = 0; i < 10; i++) {
             SignalServiceAddress *authorAddress = [[SignalServiceAddress alloc] initWithPhoneNumber:@"+fakephone"];
-            TSIncomingMessage *newMessage = [[TSIncomingMessage alloc] initIncomingMessageWithTimestamp:i + 1
-                                                                                               inThread:thread
-                                                                                          authorAddress:authorAddress
-                                                                                         sourceDeviceId:1
-                                                                                            messageBody:body
-                                                                                          attachmentIds:@[]
-                                                                                       expiresInSeconds:0
-                                                                                          quotedMessage:nil
-                                                                                           contactShare:nil
-                                                                                            linkPreview:nil
-                                                                                         messageSticker:nil
-                                                                                        serverTimestamp:nil
-                                                                                        wasReceivedByUD:NO
-                                                                                      isViewOnceMessage:NO];
+            TSIncomingMessageBuilder *incomingMessageBuilder =
+                [TSIncomingMessageBuilder incomingMessageBuilderWithThread:thread messageBody:body];
+            incomingMessageBuilder.timestamp = i + 1;
+            incomingMessageBuilder.authorAddress = authorAddress;
+            incomingMessageBuilder.sourceDeviceId = 1;
+            TSIncomingMessage *newMessage = [incomingMessageBuilder build];
             [newMessage anyInsertWithTransaction:transaction];
             [messages addObject:newMessage];
         }

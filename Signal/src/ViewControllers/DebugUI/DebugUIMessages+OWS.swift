@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -53,8 +53,6 @@ public extension DebugUIMessages {
 
     @objc
     class func receiveUUIDEnvelopeInNewThread() {
-        assert(FeatureFlags.allowUUIDOnlyContacts)
-
         let senderClient = FakeSignalClient.generate(e164Identifier: nil)
         let localClient = LocalSignalClient()
         let runner = TestProtocolRunner()
@@ -69,21 +67,16 @@ public extension DebugUIMessages {
         let envelopeBuilder = try! fakeService.envelopeBuilder(fromSenderClient: senderClient)
         envelopeBuilder.setSourceUuid(senderClient.uuidIdentifier)
         let envelopeData = try! envelopeBuilder.buildSerializedData()
-        messageReceiver.handleReceivedEnvelopeData(envelopeData)
+        messageReceiver.handleReceivedEnvelopeData(envelopeData, serverDeliveryTimestamp: 0)
     }
 
     @objc
     class func createUUIDGroup() {
-        assert(FeatureFlags.allowUUIDOnlyContacts)
-
         let uuidMembers = (0...3).map { _ in CommonGenerator.address(hasPhoneNumber: false) }
         let members = uuidMembers + [TSAccountManager.localAddress!]
         let groupName = "UUID Group"
 
-        GroupManager.createGroup(members: members, name: groupName)
-        .then(on: .global()) { thread in
-            return GroupManager.sendDurableNewGroupMessage(forThread: thread)
-        }.retainUntilComplete()
+        _ = GroupManager.localCreateNewGroup(members: members, name: groupName, shouldSendMessage: true)
     }
 }
 

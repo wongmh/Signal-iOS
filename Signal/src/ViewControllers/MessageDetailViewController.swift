@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -19,14 +19,6 @@ protocol MessageDetailViewDelegate: AnyObject {
 
 @objc
 class MessageDetailViewController: OWSViewController {
-
-    // MARK: - Dependencies
-
-    private var databaseStorage: SDSDatabaseStorage {
-        return SDSDatabaseStorage.shared
-    }
-
-    // MARK: -
 
     @objc
     weak var delegate: MessageDetailViewDelegate?
@@ -49,7 +41,7 @@ class MessageDetailViewController: OWSViewController {
 
     var attachments: [TSAttachment]?
     var attachmentStreams: [TSAttachmentStream]? {
-        return attachments?.flatMap { $0 as? TSAttachmentStream }
+        return attachments?.compactMap { $0 as? TSAttachmentStream }
     }
     var messageBody: String?
 
@@ -61,24 +53,11 @@ class MessageDetailViewController: OWSViewController {
 
     private var contactShareViewHelper: ContactShareViewHelper!
 
-    // MARK: Dependencies
-
-    var preferences: OWSPreferences {
-        return Environment.shared.preferences
-    }
-
-    var contactsManager: OWSContactsManager {
-        return Environment.shared.contactsManager
-    }
+    private var databaseUpdateTimer: Timer?
 
     var audioAttachmentPlayer: OWSAudioPlayer?
 
     // MARK: Initializers
-
-    @available(*, unavailable, message:"use other constructor instead.")
-    required init?(coder aDecoder: NSCoder) {
-        notImplemented()
-    }
 
     @objc
     required init(viewItem: ConversationViewItem, message: TSMessage, thread: TSThread, mode: MessageMetadataViewMode) {
@@ -87,7 +66,7 @@ class MessageDetailViewController: OWSViewController {
         self.mode = mode
         self.conversationStyle = ConversationStyle(thread: thread)
 
-        super.init(nibName: nil, bundle: nil)
+        super.init()
     }
 
     // MARK: View Lifecycle
@@ -106,7 +85,7 @@ class MessageDetailViewController: OWSViewController {
         }
 
         // We use the navigation controller's width here as ours may not be calculated yet.
-        self.conversationStyle.viewWidth = navigationController?.view.width() ?? view.width()
+        self.conversationStyle.viewWidth = navigationController?.view.width ?? view.width
 
         self.navigationItem.title = NSLocalizedString("MESSAGE_METADATA_VIEW_TITLE",
                                                       comment: "Title for the 'message metadata' view.")
@@ -115,7 +94,7 @@ class MessageDetailViewController: OWSViewController {
 
         self.view.layoutIfNeeded()
 
-        databaseStorage.add(databaseStorageObserver: self)
+        databaseStorage.appendUIDatabaseSnapshotDelegate(self)
     }
 
     override public func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
@@ -235,12 +214,7 @@ class MessageDetailViewController: OWSViewController {
 
         // Sender?
         if let incomingMessage = message as? TSIncomingMessage {
-            let senderName: String
-            if FeatureFlags.profileDisplayChanges {
-                senderName = contactsManager.displayName(for: incomingMessage.authorAddress)
-            } else {
-                senderName = contactsManager.legacyDisplayName(for: incomingMessage.authorAddress)
-            }
+            let senderName = contactsManager.displayName(for: incomingMessage.authorAddress)
             rows.append(valueRow(name: NSLocalizedString("MESSAGE_METADATA_VIEW_SENDER",
                                                          comment: "Label for the 'sender' field of the 'message metadata' view."),
                                  value: senderName))
@@ -249,7 +223,7 @@ class MessageDetailViewController: OWSViewController {
         // Recipient(s)
         if let outgoingMessage = message as? TSOutgoingMessage {
 
-            let isGroupThread = thread.isGroupThread()
+            let isGroupThread = thread.isGroupThread
 
             let recipientStatusGroups: [MessageReceiptStatus] = [
                 .read,
@@ -260,6 +234,12 @@ class MessageDetailViewController: OWSViewController {
                 .failed,
                 .skipped
             ]
+
+            let messageRecipientAddressesUnsorted = outgoingMessage.recipientAddresses()
+            let messageRecipientAddressesSorted = databaseStorage.read { transaction in
+                self.contactsManager.sortSignalServiceAddresses(messageRecipientAddressesUnsorted, transaction: transaction)
+            }
+
             for recipientStatusGroup in recipientStatusGroups {
                 var groupRows = [UIView]()
 
@@ -271,9 +251,7 @@ class MessageDetailViewController: OWSViewController {
                     groupRows.append(divider)
                 }
 
-                let messageRecipientAddresses = outgoingMessage.recipientAddresses()
-
-                for recipientAddress in messageRecipientAddresses {
+                for recipientAddress in messageRecipientAddressesSorted {
                     guard let recipientState = outgoingMessage.recipientState(for: recipientAddress) else {
                         owsFailDebug("no message status for recipient: \(recipientAddress).")
                         continue
@@ -371,20 +349,6 @@ class MessageDetailViewController: OWSViewController {
         updateMessageViewLayout()
     }
 
-    private func displayableTextIfText() -> String? {
-        guard viewItem.hasBodyText else {
-                return nil
-        }
-        guard let displayableText = viewItem.displayableBodyText else {
-                return nil
-        }
-        let messageBody = displayableText.fullText
-        guard messageBody.count > 0  else {
-            return nil
-        }
-        return messageBody
-    }
-
     let bubbleViewHMargin: CGFloat = 10
 
     private func contentRows() -> [UIView] {
@@ -392,20 +356,21 @@ class MessageDetailViewController: OWSViewController {
 
         let messageView: OWSMessageView
         if viewItem.messageCellType == .stickerMessage {
-            let messageStickerView = OWSMessageStickerView(frame: CGRect.zero)
+            let messageStickerView = OWSMessageStickerView()
             messageStickerView.delegate = self
             messageView = messageStickerView
         } else if viewItem.messageCellType == .viewOnce {
-            let messageViewOnceView = OWSMessageViewOnceView(frame: CGRect.zero)
+            let messageViewOnceView = OWSMessageViewOnceView()
             messageViewOnceView.delegate = self
             messageView = messageViewOnceView
         } else {
-            let messageBubbleView = OWSMessageBubbleView(frame: CGRect.zero)
+            let messageBubbleView = OWSMessageBubbleView()
             messageBubbleView.delegate = self
             messageView = messageBubbleView
         }
 
         messageView.addGestureHandlers()
+        messageView.panGesture.require(toFail: scrollView.panGestureRecognizer)
         self.messageView = messageView
         messageView.viewItem = viewItem
         messageView.cellMediaCache = NSCache()
@@ -465,7 +430,7 @@ class MessageDetailViewController: OWSViewController {
                                      value: sourceFilename))
             }
 
-            if _isDebugAssertConfiguration() {
+            if DebugFlags.messageDetailsExtraInfo {
                 let contentType = attachment.contentType
                 rows.append(valueRow(name: NSLocalizedString("MESSAGE_METADATA_VIEW_ATTACHMENT_MIME_TYPE",
                                                              comment: "Label for the MIME type of attachments in the 'message metadata' view."),
@@ -566,7 +531,7 @@ class MessageDetailViewController: OWSViewController {
                 throw DetailViewError.messageWasDeleted
             }
             self.message = newMessage
-            self.attachments = newMessage.mediaAttachments(with: transaction)
+            self.attachments = newMessage.mediaAttachments(with: transaction.unwrapGrdbRead)
         }
     }
 
@@ -692,12 +657,12 @@ extension MessageDetailViewController: OWSMessageBubbleViewDelegate {
     }
 
     func didTapStickerPack(_ stickerPackInfo: StickerPackInfo) {
-        guard FeatureFlags.stickerAutoEnable || FeatureFlags.stickerSend else {
-            return
-        }
-
         let packView = StickerPackViewController(stickerPackInfo: stickerPackInfo)
         packView.present(from: self, animated: true)
+    }
+
+    func didTapGroupInviteLink(_ url: URL) {
+        GroupInviteLinksUI.openGroupInviteLink(url, fromViewController: self)
     }
 
     func didTapAudioViewItem(_ viewItem: ConversationViewItem, attachmentStream: TSAttachmentStream) {
@@ -728,17 +693,30 @@ extension MessageDetailViewController: OWSMessageBubbleViewDelegate {
     }
 
     func didTapTruncatedTextMessage(_ conversationItem: ConversationViewItem) {
-        guard let navigationController = self.navigationController else {
-            owsFailDebug("navigationController was unexpectedly nil")
-            return
-        }
+        if conversationItem.displayableBodyText?.canRenderTruncatedTextInline == true {
+            conversationItem.isTruncatedTextVisible = true
+            updateContent()
+        } else {
+            guard let navigationController = self.navigationController else {
+                owsFailDebug("navigationController was unexpectedly nil")
+                return
+            }
 
-        let viewController = LongTextViewController(viewItem: viewItem)
-        viewController.delegate = self
-        navigationController.pushViewController(viewController, animated: true)
+            let viewController = LongTextViewController(viewItem: viewItem)
+            viewController.delegate = self
+            navigationController.pushViewController(viewController, animated: true)
+        }
+    }
+
+    func didTapMention(_ mention: Mention) {
+        // no - op
     }
 
     func didTapFailedIncomingAttachment(_ viewItem: ConversationViewItem) {
+        // no - op
+    }
+
+    func didTapPendingMessageRequestIncomingAttachment(_ viewItem: ConversationViewItem) {
         // no - op
     }
 
@@ -763,7 +741,7 @@ extension MessageDetailViewController: OWSMessageBubbleViewDelegate {
             owsFailDebug("Invalid url: \(urlString).")
             return
         }
-        UIApplication.shared.openURL(url)
+        UIApplication.shared.open(url, options: [:])
     }
 
     @objc func didLongPressSent(sender: UIGestureRecognizer) {
@@ -811,6 +789,10 @@ extension MessageDetailViewController: OWSMessageViewOnceViewDelegate {
     public func didTapViewOnceAttachment(_ viewItem: ConversationViewItem, attachmentStream: TSAttachmentStream) {
         ViewOnceMessageViewController.tryToPresent(interaction: viewItem.interaction,
                                                         from: self)
+    }
+
+    func didTapViewOnceExpired(_ viewItem: ConversationViewItem) {
+
     }
 }
 
@@ -892,27 +874,51 @@ private extension MediaPresentationContext {
 
 // MARK: -
 
-extension MessageDetailViewController: SDSDatabaseStorageObserver {
-    func databaseStorageDidUpdate(change: SDSDatabaseStorageChange) {
+extension MessageDetailViewController: UIDatabaseSnapshotDelegate {
+
+    func uiDatabaseSnapshotWillUpdate() {
+        AssertIsOnMainThread()
+    }
+
+    func uiDatabaseSnapshotDidUpdate(databaseChanges: UIDatabaseChanges) {
         AssertIsOnMainThread()
 
-        guard change.didUpdate(interaction: self.message) else {
+        guard databaseChanges.didUpdate(interaction: self.message) else {
             return
         }
 
-        refreshContent()
+        refreshContentForDatabaseUpdate()
     }
 
-    func databaseStorageDidUpdateExternally() {
+    func uiDatabaseSnapshotDidUpdateExternally() {
         AssertIsOnMainThread()
 
-        refreshContent()
+        refreshContentForDatabaseUpdate()
     }
 
-    func databaseStorageDidReset() {
+    func uiDatabaseSnapshotDidReset() {
         AssertIsOnMainThread()
 
-        refreshContent()
+        refreshContentForDatabaseUpdate()
+    }
+
+    private func refreshContentForDatabaseUpdate() {
+        guard databaseUpdateTimer == nil else {
+            return
+        }
+        // Updating this view is slightly expensive and there will be tons of relevant
+        // database updates when sending to a large group. Update latency isn't that
+        // imporant, so we de-bounce to never update this view more than once every N seconds.
+        self.databaseUpdateTimer = Timer.scheduledTimer(withTimeInterval: 2.0,
+                                                        repeats: false) { [weak self] _ in
+            guard let self = self else {
+                return
+            }
+            assert(self.databaseUpdateTimer != nil)
+            self.databaseUpdateTimer?.invalidate()
+            self.databaseUpdateTimer = nil
+            self.refreshContent()
+        }
     }
 
     private func refreshContent() {

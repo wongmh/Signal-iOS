@@ -1,11 +1,11 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSMessageUtils.h"
 #import "AppContext.h"
 #import "MIMETypeUtil.h"
-#import "OWSMessageSender.h"
+#import "MessageSender.h"
 #import "TSAccountManager.h"
 #import "TSAttachment.h"
 #import "TSAttachmentStream.h"
@@ -30,7 +30,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 #pragma mark -
 
-+ (instancetype)sharedManager
++ (instancetype)shared
 {
     static OWSMessageUtils *sharedMyManager = nil;
     static dispatch_once_t onceToken;
@@ -57,7 +57,7 @@ NS_ASSUME_NONNULL_BEGIN
 {
     __block NSUInteger numberOfItems;
     [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        numberOfItems = [InteractionFinder unreadCountInAllThreadsWithTransaction:transaction];
+        numberOfItems = [InteractionFinder unreadCountInAllThreadsWithTransaction:transaction.unwrapGrdbRead];
     }];
 
     return numberOfItems;
@@ -67,9 +67,9 @@ NS_ASSUME_NONNULL_BEGIN
 {
     __block NSUInteger numberOfItems;
     [self.databaseStorage readWithBlock:^(SDSAnyReadTransaction *transaction) {
-        NSUInteger allCount = [InteractionFinder unreadCountInAllThreadsWithTransaction:transaction];
+        NSUInteger allCount = [InteractionFinder unreadCountInAllThreadsWithTransaction:transaction.unwrapGrdbRead];
         InteractionFinder *interactionFinder = [[InteractionFinder alloc] initWithThreadUniqueId:thread.uniqueId];
-        NSUInteger threadCount = [interactionFinder unreadCountWithTransaction:transaction];
+        NSUInteger threadCount = [interactionFinder unreadCountWithTransaction:transaction.unwrapGrdbRead];
         numberOfItems = (allCount - threadCount);
     }];
 

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "NotificationSettingsViewController.h"
@@ -8,7 +8,10 @@
 #import <SignalMessaging/Environment.h>
 #import <SignalMessaging/OWSPreferences.h>
 #import <SignalMessaging/OWSSounds.h>
+#import <SignalMessaging/SignalMessaging-Swift.h>
+#import <SignalMessaging/Theme.h>
 #import <SignalMessaging/UIUtil.h>
+#import <SignalServiceKit/OWSMessageUtils.h>
 #import <SignalServiceKit/SignalServiceKit-Swift.h>
 
 @implementation NotificationSettingsViewController
@@ -19,6 +22,8 @@
 
     [self setTitle:NSLocalizedString(@"SETTINGS_NOTIFICATIONS", nil)];
 
+    self.useThemeBackgroundColors = YES;
+
     [self updateTableContents];
 }
 
@@ -27,18 +32,6 @@
     [super viewDidAppear:animated];
 
     [self updateTableContents];
-}
-
-#pragma mark - Dependencies
-
-- (OWSPreferences *)preferences
-{
-    return Environment.shared.preferences;
-}
-
-- (SDSDatabaseStorage *)databaseStorage
-{
-    return SDSDatabaseStorage.shared;
 }
 
 #pragma mark - Table Contents
@@ -98,6 +91,32 @@
         = NSLocalizedString(@"SETTINGS_NOTIFICATION_CONTENT_DESCRIPTION", @"table section footer");
     [contents addSection:backgroundSection];
 
+    OWSTableSection *badgeCountSection = [OWSTableSection new];
+    badgeCountSection.headerTitle
+        = NSLocalizedString(@"SETTINGS_NOTIFICATION_BADGE_COUNT_TITLE", @"table section header");
+
+    NSString *badgeCountIncludesMutedConversationsText
+        = NSLocalizedString(@"SETTINGS_NOTIFICATION_BADGE_COUNT_INCLUDES_MUTED_CONVERSATIONS",
+            @"When the local device discovers a contact has recently installed signal, the app can generates a message "
+            @"encouraging the local user to say hello. Turning this switch off disables that feature.");
+    [badgeCountSection addItem:[OWSTableItem switchItemWithText:badgeCountIncludesMutedConversationsText
+                                   accessibilityIdentifier:ACCESSIBILITY_IDENTIFIER_WITH_NAME(
+                                                               self, @"badge_count_includes_muted_conversations")
+                                   isOnBlock:^{
+                                       __block BOOL result;
+                                       [weakSelf.databaseStorage uiReadWithBlock:^(SDSAnyReadTransaction *transaction) {
+                                           result = [SSKPreferences
+                                               includeMutedThreadsInBadgeCountWithTransaction:transaction];
+                                       }];
+                                       return result;
+                                   }
+                                   isEnabledBlock:^{
+                                       return YES;
+                                   }
+                                   target:weakSelf
+                                   selector:@selector(didToggleIncludesMutedConversationsInBadgeCountSwitch:)]];
+    [contents addSection:badgeCountSection];
+
 
     OWSTableSection *eventsSection = [OWSTableSection new];
     eventsSection.headerTitle
@@ -135,11 +154,29 @@
     [self.preferences setSoundInForeground:sender.on];
 }
 
+- (void)didToggleIncludesMutedConversationsInBadgeCountSwitch:(UISwitch *)sender
+{
+    __block BOOL currentValue;
+    [self.databaseStorage uiReadWithBlock:^(SDSAnyReadTransaction *transaction) {
+        currentValue = [SSKPreferences includeMutedThreadsInBadgeCountWithTransaction:transaction];
+    }];
+
+    if (currentValue == sender.isOn) {
+        return;
+    }
+
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
+        [SSKPreferences setIncludeMutedThreadsInBadgeCount:sender.isOn transaction:transaction];
+    });
+
+    [OWSMessageUtils.shared updateApplicationBadgeCount];
+}
+
 - (void)didToggleshouldNotifyOfNewAccountsSwitch:(UISwitch *)sender
 {
-    [self.databaseStorage writeWithBlock:^(SDSAnyWriteTransaction *transaction) {
+    DatabaseStorageWrite(self.databaseStorage, ^(SDSAnyWriteTransaction *transaction) {
         [self.preferences setShouldNotifyOfNewAccounts:sender.isOn transaction:transaction];
-    }];
+    });
 }
 
 @end

@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 #import "OWSMessageViewOnceView.h"
@@ -48,20 +48,20 @@ typedef NS_ENUM(NSUInteger, ViewOnceMessageType) {
 
 #pragma mark -
 
-- (instancetype)initWithFrame:(CGRect)frame
+- (instancetype)init
 {
-    self = [super initWithFrame:frame];
+    self = [super initWithFrame:CGRectZero];
 
     if (!self) {
         return self;
     }
 
-    [self commontInit];
+    [self commonInit];
 
     return self;
 }
 
-- (void)commontInit
+- (void)commonInit
 {
     // Ensure only called once.
     OWSAssertDebug(!self.vStackView);
@@ -125,6 +125,11 @@ typedef NS_ENUM(NSUInteger, ViewOnceMessageType) {
 }
 
 #pragma mark - Load
+
+- (BOOL)isBorderless
+{
+    return NO;
+}
 
 - (void)configureViews
 {
@@ -472,8 +477,6 @@ typedef NS_ENUM(NSUInteger, ViewOnceMessageType) {
             self.label.text = CommonStrings.retryButton;
             break;
         case ViewOnceMessageState_OutgoingSending:
-            self.label.text = NSLocalizedString(@"MESSAGE_STATUS_SENDING", @"message status while message is sending.");
-            break;
         case ViewOnceMessageState_OutgoingSentExpired:
             self.label.text = NSLocalizedString(
                 @"PER_MESSAGE_EXPIRATION_OUTGOING_MESSAGE", @"Label for outgoing view-once messages.");
@@ -507,19 +510,19 @@ typedef NS_ENUM(NSUInteger, ViewOnceMessageType) {
             OWSFailDebug(@"Invalid value.");
             // Fall through.
         case ViewOnceMessageState_IncomingExpired:
-            return @"play-outline-24";
+            return @"viewed-once-24";
         case ViewOnceMessageState_IncomingDownloading:
             OWSFailDebug(@"Unexpected state.");
             return nil;
         case ViewOnceMessageState_IncomingFailed:
-            return @"retry-24";
-        case ViewOnceMessageState_IncomingAvailable:
-            return @"play-filled-24";
-        case ViewOnceMessageState_OutgoingFailed:
             return @"arrow-down-circle-outline-24";
+        case ViewOnceMessageState_IncomingAvailable:
+            return @"view-once-24";
+        case ViewOnceMessageState_OutgoingFailed:
+            return @"retry-24";
         case ViewOnceMessageState_OutgoingSending:
         case ViewOnceMessageState_OutgoingSentExpired:
-            return @"play-outline-24";
+            return @"viewed-once-24";
         case ViewOnceMessageState_IncomingInvalidContent:
             OWSFailDebug(@"Unexpected state.");
             return nil;
@@ -584,6 +587,12 @@ typedef NS_ENUM(NSUInteger, ViewOnceMessageType) {
 - (BOOL)isAvailable
 {
     return (self.viewItem.viewOnceMessageState == ViewOnceMessageState_IncomingAvailable);
+}
+
+- (BOOL)isExpired
+{
+    return (self.viewItem.viewOnceMessageState == ViewOnceMessageState_IncomingExpired
+        || self.viewItem.viewOnceMessageState == ViewOnceMessageState_OutgoingSentExpired);
 }
 
 #pragma mark - Measurement
@@ -755,6 +764,8 @@ typedef NS_ENUM(NSUInteger, ViewOnceMessageType) {
             return;
         }
         [self.delegate didTapViewOnceAttachment:self.viewItem attachmentStream:self.viewItem.attachmentStream];
+    } else if (self.isExpired) {
+        [self.delegate didTapViewOnceExpired:self.viewItem];
     }
 }
 

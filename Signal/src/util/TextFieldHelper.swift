@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2018 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -18,30 +18,51 @@ import UIKit
         let existingString = textField.text ?? ""
 
         // Given an NSRange, we need to interact with the NS flavor of substring
-        let removedString = (existingString as NSString).substring(with: editingRange)
 
-        let lengthOfRemainingExistingString = byteLength(existingString) - byteLength(removedString)
+        // Filtering the string for display may insert some new characters. We need
+        // to verify that after insertion the string is still within our byte bounds.
+        let notFilteredForDisplay = (existingString as NSString)
+            .replacingCharacters(in: editingRange, with: replacementString)
+        let filteredForDisplay = notFilteredForDisplay.filterStringForDisplay()
 
-        let newLength = lengthOfRemainingExistingString + byteLength(replacementString)
+        let newUnfilteredLength = byteLength(notFilteredForDisplay)
+        let newFilteredLength = byteLength(filteredForDisplay)
 
-        if (newLength <= byteLimit) {
+        if newUnfilteredLength <= byteLimit && newFilteredLength <= byteLimit {
+            // Only allow the textfield to insert the replacement
+            // if _both_ it's filtered and unfiltered length are
+            // valid.
+            //
+            // * We can't measure just the filtered length or we
+            //   would allow unlimited whitespace to be appended
+            //   to the end of the string.
+            // * We can't measure just the unfiltered length, since
+            //   filterStringForDisplay() can increase the length
+            //   of the string (e.g. appending Bidi characters).
+            // * We can't replace the textfield contents with the
+            //   filtered string, or we would prevent users from
+            //   (legitimately) appending whitespace to the tail of
+            //   of the string.
             return true
         }
 
         // Don't allow any change if inserting a single char is already over the limit (typically this means typing)
-        if (replacementString.count < 2) {
+        if replacementString.count < 2 {
             return false
         }
 
         // However if pasting, accept as much of the string as possible.
-        let availableSpace = byteLimit - lengthOfRemainingExistingString
-
         var acceptableSubstring = ""
 
         for (_, char) in replacementString.enumerated() {
             var maybeAcceptableSubstring = acceptableSubstring
             maybeAcceptableSubstring.append(char)
-            if (byteLength(maybeAcceptableSubstring) <= availableSpace) {
+
+            let newFilteredString = (existingString as NSString)
+                .replacingCharacters(in: editingRange, with: maybeAcceptableSubstring)
+                .filterStringForDisplay()
+
+            if byteLength(newFilteredString) <= byteLimit {
                 acceptableSubstring = maybeAcceptableSubstring
             } else {
                 break

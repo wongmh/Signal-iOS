@@ -1,5 +1,5 @@
 //
-//  Copyright (c) 2019 Open Whisper Systems. All rights reserved.
+//  Copyright (c) 2020 Open Whisper Systems. All rights reserved.
 //
 
 import Foundation
@@ -23,16 +23,16 @@ public class SSKMessageDecryptJobQueue: NSObject, JobQueue {
 
     // MARK: 
 
-    @objc(enqueueEnvelopeData:)
-    public func add(envelopeData: Data) {
+    @objc(enqueueEnvelopeData:serverDeliveryTimestamp:)
+    public func add(envelopeData: Data, serverDeliveryTimestamp: UInt64) {
         databaseStorage.write { transaction in
-            self.add(envelopeData: envelopeData, transaction: transaction)
+            self.add(envelopeData: envelopeData, serverDeliveryTimestamp: serverDeliveryTimestamp, transaction: transaction)
         }
     }
 
-    @objc(enqueueEnvelopeData:transaction:)
-    public func add(envelopeData: Data, transaction: SDSAnyWriteTransaction) {
-        let jobRecord = SSKMessageDecryptJobRecord(envelopeData: envelopeData, label: jobRecordLabel)
+    @objc(enqueueEnvelopeData:serverDeliveryTimestamp:transaction:)
+    public func add(envelopeData: Data, serverDeliveryTimestamp: UInt64, transaction: SDSAnyWriteTransaction) {
+        let jobRecord = SSKMessageDecryptJobRecord(envelopeData: envelopeData, serverDeliveryTimestamp: serverDeliveryTimestamp, label: jobRecordLabel)
         self.add(jobRecord: jobRecord, transaction: transaction)
     }
 
@@ -43,7 +43,7 @@ public class SSKMessageDecryptJobQueue: NSObject, JobQueue {
     public static let jobRecordLabel: String = "SSKMessageDecrypt"
     public static let maxRetries: UInt = 1
     public let requiresInternet: Bool = false
-    public var runningOperations: [SSKMessageDecryptOperation] = []
+    public var runningOperations = AtomicArray<SSKMessageDecryptOperation>()
 
     public var jobRecordLabel: String {
         return type(of: self).jobRecordLabel
@@ -51,10 +51,14 @@ public class SSKMessageDecryptJobQueue: NSObject, JobQueue {
 
     @objc
     public func setup() {
-        // Don't decrypt messages in app extensions.
-        if !CurrentAppContext().isMainApp {
+        guard CurrentAppContext().shouldProcessIncomingMessages else {
             return
         }
+
+        // The pipeline supervisor will post updates when we can process messages
+        // Suspend our operation queue if we should pause our work
+        pipelineSupervisor.register(pipelineStage: self)
+        defaultQueue.isSuspended = !pipelineSupervisor.isMessageProcessingPermitted
 
         // GRDB TODO: Is it really a concern to run the decrypt queue when we're unregistered?
         // If we want this behavior, we should observe registration state changes, and rerun
@@ -66,10 +70,14 @@ public class SSKMessageDecryptJobQueue: NSObject, JobQueue {
         defaultSetup()
     }
 
-    public var isSetup: Bool = false
+    public var isSetup = AtomicBool(false)
 
     public func didMarkAsReady(oldJobRecord: SSKMessageDecryptJobRecord, transaction: SDSAnyWriteTransaction) {
+        // Do nothing.
+    }
 
+    public func didFlushQueue(transaction: SDSAnyWriteTransaction) {
+        NotificationCenter.default.postNotificationNameAsync(.messageDecryptionDidFlushQueue, object: nil, userInfo: nil)
     }
 
     public func buildOperation(jobRecord: SSKMessageDecryptJobRecord, transaction: SDSAnyReadTransaction) throws -> SSKMessageDecryptOperation {
@@ -86,6 +94,25 @@ public class SSKMessageDecryptJobQueue: NSObject, JobQueue {
 
     public func operationQueue(jobRecord: SSKMessageDecryptJobRecord) -> OperationQueue {
         return defaultQueue
+    }
+
+    @objc
+    public func hasPendingJobsObjc(transaction: SDSAnyReadTransaction) -> Bool {
+        return hasPendingJobs(transaction: transaction)
+    }
+}
+
+extension SSKMessageDecryptJobQueue: MessageProcessingPipelineStage {
+    private var pipelineSupervisor: MessagePipelineSupervisor {
+        return SSKEnvironment.shared.messagePipelineSupervisor
+    }
+
+    public func supervisorDidSuspendMessageProcessing(_ supervisor: MessagePipelineSupervisor) {
+        defaultQueue.isSuspended = true
+    }
+
+    public func supervisorDidResumeMessageProcessing(_ supervisor: MessagePipelineSupervisor) {
+        defaultQueue.isSuspended = false
     }
 }
 
@@ -139,7 +166,7 @@ public class SSKMessageDecryptOperation: OWSOperation, DurableOperation {
                 return
             }
 
-            let envelope = try SSKProtoEnvelope.parseData(envelopeData)
+            let envelope = try SSKProtoEnvelope(serializedData: envelopeData)
             let wasReceivedByUD = self.wasReceivedByUD(envelope: envelope)
             messageDecrypter.decryptEnvelope(envelope,
                                              envelopeData: envelopeData,
@@ -153,6 +180,7 @@ public class SSKMessageDecryptOperation: OWSOperation, DurableOperation {
                                                 self.batchMessageProcessor.enqueueEnvelopeData(result.envelopeData,
                                                                                                plaintextData: result.plaintextData,
                                                                                                wasReceivedByUD: wasReceivedByUD,
+                                                                                               serverDeliveryTimestamp: self.jobRecord.serverDeliveryTimestamp,
                                                                                                transaction: transaction)
                                                 DispatchQueue.global().async {
                                                     self.reportSuccess()
